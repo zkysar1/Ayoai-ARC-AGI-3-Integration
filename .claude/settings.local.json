@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git config:*)",
+      "Bash(uv sync:*)",
+      "Bash(source $HOME/.local/bin/env)",
+      "Bash(uv run pytest:*)",
+      "Bash(curl:*)",
+      "Read(//tmp/ARC-AGI-3-Agents/**)",
+      "Bash(python -m pytest:*)",
+      "Bash(git -C /mnt/c/ZakNoCloud/GitHub/Ayoai/Ayoai-ARC-AGI-3-Integration diff .pre-commit-config.yaml)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

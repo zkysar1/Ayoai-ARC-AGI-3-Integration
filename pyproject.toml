@@ -1,0 +1,32 @@
+[project]
+name = "ayoai-arc-agi-3-integration"
+version = "0.1.0"
+description = "Ayoai ARC-AGI-3 Integration - AI agent framework for abstract reasoning challenges"
+readme = "readme.md"
+requires-python = ">=3.12"
+dependencies = [
+    "dotenv>=0.9.9",
+    "pydantic>=2.11.7",
+    "requests>=2.32.4",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.15.0",
+    "pre-commit>=4.2.0",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+    "requests-mock>=1.12.1",
+    "ruff>=0.11.4",
+]
+
+[tool.mypy]
+strict = true
+disallow_untyped_defs = true
+exclude = [
+    "tests",
+]
+plugins = []
+
+[tool.ruff.lint]
+extend-select = ["I"]
