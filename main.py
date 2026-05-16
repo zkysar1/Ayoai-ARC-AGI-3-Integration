@@ -17,6 +17,10 @@ import requests
 from pydantic import ValidationError
 
 from ayoai_client import AyoaiSessionError, AyoaiSessionInfo, open_ayoai_session
+from ayoai_streaming_client import (
+    AyoaiStreamingClient,
+    AyoaiStreamingError,
+)
 from recorder import Recorder
 from structs import FrameData, GameAction, GameState, Scorecard
 
@@ -41,12 +45,13 @@ HEADERS = {
 
 def choose_random_action(frame: FrameData) -> GameAction:
     """
-    Simple random action picker for testing the game loop.
+    Random action picker — retained ONLY as a diagnostic baseline.
 
-    TODO: Replace this with ayoai.com integration:
-    - Send frame data to ayoai.com
-    - Receive action decision
-    - Return the chosen action
+    NO LONGER CALLED by the main game loop. As of g-315-15 the loop uses
+    `AyoaiStreamingClient.choose_action()` and the framework-routed
+    constraint (echo/self.md) forbids falling back to random on protocol
+    error. Kept here for ad-hoc baseline-vs-AyoAI score comparisons (run
+    via a one-off script, not the main loop).
     """
     # Reset if game not started or game over
     if frame.state in [GameState.NOT_PLAYED, GameState.GAME_OVER]:
@@ -58,9 +63,21 @@ def choose_random_action(frame: FrameData) -> GameAction:
 
 
 def send_action(
-    session: requests.Session, game_id: str, card_id: str, action: GameAction, guid: str | None = None
+    session: requests.Session,
+    game_id: str,
+    card_id: str,
+    action: GameAction,
+    guid: str | None = None,
+    x: int | None = None,
+    y: int | None = None,
 ) -> FrameData | None:
-    """Send an action to the API and get the new frame state."""
+    """Send an action to the API and get the new frame state.
+
+    For ACTION6, `x`/`y` MUST be provided by the AyoAI decision
+    (`AyoaiDecision.x`, `AyoaiDecision.y`). The legacy random fallback
+    is gone — per echo/self.md "Zero random fallbacks" verification
+    (g-315-04 outcome 3), an ACTION6 without coordinates is a hard error.
+    """
     try:
         # Prepare action data
         json_data = {"game_id": game_id, "card_id": card_id}
@@ -69,10 +86,16 @@ def send_action(
         if guid is not None and action != GameAction.RESET:
             json_data["guid"] = guid
 
-        # Add coordinates for ACTION6 if needed
+        # ACTION6 requires AyoAI-supplied x,y — no random fallback.
         if action == GameAction.ACTION6:
-            json_data["x"] = random.randint(0, 30)
-            json_data["y"] = random.randint(0, 30)
+            if x is None or y is None:
+                logger.error(
+                    "ACTION6 missing x/y from AyoAI decision — refusing to "
+                    "fall back to random (framework-routed constraint)."
+                )
+                return None
+            json_data["x"] = x
+            json_data["y"] = y
 
         r = session.post(
             f"{ROOT_URL}/api/cmd/{action.name}",
@@ -133,6 +156,18 @@ def main() -> None:
         "--record",
         action="store_true",
         help="Record gameplay to JSONL file",
+    )
+    parser.add_argument(
+        "--mock-url",
+        type=str,
+        default=None,
+        help=(
+            "Mock AyoAI streaming URL (e.g. http://127.0.0.1:PORT/AyoStreamingUpdates). "
+            "When set, skips the live AyoAI session-open (g-315-03) and routes "
+            "decisions through this URL instead. Used to exercise the streaming "
+            "client end-to-end against MockAyoaiServer while g-315-11 (cold-start "
+            "chain) is still gated."
+        ),
     )
 
     args = parser.parse_args()
@@ -204,56 +239,90 @@ def main() -> None:
     # Roblox per-place server-key). Env key "arc-agi-3" was registered by
     # g-315-02 (see design/integration-design.md Part 9). Per echo/self.md
     # Integration-Goal Constraint Gate: framework-routed (this is the gate).
+    #
+    # g-315-15: --mock-url skips this live session-open and routes the
+    # streaming client at the supplied URL instead. The wire contract is
+    # identical (the mock IS the contract); this is how outcomes 1+3 of
+    # g-315-04 can be exercised end-to-end before g-315-11 (cold-start
+    # chain) lands.
     ayoai_session: AyoaiSessionInfo | None = None
     env_key = os.getenv("AYOAI_ENV_KEY", "arc-agi-3")
-    try:
+    if args.mock_url:
         logger.info(
-            f"Opening AyoAI session (ayoServerKey={card_id}, "
-            f"ayoEnvironmentKey={env_key})..."
+            f"Mock mode: routing decisions through {args.mock_url} "
+            f"(--mock-url set, skipping live AyoAI session-open)"
         )
-        ayoai_session = open_ayoai_session(card_id, env_key=env_key)
-        logger.info(
-            f"AyoAI session OPEN: hostname={ayoai_session.ayoai_hostname} "
-            f"streaming_url={ayoai_session.streaming_url} "
-            f"attempts={ayoai_session.attempts} "
-            f"elapsed_s={ayoai_session.elapsed_s}"
-        )
-    except AyoaiSessionError as e:
-        # Per echo/self.md "When the streaming contract breaks at runtime
-        # THEN abort the play and surface as Investigate (do NOT fall back
-        # to a non-AyoAI path; that bypasses the framework and is mission-
-        # fail)". Echo MUST NOT run the action loop without AyoAI routing.
-        logger.error(f"AyoAI session OPEN FAILED — aborting play: {e}")
-        # Close the scorecard so ARC accounting stays clean.
+        streaming_url = args.mock_url
+    else:
         try:
-            session.post(
-                f"{ROOT_URL}/api/scorecard/close",
-                json={"card_id": card_id},
-                timeout=10,
+            logger.info(
+                f"Opening AyoAI session (ayoServerKey={card_id}, "
+                f"ayoEnvironmentKey={env_key})..."
             )
-        except requests.exceptions.RequestException:
-            logger.exception("scorecard close also failed after session-open abort")
-        return
+            ayoai_session = open_ayoai_session(card_id, env_key=env_key)
+            logger.info(
+                f"AyoAI session OPEN: hostname={ayoai_session.ayoai_hostname} "
+                f"streaming_url={ayoai_session.streaming_url} "
+                f"attempts={ayoai_session.attempts} "
+                f"elapsed_s={ayoai_session.elapsed_s}"
+            )
+            streaming_url = ayoai_session.streaming_url
+        except AyoaiSessionError as e:
+            # Per echo/self.md "When the streaming contract breaks at runtime
+            # THEN abort the play and surface as Investigate (do NOT fall back
+            # to a non-AyoAI path; that bypasses the framework and is mission-
+            # fail)". Echo MUST NOT run the action loop without AyoAI routing.
+            logger.error(f"AyoAI session OPEN FAILED — aborting play: {e}")
+            # Close the scorecard so ARC accounting stays clean.
+            try:
+                session.post(
+                    f"{ROOT_URL}/api/scorecard/close",
+                    json={"card_id": card_id},
+                    timeout=10,
+                )
+            except requests.exceptions.RequestException:
+                logger.exception("scorecard close also failed after session-open abort")
+            return
 
-    # Setup recorder if requested
+    # g-315-15: instantiate the streaming decision client. Replaces the
+    # choose_random_action() stub at the call site below. AYOAI_API_KEY may
+    # be empty for mock mode (the mock ignores the header).
+    streaming_client = AyoaiStreamingClient(
+        streaming_url=streaming_url,
+        ayo_server_key=card_id,
+        api_key=os.getenv("AYOAI_API_KEY", "") if not args.mock_url else "",
+    )
+
+    # Setup recorder if requested. Prefix names the decision source so
+    # baseline-vs-AyoAI score comparisons are obvious from the filename.
     recorder = None
     if args.record:
-        recorder = Recorder(prefix=f"{args.game}.random")
+        prefix = f"{args.game}.{'mock' if args.mock_url else 'ayoai'}"
+        recorder = Recorder(prefix=prefix)
         logger.info(f"Recording to: {recorder.filename}")
-        # Record the AyoAI session-open evidence as the recording's first
-        # entry — outcome 3 of g-315-03 ("evidence captured in a log line,
-        # probe output, or recording (not inferred)").
-        recorder.record({
-            "kind": "ayoai_session_open",
-            "ayo_server_key": ayoai_session.ayo_server_key,
-            "ayo_environment_key": ayoai_session.ayo_environment_key,
-            "ayoai_hostname": ayoai_session.ayoai_hostname,
-            "streaming_url": ayoai_session.streaming_url,
-            "env_server_url": ayoai_session.env_server_url,
-            "attempts": ayoai_session.attempts,
-            "elapsed_s": ayoai_session.elapsed_s,
-            "status_log": ayoai_session.status_log,
-        })
+        # Record the session-open evidence (or mock-URL bind) as the first
+        # entry — preserves g-315-03 outcome 3 for live mode, documents
+        # the mock-bind for mock mode.
+        if ayoai_session is not None:
+            recorder.record({
+                "kind": "ayoai_session_open",
+                "ayo_server_key": ayoai_session.ayo_server_key,
+                "ayo_environment_key": ayoai_session.ayo_environment_key,
+                "ayoai_hostname": ayoai_session.ayoai_hostname,
+                "streaming_url": ayoai_session.streaming_url,
+                "env_server_url": ayoai_session.env_server_url,
+                "attempts": ayoai_session.attempts,
+                "elapsed_s": ayoai_session.elapsed_s,
+                "status_log": ayoai_session.status_log,
+            })
+        else:
+            recorder.record({
+                "kind": "ayoai_session_open_mocked",
+                "ayo_server_key": card_id,
+                "ayo_environment_key": env_key,
+                "streaming_url": streaming_url,
+                "note": "live AyoAI session-open skipped (--mock-url set); g-315-04 outcome 2 (live recording) still gated by g-315-11",
+            })
 
     # Game loop variables
     MAX_ACTIONS = 80
@@ -263,7 +332,7 @@ def main() -> None:
 
     logger.info(f"Starting game loop for: {args.game}")
 
-    # Main game loop
+    # Main game loop — g-315-15: every action routes through AyoAI (mock or live).
     try:
         while action_counter <= MAX_ACTIONS:
             current_frame = frames[-1]
@@ -273,11 +342,29 @@ def main() -> None:
                 logger.info(f"Game ended with state: {current_frame.state}")
                 break
 
-            # Choose action (random for testing, replace with ayoai.com)
-            action = choose_random_action(current_frame)
+            # Choose action via the AyoAI streaming client. RESET is decided
+            # client-side (game-control); everything else routes through
+            # AyoAI. Protocol errors abort the play per echo/self.md.
+            try:
+                decision = streaming_client.choose_action(current_frame)
+            except AyoaiStreamingError as e:
+                logger.error(
+                    f"AyoAI streaming decision FAILED — aborting play: {e}"
+                )
+                break
+            action = decision.action
 
-            # Send action to API
-            new_frame = send_action(session, args.game, card_id, action, current_frame.guid)
+            # Send action to API. x,y are AyoAI-supplied for ACTION6
+            # (None for other actions; send_action ignores them).
+            new_frame = send_action(
+                session,
+                args.game,
+                card_id,
+                action,
+                current_frame.guid,
+                x=decision.x,
+                y=decision.y,
+            )
 
             if new_frame:
                 frames.append(new_frame)
@@ -289,12 +376,17 @@ def main() -> None:
 
                 logger.info(
                     f"{args.game} - {action.name}: count {action_counter}, "
-                    f"score {new_frame.score}, avg fps {fps:.2f})"
+                    f"score {new_frame.score}, decided_by="
+                    f"{decision.provenance.get('decided_by', '?')}, "
+                    f"avg fps {fps:.2f}"
                 )
 
-                # Record if enabled
+                # Record with provenance so every recorded action carries
+                # decided_by ∈ {ayoai-v1, client} — g-315-04 outcome 1.
                 if recorder:
-                    recorder.record(new_frame.model_dump(mode='json'))
+                    record = new_frame.model_dump(mode='json')
+                    record["decision_provenance"] = decision.provenance
+                    recorder.record(record)
             else:
                 logger.error("Failed to get frame, stopping")
                 break
@@ -335,8 +427,12 @@ def main() -> None:
     scorecard_url = f"{ROOT_URL}/scorecards/{card_id}"
     logger.info(f"View your scorecard online: {scorecard_url}")
 
-    # Close session
+    # Close session (HTTP) and the AyoAI streaming client
     session.close()
+    try:
+        streaming_client.close()
+    except Exception:
+        logger.exception("streaming client close failed (non-fatal)")
 
 
 if __name__ == "__main__":
