@@ -1,9 +1,11 @@
 ---
 title: "ARC-AGI-3 ↔ AyoAI Integration Design"
-status: "draft-v1"
+status: "v1.1 (env registered; endpoint URLs corrected)"
 authored_by: "echo"
 authored_at: "2026-05-16"
 authoring_goal: "g-315-01"
+last_updated_at: "2026-05-16"
+last_updated_goal: "g-315-02"
 parent_aspiration: "asp-315 — AyoAI plays ARC-AGI-3 end-to-end through the framework"
 ---
 
@@ -112,16 +114,30 @@ Source of truth: `Ayoai-Roblox-Integration/GameScripts/.../SendUpdate.server.lua
 
 ### 2.1 Endpoints
 
-| Method | Path (on env-server) | Auth | Purpose |
+| Method | URL | Auth | Purpose |
 |---|---|---|---|
-| `POST` | `:8686/AyoEnvironment/{envKey}/GetStreamingUrlAndStatus` | `AYOAI-API-KEY` header | Resolves the per-session streaming hostname + readiness. Returns `{status: success∣fail, data: {isStreamingReady: bool, ayoaiHostname: str, streamingStatus?: str}}`. |
-| `POST` | `:8787/AyoStreamingUpdates` | `AYOAI-API-KEY` header | The streaming endpoint. Body is a batch of operations (§2.3). Returns the per-session decision payload (§2.4). |
+| `POST` | `https://api.ayoai.com/httpV1/GetStreamingUrlAndStatus` | `AYOAI-API-KEY` header; body `{ayoServerKey, ayoEnvironmentKey}` | Resolves the per-session streaming hostname + readiness. Returns `{status: success∣fail, data: {isStreamingReady: bool, ayoaiHostname: str, streamingStatus?: str}}`. The env-key + server-key are body fields, not URL components. |
+| `POST` | `https://{ayoaiHostname}:8787/AyoStreamingUpdates` | `AYOAI-API-KEY` header | The streaming endpoint. Body is a batch of operations (§2.3). Returns the per-session decision payload (§2.4). `ayoaiHostname` comes from the GetStreamingUrlAndStatus response. |
 
-The Roblox client publishes `ayoaiHostname` + `envServerUrl` + `ayoaiApiKey`
-as workspace attributes on success (`SendUpdate.server.lua:244-246`). The
-ARC client will publish the resolved hostname into `os.environ` (for
-recorder integration) and a module-level constant for the duration of the
-play session.
+**Correction note (g-315-02, 2026-05-16)**: An earlier draft of this doc named
+the resolution endpoint as `:8686/AyoEnvironment/{envKey}/GetStreamingUrlAndStatus`,
+inferred from the workspace-attribute publish line in `SendUpdate.server.lua:244-246`
+(`workspace:SetAttribute("envServerUrl", "https://" .. ayoAiHostname .. ":8686")`).
+The actual call site is `SendUpdate.server.lua:171` —
+`Url = "https://api.ayoai.com/httpV1/GetStreamingUrlAndStatus"`. Port `:8686`
+hosts the env-server's **ReportApi** (`/reportapi/units`, `/reportapi/ayokeys`,
+`/reportapi/serverDetail`, `/reportapi/timeline`, `/reportapi/chat`,
+`/reportapi/classify`, `/server/v1/logs/recent` — confirmed in
+`ReportApiVerticle.java`); it does NOT host an `AyoEnvironment/…` route.
+The `envServerUrl` workspace attribute exists for downstream introspection
+scripts (e.g. `AyoPathfindingTestScenarios.server.lua`), not for streaming
+URL resolution.
+
+The Roblox client publishes `ayoaiHostname` + `envServerUrl` (:8686) +
+`ayoaiApiKey` as workspace attributes on success
+(`SendUpdate.server.lua:244-246`). The ARC client will publish the resolved
+hostname into `os.environ` (for recorder integration) and a module-level
+constant for the duration of the play session.
 
 ### 2.2 Session identity (the env-key triple)
 
@@ -129,7 +145,7 @@ Three header/body fields tag every streaming call. They are not negotiable.
 
 | Field | Roblox source | ARC source | Where it's used |
 |---|---|---|---|
-| `ayoEnvironmentKey` | workspace attr `ayoKey` per place (e.g. `"BussedInProd"`) | Fixed constant `"arc-agi-3"` (single env domain) | URL path on `GetStreamingUrlAndStatus`. |
+| `ayoEnvironmentKey` | workspace attr `ayoKey` per place (e.g. `"BussedInProd"`) | Fixed constant `"arc-agi-3"` (single env domain; registered 2026-05-16, see §9) | Body field on `GetStreamingUrlAndStatus` POST (alongside `ayoServerKey`). |
 | `ayoServerKey` | per Roblox server-instance | ARC scorecard `card_id` (one per play session) | Streaming-update body, dedup + routing. |
 | `AYOAIAPIKEY` (`AYOAI-API-KEY` header) | `.env.local` env var, separate from ARC key | `.env.local` env var, **separate from `ARC_API_KEY`** | All AyoAI HTTP calls. |
 
@@ -247,8 +263,11 @@ scalar attributes is the analogous choice for a 2-D environment.
 
 ```
 on game start:
-  POST :8686/AyoEnvironment/arc-agi-3/GetStreamingUrlAndStatus
-  → resolves ayoaiHostname; computes streaming_url = https://{host}:8787/AyoStreamingUpdates
+  POST https://api.ayoai.com/httpV1/GetStreamingUrlAndStatus
+    headers: AYOAI-API-KEY: $AYOAI_API_KEY
+    body: {ayoServerKey: card_id_or_placeholder, ayoEnvironmentKey: "arc-agi-3"}
+  → poll until data.isStreamingReady == true; data.ayoaiHostname resolved
+  streaming_url = https://{ayoaiHostname}:8787/AyoStreamingUpdates
   open ARC scorecard → card_id  (this also is ayoServerKey)
 
   send single ADD op for grid-env unit, path=arc-grid, with all §3.2 attributes
@@ -314,8 +333,8 @@ complete forensic trace.
 | Environment key (`ayoEnvironmentKey`) | Workspace attr `ayoKey` (e.g. `"BussedInProd"`) | Constant string `"arc-agi-3"` | Same field, different value source. |
 | Server-session key (`ayoServerKey`) | Per Roblox server instance | ARC `card_id` from `/api/scorecard/open` | Same field, different lifecycle. |
 | API key (`AYOAIAPIKEY` header) | `.env`-loaded, written to workspace attr `ayoaiApiKey` post-handshake | `.env.local` env var, module-level | Same header, same value style. |
-| Resolution endpoint | `:8686/AyoEnvironment/{envKey}/GetStreamingUrlAndStatus` | identical | Same. |
-| Streaming endpoint | `:8787/AyoStreamingUpdates` | identical | Same. |
+| Resolution endpoint | `https://api.ayoai.com/httpV1/GetStreamingUrlAndStatus` (env-key + server-key in body) | identical | Same. |
+| Streaming endpoint | `https://{ayoaiHostname}:8787/AyoStreamingUpdates` | identical | Same. |
 | Wait pattern on not-ready | `serverReadinessTracker` with intelligent logging + retry (`SendUpdate.server.lua:107-330`) | Mirror in ARC client (Python `requests.Session` with backoff). | Same shape, different language. |
 | Bridge routing | `place_id` → port (28080/28081/28082/28083) per `roblox-environments.md` | Single port; no per-env multiplex | ARC has no analog (one domain). |
 | Streaming rate | 3 Hz adaptive (`MIN_WAIT=0.12, MAX_WAIT=0.22`) | Per-ARC-tick (~2–7 Hz, ARC-bound) | Both bounded by upstream API. |
@@ -421,3 +440,118 @@ Source:
 Identity:
 - `echo/self.md` — Tiny-Compute Reasoning Envelope, Integration-Goal Constraint Gate
 - `world/program.md` — second environment domain (ARC-AGI-3) as adversarial generalization proof
+
+---
+
+## Part 9 — Environment registration record (g-315-02, 2026-05-16)
+
+The `arc-agi-3` environment is registered on the AyoAI platform via the
+`ManageEnvironmentsAndTasks` Lambda's `POST /httpV1/environments` endpoint.
+Mirrors how Roblox environments (`testy`, `NPCDemoExperiment`) are registered;
+no new mechanism was introduced.
+
+### 9.1 Registration call
+
+```
+POST https://api.ayoai.com/httpV1/environments
+Headers:
+  Content-Type: application/json
+  AYOAI-API-KEY: $AYO_OPERATOR_KEY   # admin OR customer-admin tier
+Body:
+  {
+    "ayoEnvironmentKey":  "arc-agi-3",
+    "ayoEnvironmentName": "ARC-AGI-3 abstract reasoning benchmark - second game system instance (Python, non-Roblox)",
+    "tasks": [
+      {"ayoTaskKey": "RESET",   "ayoTaskDesc": "Reset the game. Required before first action and after any terminal state (WIN/GAME_OVER)."},
+      {"ayoTaskKey": "ACTION1", "ayoTaskDesc": "Simple action 1 - game-specific simple operation, no parameters. Effect observed via FrameData echo."},
+      {"ayoTaskKey": "ACTION2", "ayoTaskDesc": "Simple action 2 - game-specific simple operation, no parameters."},
+      {"ayoTaskKey": "ACTION3", "ayoTaskDesc": "Simple action 3 - game-specific simple operation, no parameters."},
+      {"ayoTaskKey": "ACTION4", "ayoTaskDesc": "Simple action 4 - game-specific simple operation, no parameters."},
+      {"ayoTaskKey": "ACTION5", "ayoTaskDesc": "Simple action 5 - game-specific simple operation, no parameters."},
+      {"ayoTaskKey": "ACTION6", "ayoTaskDesc": "Complex action - pick a 2-D grid cell. x and y each in [0, 63].",
+                                "nodeParams": {"x": "decimal", "y": "decimal"}},
+      {"ayoTaskKey": "ACTION7", "ayoTaskDesc": "Simple action 7 - game-specific simple operation, no parameters."}
+    ]
+  }
+Response: HTTP 201 Created, body = {status:"success", environment:{...}}
+```
+
+### 9.2 Issued env-key (Verified Values)
+
+| Field | Value |
+|---|---|
+| `ayoEnvironmentKey` | `arc-agi-3` |
+| `ayoEnvironmentName` | `ARC-AGI-3 abstract reasoning benchmark - second game system instance (Python, non-Roblox)` |
+| `created_at` (epoch seconds) | `1778960215` |
+| `created_at` (ISO) | `2026-05-16T18:56:55Z` (UTC; Unix `date -ud @1778960215`) |
+| `taskCount` | `8` (RESET + ACTION1..ACTION7) |
+| `serverCount` at registration | `0` |
+| Registered by goal | `g-315-02` |
+| EFS path (Lambda side) | `/mnt/AyoAi/Accounts/{account_id}/arc-agi-3/{env.json, tasks.json}` |
+
+### 9.3 Action-space → task mapping rationale
+
+The 8 ARC `GameAction` values map 1:1 to AyoAI tasks. This makes the
+`ManageEnvironmentsAndTasks` listing endpoint a self-documenting view of
+the ARC action surface — anyone listing the env's tasks sees exactly the
+8 actions the AyoAI solver may choose from. Same role as Roblox's
+NPCDemoExperiment tasks (`moveTo`, `jump`, `speak`, …) — describe the
+action vocabulary so the solver knows what it may choose.
+
+`ACTION6` is the only task with `nodeParams` — `{x: decimal, y: decimal}` —
+because it is the only ARC action that carries arguments. Allowed
+`nodeParams` types are `vector3 | decimal | string | ayoKey`
+(`ManageEnvironmentsAndTasks/lambda_function.py:28` —
+`ALLOWED_NODE_PARAM_TYPES`); `decimal` accepts ints and floats alike, so
+the [0, 63] integer range is wire-compatible. The decimal-vs-integer
+distinction is enforced on the solver side, not the Lambda side.
+
+### 9.4 Read-back verification (the goal's AC #3)
+
+```
+GET https://api.ayoai.com/httpV1/environments/arc-agi-3
+Headers: AYOAI-API-KEY: $AYO_OPERATOR_KEY
+→ HTTP 200, body.environment.ayoEnvironmentKey == "arc-agi-3"
+  body.environment.tasks has 8 entries (RESET..ACTION7)
+  body.environment.created_at == 1778960215
+  body.environment.serverCount == 0
+```
+
+```
+GET https://api.ayoai.com/httpV1/environments
+Headers: AYOAI-API-KEY: $AYO_OPERATOR_KEY
+→ HTTP 200, body.environments list contains "arc-agi-3" (taskCount=8,
+  serverCount=0) alongside "testy" and "NPCDemoExperiment".
+```
+
+Both probes executed against the same Lambda the Roblox client would use,
+not synthetic equivalents — per
+`.claude/rules/probe-with-canonical-code-path.md` the registration is
+verified by the same code path future ARC clients will exercise.
+
+### 9.5 Endpoint corrections folded in
+
+Discovered during g-315-02:
+
+- The g-315-01 doc named `:8686/AyoEnvironment/{envKey}/GetStreamingUrlAndStatus`
+  as the resolution endpoint, but port `:8686` hosts the env-server's
+  ReportApi (`ReportApiVerticle.java`); there is no `AyoEnvironment` route
+  there. Resolved by reading `SendUpdate.server.lua:171` instead of
+  inferring from the workspace-attribute publish at lines 244-246.
+- The g-315-01 doc named the env-key as "URL path on GetStreamingUrlAndStatus"
+  in the env-key triple table; it is actually a body field.
+
+Both corrections are applied in §2.1, §2.2, §3.4, and §4 above. The
+correction is also propagated to
+`world/knowledge/tree/intelligence/ayoai-game-integration/game-system-instances/arc-agi-3.md`
+(this doc is the source of truth for the integration design; the tree node
+mirrors verified values).
+
+### 9.6 Implications for downstream goals (g-315-03..08)
+
+- `g-315-03` (streaming client) can now POST to the resolved hostname's
+  `:8787` immediately — no env-side blocker remains.
+- `g-315-05` (v0 solver) consumes the action vocabulary as registered;
+  the 8-task list IS the contract the solver must honor.
+- `g-315-08` (encoding) records the env's task list as a Verified Values
+  block in the tree.
