@@ -4,6 +4,7 @@ import shutil
 import pytest
 
 from structs import FrameData, GameState
+from tests.fixtures.mock_ayoai_server import MockAyoaiServer
 
 
 def get_test_recordings_dir():
@@ -70,3 +71,20 @@ def use_env_vars(monkeypatch):
         monkeypatch.setenv("HOST", "three.arcprize.org")
     if not os.environ.get("PORT"):
         monkeypatch.setenv("PORT", "443")
+
+
+@pytest.fixture
+def mock_ayoai_server():
+    """Yields a started MockAyoaiServer bound to a free localhost port.
+
+    g-315-12: lets streaming-decision tests run without the real AyoAI
+    backend. The server speaks the AyoaiV1 surface
+    (POST /AyoStreamingUpdates) and replays scripted responses queued by
+    the test. Stopped automatically on fixture teardown.
+    """
+    server = MockAyoaiServer()
+    server.start()
+    try:
+        yield server
+    finally:
+        server.stop()
