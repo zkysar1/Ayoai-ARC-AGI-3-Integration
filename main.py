@@ -16,6 +16,7 @@ from copy import deepcopy
 import requests
 from pydantic import ValidationError
 
+from ayoai_client import AyoaiSessionError, AyoaiSessionInfo, open_ayoai_session
 from recorder import Recorder
 from structs import FrameData, GameAction, GameState, Scorecard
 
@@ -198,11 +199,61 @@ def main() -> None:
         logger.error(f"Failed to parse scorecard response: {e}")
         return
 
+    # g-315-03: open AyoAI Environment Server session before starting the
+    # action loop. The card_id IS the ayoServerKey (per-game scope, mirrors
+    # Roblox per-place server-key). Env key "arc-agi-3" was registered by
+    # g-315-02 (see design/integration-design.md Part 9). Per echo/self.md
+    # Integration-Goal Constraint Gate: framework-routed (this is the gate).
+    ayoai_session: AyoaiSessionInfo | None = None
+    env_key = os.getenv("AYOAI_ENV_KEY", "arc-agi-3")
+    try:
+        logger.info(
+            f"Opening AyoAI session (ayoServerKey={card_id}, "
+            f"ayoEnvironmentKey={env_key})..."
+        )
+        ayoai_session = open_ayoai_session(card_id, env_key=env_key)
+        logger.info(
+            f"AyoAI session OPEN: hostname={ayoai_session.ayoai_hostname} "
+            f"streaming_url={ayoai_session.streaming_url} "
+            f"attempts={ayoai_session.attempts} "
+            f"elapsed_s={ayoai_session.elapsed_s}"
+        )
+    except AyoaiSessionError as e:
+        # Per echo/self.md "When the streaming contract breaks at runtime
+        # THEN abort the play and surface as Investigate (do NOT fall back
+        # to a non-AyoAI path; that bypasses the framework and is mission-
+        # fail)". Echo MUST NOT run the action loop without AyoAI routing.
+        logger.error(f"AyoAI session OPEN FAILED — aborting play: {e}")
+        # Close the scorecard so ARC accounting stays clean.
+        try:
+            session.post(
+                f"{ROOT_URL}/api/scorecard/close",
+                json={"card_id": card_id},
+                timeout=10,
+            )
+        except requests.exceptions.RequestException:
+            logger.exception("scorecard close also failed after session-open abort")
+        return
+
     # Setup recorder if requested
     recorder = None
     if args.record:
         recorder = Recorder(prefix=f"{args.game}.random")
         logger.info(f"Recording to: {recorder.filename}")
+        # Record the AyoAI session-open evidence as the recording's first
+        # entry — outcome 3 of g-315-03 ("evidence captured in a log line,
+        # probe output, or recording (not inferred)").
+        recorder.record({
+            "kind": "ayoai_session_open",
+            "ayo_server_key": ayoai_session.ayo_server_key,
+            "ayo_environment_key": ayoai_session.ayo_environment_key,
+            "ayoai_hostname": ayoai_session.ayoai_hostname,
+            "streaming_url": ayoai_session.streaming_url,
+            "env_server_url": ayoai_session.env_server_url,
+            "attempts": ayoai_session.attempts,
+            "elapsed_s": ayoai_session.elapsed_s,
+            "status_log": ayoai_session.status_log,
+        })
 
     # Game loop variables
     MAX_ACTIONS = 80

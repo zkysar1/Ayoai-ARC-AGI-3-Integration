@@ -1,11 +1,11 @@
 ---
 title: "ARC-AGI-3 ↔ AyoAI Integration Design"
-status: "v1.1 (env registered; endpoint URLs corrected)"
+status: "v1.2 (client-side session-open implemented; server-startup chain gap discovered, gated on Alpha via g-315-11)"
 authored_by: "echo"
 authored_at: "2026-05-16"
 authoring_goal: "g-315-01"
 last_updated_at: "2026-05-16"
-last_updated_goal: "g-315-02"
+last_updated_goal: "g-315-03"
 parent_aspiration: "asp-315 — AyoAI plays ARC-AGI-3 end-to-end through the framework"
 ---
 
@@ -555,3 +555,153 @@ mirrors verified values).
   the 8-task list IS the contract the solver must honor.
 - `g-315-08` (encoding) records the env's task list as a Verified Values
   block in the tree.
+
+---
+
+## Part 10 — Session-open implementation + server-startup chain gap (g-315-03, 2026-05-16)
+
+### 10.1 Client-side analog implemented
+
+`ayoai_client.py` is the Python analog of `SendUpdate.server.lua:130-249`.
+Single public entry point:
+
+```python
+from ayoai_client import open_ayoai_session, AyoaiSessionInfo, AyoaiSessionError
+
+info = open_ayoai_session(
+    card_id,                          # ARC card_id (== ayoServerKey)
+    env_key="arc-agi-3",              # registered by g-315-02
+    api_key=None,                     # falls back to AYOAI_API_KEY env var
+    max_attempts=90,                  # Roblox parity
+    retry_delay_s=1.0,                # Roblox parity
+)
+# On READY: info.ayoai_hostname + info.streaming_url + info.status_log
+# On API_ERROR / API_BROKEN / timeout: raises AyoaiSessionError
+```
+
+Roblox parity verified by code review against `SendUpdate.server.lua`:
+
+| Property | Roblox value | ARC value | Source line |
+|---|---|---|---|
+| Resolution URL | `https://api.ayoai.com/httpV1/GetStreamingUrlAndStatus` | same | SendUpdate.server.lua:171 |
+| Method | POST | POST | line 172 |
+| Header | `AYOAI-API-KEY: <key>` | same | line 175 |
+| Body | `{ayoServerKey, ayoEnvironmentKey}` | same | line 136-138 (encoded line 177) |
+| Max attempts | 90 | 90 | line 140 |
+| Retry delay | `wait(1)` | 1.0 s | line 146 |
+| Log intervals | `{1, 5, 10, 20, 30, 45, 60}` | same | line 166 |
+| Success gate | `data.isStreamingReady == true` | same | line 232 |
+| Streaming URL | `https://{hostname}:8787/AyoStreamingUpdates` | same | line 236 |
+| EnvServer URL | `https://{hostname}:8686` | same | line 245 |
+
+Wired into `main.py` between scorecard open and the action loop. If
+`AyoaiSessionError` raises, the action loop is aborted and the scorecard
+is closed — `echo/self.md` mission-fail rule (no falling back to a non-
+AyoAI path). Recorder captures the session-open evidence as the
+recording's first entry. Tests: 27 unit tests (mocked HTTP) + 40 baseline
+tests = 67/67 passing on pytest 9.0.2 Python 3.12.10.
+
+### 10.2 Live probe — server-startup chain is Roblox-coupled
+
+Live probe with a freshly issued ARC `card_id`:
+
+```
+Step 1: POST https://three.arcprize.org/api/scorecard/open  → HTTP 200
+          body.card_id = "731d963b-4f4d-42f6-95f7-dd43f2474a50"
+Step 2: POST https://api.ayoai.com/httpV1/GetStreamingUrlAndStatus
+          headers: AYOAI-API-KEY: <admin-tier>, Content-Type: application/json
+          body:    {ayoServerKey: "731d963b-4f4d-42f6-95f7-dd43f2474a50",
+                    ayoEnvironmentKey: "arc-agi-3"}
+        → HTTP 404
+          body: {"status": "fail", "error": "Server not found"}
+Step 3: POST https://three.arcprize.org/api/scorecard/close → HTTP 200 (cleaned up)
+```
+
+The arc-agi-3 environment IS registered (verified via
+`GET /httpV1/environments/arc-agi-3` returning HTTP 200 with the 8-task
+config and `serverCount=0`). No server exists for the card_id because
+**the AyoAI server-startup chain has no path that creates a server for a
+non-Roblox env key**:
+
+```
+Roblox client                                ARC client (today)
+   |                                            |
+   |                                            |  (no analog yet — gap)
+   v                                            v
+CollectAyoEnvironmentInBatchesOnStartUp     GetStreamingUrlAndStatus
+   |  body: {ayoServerKey, ayoEnvKey,            -> 404 "Server not found"
+   |         <Roblox state dump batch>}
+   v
+AssignAyoEnvironmentServerInstance          (no warm pool entry exists
+   (warm pool claim)                        for the ARC card_id, so the
+   \-> StartAyoServerEnvironment            chain never fired and no EFS
+       (cold path, Tier 3 — launches        directory was created)
+        c6i.large EC2)
+   \-> CreateAyoEnvironmentFromAllDumps
+       (reads /mnt/AyoAi/Accounts/{acct}/
+        {env}/{server}/N_dump.json files,
+        writes env.json + tasks.json that
+        the JAR polls on boot — Roblox-only
+        assembler; ARC has no dumps)
+```
+
+`CreateAyoEnvironmentFromAllDumps` is the structural choke point: the
+AyoServerEnvironment JAR boots and polls EFS for `env.json + tasks.json`,
+which only exist after the dump-assembler has run, which only runs after
+Roblox state dumps have been collected. ARC has no equivalent dump
+collection — the env config lives in DDB via
+`ManageEnvironmentsAndTasks`, not in per-session EFS dumps.
+
+### 10.3 Three architectural paths (Alpha to choose; g-315-11)
+
+1. **New ARC-compatible cold-start entry point**: a fresh public Lambda
+   that takes `{ayoServerKey, ayoEnvironmentKey}` ONLY, reads env config
+   from DDB (via `ManageEnvironmentsAndTasks` GET), writes EFS env files
+   directly, and triggers `AssignAyoEnvironmentServerInstance` /
+   `StartAyoServerEnvironment`. Bypasses `CreateAyoEnvironmentFromAllDumps`
+   entirely. Cleanest separation; preserves the Roblox-specific assembler.
+
+2. **Extend `CreateAyoEnvironmentFromAllDumps`** to recognize env keys
+   without per-session dumps and fall back to reading env config from DDB.
+   Minimal new surface; widens an existing Lambda.
+
+3. **Pre-create EFS env files at registration time**: extend
+   `ManageEnvironmentsAndTasks` so a `POST /httpV1/environments` ALSO
+   writes `/mnt/AyoAi/Accounts/{acct}/{envKey}/env.json + tasks.json`.
+   Then `CollectAyoEnvironmentInBatchesOnStartUp` with `isLastBatch=true`
+   can be called with an empty batch — the assembler runs but finds no
+   dumps to process, while the env files are already on EFS. The cleanest
+   reuse of existing paths; only widens the registration Lambda.
+
+The choice is Alpha's; the verification criterion is identical for all
+three: a freshly issued ARC card_id + ayoEnvironmentKey=arc-agi-3 ->
+GetStreamingUrlAndStatus returns isStreamingReady=true within the 90-attempt
+budget.
+
+### 10.4 Downstream impact
+
+- `g-315-03` cannot fully complete outcome 2 ("Server session reaches
+  streaming-ready state") until g-315-11 closes. The client-side
+  implementation is verified correct; integration test waits for backend.
+- `g-315-04` (streaming wire protocol) can proceed against a mocked
+  AyoAI server — the wire schema (ADD/UPDATE/DELETE on a unit tree, the
+  grid-env unit shape) is fully designed in §3 of this doc.
+- `g-315-05` (v0 solver) can proceed against the same mock — the action
+  vocabulary is fixed at the 8-task list.
+- `g-315-06` (`uv run main.py --game <id> --record` end-to-end) is the
+  natural gate: it requires both `g-315-04` (client wire) and `g-315-11`
+  (backend chain) to be closed before it can be the real end-to-end test.
+
+### 10.5 Why this gap was visible only at probe time
+
+The g-315-01 design read the Roblox client's `SendUpdate.server.lua` and
+inferred from it that the AyoAI streaming primitives were a closed contract
+the client just dialed into. That inference was correct for the streaming
+phase. What it missed: the server-startup chain happens BEFORE
+`SendUpdate.server.lua` is even loaded — Roblox places open by user-action,
+and that's what fires the chain. ARC has no equivalent place-open trigger;
+the chain assumes one upstream. A code-only review of `SendUpdate.server.lua`
+could not surface this gap. The literal Lambda response surfaced it
+immediately. Reinforces `.claude/rules/verify-before-assuming.md` Positive
+State Claims rule: integration claims must come from a live probe, not from
+client-code inference alone.
