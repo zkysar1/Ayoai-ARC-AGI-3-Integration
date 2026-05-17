@@ -284,12 +284,15 @@ def main() -> None:
                 logger.exception("scorecard close also failed after session-open abort")
             return
 
-    # g-315-15: instantiate the streaming decision client. Replaces the
-    # choose_random_action() stub at the call site below. AYOAI_API_KEY may
-    # be empty for mock mode (the mock ignores the header).
+    # g-315-15 + g-315-17: instantiate the streaming decision client.
+    # Replaces the choose_random_action() stub at the call site below.
+    # AYOAI_API_KEY may be empty for mock mode (the mock ignores the header).
+    # arc_game_id passes args.game so each unit's `arc_game_id` attribute
+    # carries the canonical value (integration-design.md §3.2).
     streaming_client = AyoaiStreamingClient(
         streaming_url=streaming_url,
         ayo_server_key=card_id,
+        arc_game_id=args.game,
         api_key=os.getenv("AYOAI_API_KEY", "") if not args.mock_url else "",
     )
 

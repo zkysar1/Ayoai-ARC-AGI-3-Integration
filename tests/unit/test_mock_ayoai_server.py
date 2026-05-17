@@ -81,7 +81,9 @@ def test_post_with_no_scripted_response_returns_default(mock_ayoai_server):
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "success"
-    assert body["data"]["action"] == "ACTION1"  # the default
+    # Canonical AyoaiV1 default response (g-315-17): data.decision.action
+    # not data.action. The flat shape was g-315-15 build drift.
+    assert body["data"]["decision"]["action"] == "ACTION1"
 
 
 def test_post_returns_scripted_response_in_order(mock_ayoai_server):
