@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 
 import pytest
+import requests
 
 from ayoai_streaming_client import (
     DECIDED_BY_AYOAI,
@@ -571,7 +572,13 @@ def test_simulated_game_loop_zero_random_fallbacks(mock_ayoai_server):
         actions_chosen.append(d0.action)
         provenances.append(d0.provenance)
 
-        # Ticks 1-6: in-progress → AyoAI decides
+        # Ticks 1-6: in-progress → AyoAI decides. available_actions includes
+        # ALL the actions the mock will return (otherwise §3.6 substitution
+        # would convert ACTION2/3/4 to RESET — that's tested separately).
+        all_actions = [
+            GameAction.ACTION1, GameAction.ACTION2, GameAction.ACTION3,
+            GameAction.ACTION4, GameAction.ACTION6, GameAction.ACTION7,
+        ]
         for tick in range(6):
             frame = FrameData(
                 game_id="ls20-test",
@@ -579,7 +586,7 @@ def test_simulated_game_loop_zero_random_fallbacks(mock_ayoai_server):
                 score=tick * 3,
                 frame=[[[tick] * 4]],
                 guid=f"guid-tick-{tick}",
-                available_actions=[GameAction.ACTION1, GameAction.ACTION6, GameAction.ACTION7],
+                available_actions=all_actions,
             )
             d = client.choose_action(frame)
             actions_chosen.append(d.action)
@@ -646,3 +653,247 @@ def test_transport_error_raises_api_error():
             client.choose_action(frame)
     finally:
         client.close()
+
+
+# ---------- §3.6 retry-with-backoff (g-315-20) ---------- #
+
+
+class _ScriptedSession:
+    """Test double for requests.Session that scripts responses + raises.
+
+    Each call to .post() pops the next item from `script`. Items are
+    either: (1) an exception to raise (simulating transport failure),
+    (2) a (status_code, body_text) tuple to return as a fake response.
+    Records the count of .post() calls in `call_count`.
+    """
+
+    def __init__(self, script: list):
+        self._script = list(script)
+        self.call_count = 0
+
+    def post(self, *args, **kwargs):
+        self.call_count += 1
+        if not self._script:
+            raise RuntimeError("ScriptedSession exhausted — test wrote too few items")
+        item = self._script.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        # (status_code, body_text) → return a fake Response
+        status_code, body_text = item
+
+        class _FakeResp:
+            def __init__(self, sc, bt):
+                self.status_code = sc
+                self.text = bt
+            def json(self):
+                return json.loads(self.text)
+        return _FakeResp(status_code, body_text)
+
+    def close(self):
+        pass
+
+
+def test_transient_error_retried_then_succeeds(mock_ayoai_server):
+    """Transient transport failure retried; final success returned."""
+    transient = requests.exceptions.ConnectionError("DnsResolve: temporary failure")
+    success_body = '{"status":"success","data":{"decision":{"action":"ACTION1"}}}'
+    session = _ScriptedSession([transient, transient, (200, success_body)])
+    sleep_calls: list[float] = []
+    client = AyoaiStreamingClient(
+        streaming_url="http://x/AyoStreamingUpdates",
+        ayo_server_key=CARD_ID,
+        api_key="",
+        session=session,
+        retry_sleep=sleep_calls.append,
+    )
+    try:
+        frame = FrameData(
+            game_id="g-retry",
+            state=GameState.NOT_FINISHED,
+            available_actions=[GameAction.ACTION1],
+        )
+        decision = client.choose_action(frame)
+    finally:
+        client.close()
+
+    assert decision.action == GameAction.ACTION1
+    assert decision.provenance["decided_by"] == DECIDED_BY_AYOAI
+    # 3 attempts: first 2 transient, 3rd succeeded
+    assert session.call_count == 3
+    # 2 sleeps before retries: 2s, 4s (exponential backoff)
+    assert sleep_calls == [2.0, 4.0]
+
+
+def test_transient_error_retries_exhausted_raises(mock_ayoai_server):
+    """4 transient retries exhausted (5 total attempts) → raise."""
+    transient = requests.exceptions.ConnectionError("Timedout while connecting")
+    session = _ScriptedSession([transient] * 5)
+    sleep_calls: list[float] = []
+    client = AyoaiStreamingClient(
+        streaming_url="http://x/AyoStreamingUpdates",
+        ayo_server_key=CARD_ID,
+        api_key="",
+        session=session,
+        retry_sleep=sleep_calls.append,
+    )
+    try:
+        frame = FrameData(game_id="g-exhaust", state=GameState.NOT_FINISHED)
+        with pytest.raises(AyoaiStreamingApiError, match="transient retries"):
+            client.choose_action(frame)
+    finally:
+        client.close()
+
+    assert session.call_count == 5  # 1 initial + 4 retries
+    # 4 sleep windows: 2s, 4s, 8s, 16s
+    assert sleep_calls == [2.0, 4.0, 8.0, 16.0]
+
+
+def test_non_transient_error_not_retried(mock_ayoai_server):
+    """A non-transient error (matching no §3.6 pattern) raises on first try."""
+    non_transient = requests.exceptions.RequestException("PermissionDenied: forbidden")
+    session = _ScriptedSession([non_transient])
+    sleep_calls: list[float] = []
+    client = AyoaiStreamingClient(
+        streaming_url="http://x/AyoStreamingUpdates",
+        ayo_server_key=CARD_ID,
+        api_key="",
+        session=session,
+        retry_sleep=sleep_calls.append,
+    )
+    try:
+        frame = FrameData(game_id="g-nt", state=GameState.NOT_FINISHED)
+        with pytest.raises(AyoaiStreamingApiError, match="streaming request failed"):
+            client.choose_action(frame)
+    finally:
+        client.close()
+
+    assert session.call_count == 1  # no retry
+    assert sleep_calls == []  # no sleeps
+
+
+def test_transient_http_500_with_internal_error_body_retried(mock_ayoai_server):
+    """5xx with transient body pattern triggers retry; non-transient 5xx does not."""
+    transient_500 = (500, "InternalError: try again")
+    success_body = '{"status":"success","data":{"decision":{"action":"ACTION1"}}}'
+    session = _ScriptedSession([transient_500, (200, success_body)])
+    sleep_calls: list[float] = []
+    client = AyoaiStreamingClient(
+        streaming_url="http://x/AyoStreamingUpdates",
+        ayo_server_key=CARD_ID,
+        api_key="",
+        session=session,
+        retry_sleep=sleep_calls.append,
+    )
+    try:
+        frame = FrameData(
+            game_id="g-500",
+            state=GameState.NOT_FINISHED,
+            available_actions=[GameAction.ACTION1],
+        )
+        decision = client.choose_action(frame)
+    finally:
+        client.close()
+
+    assert decision.action == GameAction.ACTION1
+    assert session.call_count == 2  # 500 then 200
+    assert sleep_calls == [2.0]
+
+
+def test_http_4xx_never_retried(mock_ayoai_server):
+    """4xx is a request-shape error per §3.6 line 309 — no retry."""
+    not_found = (404, "Not Found")
+    session = _ScriptedSession([not_found])
+    sleep_calls: list[float] = []
+    client = AyoaiStreamingClient(
+        streaming_url="http://x/AyoStreamingUpdates",
+        ayo_server_key=CARD_ID,
+        api_key="",
+        session=session,
+        retry_sleep=sleep_calls.append,
+    )
+    try:
+        frame = FrameData(game_id="g-404", state=GameState.NOT_FINISHED)
+        with pytest.raises(AyoaiStreamingApiError, match=r"HTTP 404"):
+            client.choose_action(frame)
+    finally:
+        client.close()
+
+    assert session.call_count == 1
+    assert sleep_calls == []
+
+
+# ---------- §3.6 illegal-action substitution (g-315-20) ---------- #
+
+
+def test_illegal_action_substituted_to_reset_with_deviation_provenance(mock_ayoai_server):
+    """Action ∉ available_actions → RESET substitution + deviation logged."""
+    mock_ayoai_server.add_response(_decision_response("ACTION6", x=10, y=20))
+    frame = FrameData(
+        game_id="g-illegal",
+        state=GameState.NOT_FINISHED,
+        # ACTION6 is NOT in this list — substitution should fire
+        available_actions=[GameAction.ACTION1, GameAction.ACTION3],
+    )
+    with AyoaiStreamingClient(
+        streaming_url=mock_ayoai_server.streaming_url,
+        ayo_server_key=CARD_ID,
+        api_key="",
+    ) as client:
+        decision = client.choose_action(frame)
+
+    # Substitution result
+    assert decision.action == GameAction.RESET
+    # Coords cleared because RESET takes none
+    assert decision.x is None
+    assert decision.y is None
+    # Deviation logged in provenance per §3.6 "log the deviation as evidence"
+    assert decision.provenance["deviation"] is True
+    assert decision.provenance["deviation_original_action"] == "ACTION6"
+    assert decision.provenance["deviation_original_x"] == 10
+    assert decision.provenance["deviation_original_y"] == 20
+    assert "illegal-action" in decision.provenance["deviation_reason"]
+    # decided_by stays ayoai-v1 — the substitution is a wrapper, not a
+    # client-RESET game-control. The recorder distinguishes deviation via
+    # the explicit `deviation` field.
+    assert decision.provenance["decided_by"] == DECIDED_BY_AYOAI
+
+
+def test_legal_action_does_not_trigger_substitution(mock_ayoai_server):
+    """Action ∈ available_actions → no substitution, no deviation provenance."""
+    mock_ayoai_server.add_response(_decision_response("ACTION3"))
+    frame = FrameData(
+        game_id="g-legal",
+        state=GameState.NOT_FINISHED,
+        available_actions=[GameAction.ACTION1, GameAction.ACTION3, GameAction.ACTION6],
+    )
+    with AyoaiStreamingClient(
+        streaming_url=mock_ayoai_server.streaming_url,
+        ayo_server_key=CARD_ID,
+        api_key="",
+    ) as client:
+        decision = client.choose_action(frame)
+
+    assert decision.action == GameAction.ACTION3
+    # No deviation key when action is legal
+    assert "deviation" not in decision.provenance
+    assert "deviation_original_action" not in decision.provenance
+
+
+def test_empty_available_actions_bypasses_substitution(mock_ayoai_server):
+    """available_actions=[] → check bypassed (caller signal of don't-enforce)."""
+    mock_ayoai_server.add_response(_decision_response("ACTION1"))
+    frame = FrameData(
+        game_id="g-bypass",
+        state=GameState.NOT_FINISHED,
+        available_actions=[],  # empty → bypass substitution
+    )
+    with AyoaiStreamingClient(
+        streaming_url=mock_ayoai_server.streaming_url,
+        ayo_server_key=CARD_ID,
+        api_key="",
+    ) as client:
+        decision = client.choose_action(frame)
+
+    # Action accepted as-is, no substitution
+    assert decision.action == GameAction.ACTION1
+    assert "deviation" not in decision.provenance
