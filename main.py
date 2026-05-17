@@ -118,6 +118,135 @@ def send_action(
         return None
 
 
+def run_game_loop(
+    streaming_client: AyoaiStreamingClient,
+    action_sender,
+    initial_frame: FrameData,
+    *,
+    recorder=None,
+    max_actions: int = 80,
+    game_id: str | None = None,
+    log: logging.Logger | None = None,
+) -> tuple[int, float]:
+    """Drive a full game through AyoAI streaming with the §3.4 ADD/UPDATE/DELETE lifecycle.
+
+    Extracted from main() in g-315-22 so the lifecycle wire-in is testable.
+    Per integration-design.md §3.4 + arc-agi-3 tree node:
+
+      - ADD fires once when the first non-NOT_PLAYED frame is seen — i.e.
+        AFTER the initial client-side RESET resolves and returns a real
+        ARC frame. ADD must precede the first UPDATE so AyoAI knows the
+        grid-env unit exists.
+      - UPDATE fires per tick via streaming_client.choose_action().
+      - DELETE fires once in the finally-block, ONLY if ADD was sent.
+        Covers KeyboardInterrupt, normal game-end (WIN/GAME_OVER),
+        MAX_ACTIONS exhaustion, choose_action / action_sender failures,
+        and unexpected exceptions.
+
+    Args:
+        streaming_client: the AyoAI streaming decision client.
+        action_sender: callable (action, guid, x, y) -> FrameData | None.
+            Wraps the ARC API send_action — passed in so the loop is
+            testable without a live requests.Session.
+        initial_frame: the starting frame (typically FrameData(score=0)
+            with state=NOT_PLAYED).
+        recorder: optional Recorder for per-tick JSONL recording.
+        max_actions: action count cap (default 80; matches MAX_ACTIONS).
+        game_id: optional game identifier for log line context.
+        log: optional logger; defaults to the module logger.
+
+    Returns:
+        (action_counter, elapsed_seconds) — used by the caller for
+        final-stats logging.
+    """
+    log = log or logger
+    frames = [initial_frame]
+    action_counter = 0
+    add_sent = False
+    timer = time.time()
+    game_label = game_id or "game"
+
+    try:
+        while action_counter <= max_actions:
+            current_frame = frames[-1]
+
+            # Game-end check
+            if current_frame.state in [GameState.WIN, GameState.GAME_OVER]:
+                log.info(f"Game ended with state: {current_frame.state}")
+                break
+
+            # ADD wire-in (g-315-22): send ADD once for the first real frame.
+            # initial_frame has state=NOT_PLAYED. After the first
+            # action_sender(RESET) returns a real ARC frame, state becomes
+            # NOT_FINISHED (or WIN/GAME_OVER, handled above). ADD must
+            # precede the first UPDATE so AyoAI registers the grid-env unit.
+            if not add_sent and current_frame.state != GameState.NOT_PLAYED:
+                try:
+                    streaming_client.send_add(current_frame)
+                    add_sent = True
+                    log.info("AyoAI send_add completed — grid-env unit registered")
+                except AyoaiStreamingError as e:
+                    log.error(f"AyoAI send_add FAILED — aborting play: {e}")
+                    break
+
+            # UPDATE per tick. RESET is decided client-side (game-control);
+            # everything else routes through AyoAI. Protocol errors abort
+            # the play per echo/self.md.
+            try:
+                decision = streaming_client.choose_action(current_frame)
+            except AyoaiStreamingError as e:
+                log.error(
+                    f"AyoAI streaming decision FAILED — aborting play: {e}"
+                )
+                break
+            action = decision.action
+
+            # Send action to API. x,y are AyoAI-supplied for ACTION6
+            # (None for other actions; send_action ignores them).
+            new_frame = action_sender(
+                action, current_frame.guid, decision.x, decision.y,
+            )
+
+            if new_frame:
+                frames.append(new_frame)
+                action_counter += 1
+                elapsed = time.time() - timer
+                fps = action_counter / elapsed if elapsed > 0 else 0
+                log.info(
+                    f"{game_label} - {action.name}: count {action_counter}, "
+                    f"score {new_frame.score}, decided_by="
+                    f"{decision.provenance.get('decided_by', '?')}, "
+                    f"avg fps {fps:.2f}"
+                )
+                # Record with provenance so every recorded action carries
+                # decided_by ∈ {ayoai-v1, client} — g-315-04 outcome 1.
+                if recorder:
+                    record = new_frame.model_dump(mode='json')
+                    record["decision_provenance"] = decision.provenance
+                    recorder.record(record)
+            else:
+                log.error("Failed to get frame, stopping")
+                break
+
+    except KeyboardInterrupt:
+        log.info("Game loop interrupted by user")
+    except Exception as e:
+        log.error(f"Game loop failed with error: {e}", exc_info=True)
+    finally:
+        # DELETE wire-in (g-315-22): fire ONLY if ADD was sent. Never
+        # DELETE a unit we never registered. Non-fatal on failure — the
+        # game-end ceremony still completes through scorecard close.
+        if add_sent:
+            try:
+                streaming_client.send_delete()
+                log.info("AyoAI send_delete completed — grid-env unit deleted")
+            except Exception:
+                log.exception("send_delete failed at game end (non-fatal)")
+
+    elapsed = time.time() - timer
+    return action_counter, elapsed
+
+
 def main() -> None:
     log_level = logging.INFO
     if os.environ.get("DEBUG", "False") == "True":
@@ -329,78 +458,26 @@ def main() -> None:
 
     # Game loop variables
     MAX_ACTIONS = 80
-    action_counter = 0
-    frames = [FrameData(score=0)]
-    timer = time.time()
 
     logger.info(f"Starting game loop for: {args.game}")
 
-    # Main game loop — g-315-15: every action routes through AyoAI (mock or live).
-    try:
-        while action_counter <= MAX_ACTIONS:
-            current_frame = frames[-1]
-
-            # Check if done
-            if current_frame.state in [GameState.WIN, GameState.GAME_OVER]:
-                logger.info(f"Game ended with state: {current_frame.state}")
-                break
-
-            # Choose action via the AyoAI streaming client. RESET is decided
-            # client-side (game-control); everything else routes through
-            # AyoAI. Protocol errors abort the play per echo/self.md.
-            try:
-                decision = streaming_client.choose_action(current_frame)
-            except AyoaiStreamingError as e:
-                logger.error(
-                    f"AyoAI streaming decision FAILED — aborting play: {e}"
-                )
-                break
-            action = decision.action
-
-            # Send action to API. x,y are AyoAI-supplied for ACTION6
-            # (None for other actions; send_action ignores them).
-            new_frame = send_action(
-                session,
-                args.game,
-                card_id,
-                action,
-                current_frame.guid,
-                x=decision.x,
-                y=decision.y,
-            )
-
-            if new_frame:
-                frames.append(new_frame)
-                action_counter += 1
-
-                # Calculate FPS
-                elapsed = time.time() - timer
-                fps = action_counter / elapsed if elapsed > 0 else 0
-
-                logger.info(
-                    f"{args.game} - {action.name}: count {action_counter}, "
-                    f"score {new_frame.score}, decided_by="
-                    f"{decision.provenance.get('decided_by', '?')}, "
-                    f"avg fps {fps:.2f}"
-                )
-
-                # Record with provenance so every recorded action carries
-                # decided_by ∈ {ayoai-v1, client} — g-315-04 outcome 1.
-                if recorder:
-                    record = new_frame.model_dump(mode='json')
-                    record["decision_provenance"] = decision.provenance
-                    recorder.record(record)
-            else:
-                logger.error("Failed to get frame, stopping")
-                break
-
-    except KeyboardInterrupt:
-        logger.info("Game loop interrupted by user")
-    except Exception as e:
-        logger.error(f"Game loop failed with error: {e}", exc_info=True)
+    # Game loop extracted to run_game_loop() in g-315-22 so the
+    # §3.4 ADD/UPDATE/DELETE lifecycle wire-in is testable in isolation.
+    # action_sender wraps send_action so the helper has no requests.Session
+    # coupling — the live API call still happens inside the lambda.
+    action_counter, elapsed = run_game_loop(
+        streaming_client,
+        lambda action, guid, x, y: send_action(
+            session, args.game, card_id, action, guid, x=x, y=y,
+        ),
+        FrameData(score=0),
+        recorder=recorder,
+        max_actions=MAX_ACTIONS,
+        game_id=args.game,
+        log=logger,
+    )
 
     # Log final stats
-    elapsed = time.time() - timer
     fps = action_counter / elapsed if elapsed > 0 else 0
     logger.info(
         f"Exiting: agent reached {action_counter} actions, "
