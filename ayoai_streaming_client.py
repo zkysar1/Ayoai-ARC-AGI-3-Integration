@@ -272,7 +272,9 @@ class AyoaiStreamingClient:
         self._tick += 1
         payload = self._encode_frame(frame, op="UPDATE", pending_decision=True)
         body = self._post(payload)
-        return self._decode_decision(body)
+        # Pass frame.available_actions through so _decode_decision can
+        # enforce §3.6 line 311 (illegal-action → RESET substitution).
+        return self._decode_decision(body, frame.available_actions or [])
 
     def send_add(self, frame: FrameData) -> None:
         """Send the initial ADD op for the grid-env unit (game-start).
@@ -407,31 +409,102 @@ class AyoaiStreamingClient:
             }],
         }
 
+    @staticmethod
+    def _is_transient_error(payload: str) -> bool:
+        """Return True if `payload` mentions any §3.6 transient pattern.
+
+        Pattern match is case-insensitive substring (the spec leaves
+        exact spelling to the platform). Used to decide whether to retry
+        a transport/5xx failure.
+        """
+        lower = payload.lower()
+        return any(p.lower() in lower for p in _TRANSIENT_PATTERNS)
+
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """POST + parse + status-success gate. Returns the JSON body.
+        """POST + parse + status-success gate with §3.6 retry-with-backoff.
 
         Centralizes transport/HTTP/JSON/status checks so choose_action,
         send_add, and send_delete share one error-handling surface.
-        Raises AyoaiStreamingApiError on transport, non-200, or
-        status=fail; raises AyoaiStreamingProtocolError on JSON decode
-        failure.
-        """
-        try:
-            r = self._session.post(
-                self.streaming_url,
-                headers=self._build_headers(),
-                json=payload,
-                timeout=self.http_timeout_s,
-            )
-        except requests.exceptions.RequestException as e:
-            raise AyoaiStreamingApiError(
-                f"streaming request failed (tick {self._tick}): {e!r}"
-            ) from e
+        On transient failures (matching §3.6 patterns: DnsResolve,
+        ConnectFail, ConnectionClosed, Timedout, SslConnectFail, NetFail,
+        InternalError), retries up to MAX_TRANSIENT_RETRIES (4) with
+        exponential backoff `TRANSIENT_RETRY_BASE_DELAY_S * 2^attempt`
+        (2s, 4s, 8s, 16s). Parity with SendUpdate.server.lua:790-820.
 
-        if r.status_code != 200:
+        Raises AyoaiStreamingApiError on:
+        - Non-transient transport failure (first attempt, no retry)
+        - HTTP non-200 with non-transient body (no retry)
+        - Retry exhaustion (4 transient retries failed)
+        - status=fail in the JSON response
+        Raises AyoaiStreamingProtocolError on JSON decode failure or
+        non-dict body shape.
+        """
+        last_error: str | None = None
+        for attempt in range(MAX_TRANSIENT_RETRIES + 1):  # 0..4 = 5 attempts
+            # Sleep BEFORE the retry (not before the first attempt).
+            if attempt > 0:
+                delay = TRANSIENT_RETRY_BASE_DELAY_S * (2 ** (attempt - 1))
+                logger.warning(
+                    f"streaming POST tick {self._tick} attempt {attempt}/{MAX_TRANSIENT_RETRIES}: "
+                    f"transient error, retrying in {delay}s. Last: {last_error}"
+                )
+                self._retry_sleep(delay)
+
+            try:
+                r = self._session.post(
+                    self.streaming_url,
+                    headers=self._build_headers(),
+                    json=payload,
+                    timeout=self.http_timeout_s,
+                )
+            except requests.exceptions.RequestException as e:
+                # Transport-level failure. Check if it's transient.
+                err_str = repr(e)
+                if self._is_transient_error(err_str) and attempt < MAX_TRANSIENT_RETRIES:
+                    last_error = err_str
+                    continue
+                # Non-transient transport failure, OR retry exhausted.
+                if attempt > 0:
+                    raise AyoaiStreamingApiError(
+                        f"streaming request failed after {attempt} transient retries "
+                        f"(tick {self._tick}): {err_str}"
+                    ) from e
+                raise AyoaiStreamingApiError(
+                    f"streaming request failed (tick {self._tick}): {err_str}"
+                ) from e
+
+            if r.status_code != 200:
+                # 5xx with transient pattern in body → retry; everything
+                # else (4xx, non-transient 5xx) → raise immediately per
+                # §3.6 line 309 ("4xx: No retry; the request shape is wrong").
+                body_preview = r.text[:200]
+                if (500 <= r.status_code < 600
+                        and self._is_transient_error(body_preview)
+                        and attempt < MAX_TRANSIENT_RETRIES):
+                    last_error = f"HTTP {r.status_code}: {body_preview}"
+                    continue
+                if attempt > 0:
+                    raise AyoaiStreamingApiError(
+                        f"streaming server returned HTTP {r.status_code} after "
+                        f"{attempt} transient retries (tick {self._tick}): {body_preview}"
+                    )
+                raise AyoaiStreamingApiError(
+                    f"streaming server returned HTTP {r.status_code} "
+                    f"(tick {self._tick}): {body_preview}"
+                )
+
+            # 200 OK — break out of the retry loop and process the body.
+            break
+        else:
+            # Loop completed without break — retry exhausted. This branch
+            # is only reached if all 5 attempts hit `continue` (none returned
+            # 200, none raised non-transient). The last `continue` came from
+            # either a transport exception or a 5xx body; the inline raises
+            # above don't reach here because they have `attempt < MAX_...`
+            # gating, so this is the canonical "exhausted" path.
             raise AyoaiStreamingApiError(
-                f"streaming server returned HTTP {r.status_code} "
-                f"(tick {self._tick}): {r.text[:200]}"
+                f"streaming POST exhausted {MAX_TRANSIENT_RETRIES} transient retries "
+                f"(tick {self._tick}). Last: {last_error}"
             )
 
         try:
@@ -455,13 +528,25 @@ class AyoaiStreamingClient:
 
         return body
 
-    def _decode_decision(self, body: dict[str, Any]) -> AyoaiDecision:
+    def _decode_decision(
+        self,
+        body: dict[str, Any],
+        available_actions: list[GameAction] | None = None,
+    ) -> AyoaiDecision:
         """Parse the UPDATE response into an AyoaiDecision.
 
         Reads `data.decision.{action, x?, y?, reasoning?}` per
         integration-design.md §2.4 (NESTED under `decision`, not flat
         on `data`). Validates ACTION6 coords are int and in [0, 63];
         unknown action names raise — no random fallback.
+
+        §3.6 line 311 enforcement: if the decoded action is NOT in
+        `available_actions`, substitute RESET and tag provenance with
+        `deviation=true` + the original action name. The spec is explicit:
+        "Substitute RESET and log the deviation as evidence; do NOT
+        silently drop." When `available_actions` is None or empty, the
+        check is bypassed (caller didn't supply the list — typical for
+        non-game-loop callers).
         """
         data = body.get("data")
         if not isinstance(data, dict):
@@ -495,9 +580,36 @@ class AyoaiStreamingClient:
         y = decision.get("y")
         reasoning = decision.get("reasoning")
 
+        # §3.6 line 311: illegal-action substitution → RESET. Bypass when
+        # available_actions wasn't supplied (empty list or None).
+        deviation_original: str | None = None
+        if available_actions:
+            avail_names = {
+                a.name if isinstance(a, GameAction) else str(a)
+                for a in available_actions
+            }
+            if action.name not in avail_names:
+                logger.warning(
+                    f"§3.6 illegal-action: AyoAI returned {action.name!r} "
+                    f"(tick {self._tick}) but available_actions={sorted(avail_names)}. "
+                    f"Substituting RESET and logging deviation."
+                )
+                deviation_original = action.name
+                action = GameAction.RESET
+                # Clear x,y — RESET takes no coords. The original ACTION6
+                # x/y (if any) are preserved in provenance.deviation_x/y.
+                x_orig, y_orig = x, y
+                x = None
+                y = None
+            else:
+                x_orig, y_orig = None, None
+        else:
+            x_orig, y_orig = None, None
+
         # Validate x,y for complex actions per .claude/rules/verify-before-assuming.md
         # (positive file-state claims). ACTION6 without x,y is a protocol
-        # error — never paper over with random fallback.
+        # error — never paper over with random fallback. Only fires when
+        # action is still complex (i.e., wasn't substituted to RESET above).
         if action.is_complex():
             if x is None or y is None:
                 raise AyoaiStreamingProtocolError(
@@ -526,6 +638,16 @@ class AyoaiStreamingClient:
             "response_status": body.get("status"),
             "tick": self._tick,
         }
+        if deviation_original is not None:
+            # §3.6 spec: "log the deviation as evidence". Provenance is the
+            # canonical evidence channel — recorder writes it on every action.
+            provenance["deviation"] = True
+            provenance["deviation_reason"] = "illegal-action substituted to RESET"
+            provenance["deviation_original_action"] = deviation_original
+            if x_orig is not None:
+                provenance["deviation_original_x"] = x_orig
+            if y_orig is not None:
+                provenance["deviation_original_y"] = y_orig
         if reasoning is not None:
             preview = (
                 reasoning[:200]
