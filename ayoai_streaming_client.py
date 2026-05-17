@@ -49,6 +49,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -61,6 +62,25 @@ logger = logging.getLogger(__name__)
 DEFAULT_HTTP_TIMEOUT_S = 10.0
 DECIDED_BY_AYOAI = "ayoai-v1"
 DECIDED_BY_CLIENT = "client"
+
+# §3.6 retry parameters (parity with SendUpdate.server.lua's
+# MAX_TRANSIENT_RETRIES + TRANSIENT_RETRY_DELAY * 2^attempt).
+MAX_TRANSIENT_RETRIES = 4
+TRANSIENT_RETRY_BASE_DELAY_S = 2.0
+
+# §3.6 line 308: transient-network patterns the spec says to retry. Matched
+# against the string form of the underlying exception (or HTTP body text on
+# 5xx). Patterns are case-insensitive substrings — the spec leaves exact
+# spelling to the platform, so we accept any variant containing the token.
+_TRANSIENT_PATTERNS: tuple[str, ...] = (
+    "DnsResolve",
+    "ConnectFail",
+    "ConnectionClosed",
+    "Timedout",
+    "SslConnectFail",
+    "NetFail",
+    "InternalError",
+)
 
 
 class AyoaiStreamingError(Exception):
@@ -184,6 +204,7 @@ class AyoaiStreamingClient:
         *,
         http_timeout_s: float = DEFAULT_HTTP_TIMEOUT_S,
         session: requests.Session | None = None,
+        retry_sleep: Any = None,
     ) -> None:
         if not streaming_url:
             raise AyoaiStreamingError("streaming_url is required")
@@ -198,6 +219,10 @@ class AyoaiStreamingClient:
         self.http_timeout_s = http_timeout_s
         self._owned_session = session is None
         self._session = session or requests.Session()
+        # Injectable sleep for tests — defaults to time.sleep. Tests pass a
+        # no-op or a counter to avoid real wall-clock blocking during retry
+        # exhaustion paths.
+        self._retry_sleep = retry_sleep if retry_sleep is not None else time.sleep
 
         # Tick counter for stream correlation. Increments on every server
         # call; resets are NOT counted (they don't reach the server).
