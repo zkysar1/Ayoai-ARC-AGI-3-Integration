@@ -130,9 +130,12 @@ class MockAyoaiServer:
         self.port = port
         self.scripted_responses: deque[dict] = deque()
         self.received_payloads: list[Any] = []
+        # Canonical AyoaiV1 decision shape per integration-design.md §2.4:
+        # data.decision.{action, x?, y?, reasoning?}. The g-315-15 build
+        # used a flat data.{action,...} shape; g-315-17 realigned to spec.
         self.default_response = default_response or {
             "status": "success",
-            "data": {"action": "ACTION1"},
+            "data": {"decision": {"action": "ACTION1"}},
         }
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
