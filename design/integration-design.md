@@ -1,11 +1,11 @@
 ---
 title: "ARC-AGI-3 ↔ AyoAI Integration Design"
-status: "v1.3 (streaming client through cutover spec: g-315-15 mock wire-in, g-315-17 arc_game_id wire-shape, g-315-20 §3.6 retry-with-backoff + illegal-action substitution, g-315-22 ADD/UPDATE/DELETE lifecycle, g-315-28 cutover spec; server-startup chain still gated on Alpha via g-315-11)"
+status: "v1.4 (streaming client through cutover spec + v0 solver first-principles design (Part 11): g-315-15 mock wire-in, g-315-17 arc_game_id wire-shape, g-315-20 §3.6 retry-with-backoff + illegal-action substitution, g-315-22 ADD/UPDATE/DELETE lifecycle, g-315-28 cutover spec, g-315-43 doc refresh, g-315-45 Part 11 v0 solver strategy choice; server-startup chain still gated on Alpha via g-315-11)"
 authored_by: "echo"
 authored_at: "2026-05-16"
 authoring_goal: "g-315-01"
 last_updated_at: "2026-05-18"
-last_updated_goal: "g-315-43"
+last_updated_goal: "g-315-45"
 parent_aspiration: "asp-315 — AyoAI plays ARC-AGI-3 end-to-end through the framework"
 ---
 
@@ -731,3 +731,200 @@ could not surface this gap. The literal Lambda response surfaced it
 immediately. Reinforces `.claude/rules/verify-before-assuming.md` Positive
 State Claims rule: integration claims must come from a live probe, not from
 client-code inference alone.
+
+---
+
+## Part 11 — V0 Solver Design — First-Principles Strategy Choice (g-315-45, 2026-05-18)
+
+Part 11 derives — from the inputs the solver sees and the output the
+streaming contract requires — what kind of strategy the v0 solver (`g-315-05`)
+should be. It compares 3-4 candidate strategy families, picks one with
+rationale, and defines an offline test surface. The detailed implementation
+mechanism (filter rule, per-class efficacy table, echo classification,
+bootstrap loop, re-bootstrap thresholds) is pre-encoded in the tree node
+`world/knowledge/tree/intelligence/ayoai-game-integration/game-system-instances/arc-agi-3/solver-strategy-primer.md`
+and bundled as `rb-1031` (bootstrap-then-score methodology) + `rb-1028`
+(available_actions filter cross-class invariant). Part 11 says **why** v0
+looks the way it does; the primer says **how**.
+
+### 11.1 Input shape at decision time
+
+When `AyoaiV1StreamClient.choose_action(frame_data)` is invoked (the call
+site cut over in g-315-28; see Part 3.1 / §3.4), the solver receives the
+grid-env unit's `attributes` block — the full §3.2 enumeration. Concretely,
+the decision-relevant subset is:
+
+| Attribute | Type | Why the solver cares |
+|---|---|---|
+| `frame` + (`frame_layers`, `frame_rows`, `frame_cols`) | JSON-encoded 3-D int grid + shape ints | The world-state observation; cells in [0, 15] per ARC docs. The solver MAY index it (info-gain proxy via cell-diff against prior frame) but MUST NOT pattern-match on cell values (memorization → 0 score per `echo/self.md` "Skill acquisition, never memorization"). |
+| `state` | string | One of `NOT_PLAYED ∣ NOT_FINISHED ∣ WIN ∣ GAME_OVER`. Drives the echo-classification taxonomy (primer §3 outcomes 4-5). |
+| `score` | int [0, 254] | Score-delta against prior tick = primary reward signal. |
+| `available_actions` | comma-separated `GameAction.name`s | **The structural lever.** The §1 filter rule of the primer turns "intersect candidate set with this list" into the cheapest 42.9% efficacy win on ls20 with zero learning required (rb-1028). |
+| `last_action_id`, `last_action_x`, `last_action_y` | int(s) | Prior tick's action — needed to associate this frame's echo with the action that produced it for table updates (primer §3). |
+| `last_reasoning` | string (JSON, ≤16 KiB) | Prior tick's reasoning blob, echoed back. Available for stateful solvers; v0 does NOT carry state across ticks in this slot — see §11.5 test surface. |
+| `pending_decision` | bool (always `true`) | Marker that AyoAI's response MUST include `data.decision`. Acts as the "decision required" gate, not a control input. |
+| `arc_game_id` | string | The class identifier (e.g. `ls20`, `as66`, `ft09`). **Drives per-class table isolation** (primer §5 generalization caveat). |
+| `arc_card_id` | string | The card_id / ayoServerKey. Not used in the decision; carried for in-band dual-check only. |
+| `guid` | string | ARC state-continuity token (§3.5). Not used in the decision; echoed verbatim. |
+
+What the solver does NOT receive: prior-frame snapshots beyond `last_*`,
+cross-class efficacy hints, action semantics ("ACTION4 means redraw" is
+something the solver MEASURES, not something the API tells it), or any
+LLM context. The hot path stays deterministic-math per the tiny-compute
+constraint.
+
+### 11.2 Output shape
+
+The solver returns a single `Decision` dict matching the §2.4 schema:
+
+```jsonc
+{
+  "action":   "ACTION1|ACTION2|ACTION3|ACTION4|ACTION5|ACTION6|ACTION7|RESET",
+  "x":        0,                            // ACTION6 only, [0, 63]
+  "y":        0,                            // ACTION6 only, [0, 63]
+  "reasoning": { /* opaque ≤16 KiB */ }     // optional
+}
+```
+
+Invariants the solver must satisfy on the output:
+
+1. **Legality**: `action` MUST appear in this frame's `available_actions`.
+   The §1 filter from the primer enforces this before the `Decision` is
+   constructed; a v0 solver that returns a non-available action is broken.
+2. **ACTION6 coordinates**: if `action == "ACTION6"`, both `x` and `y` MUST
+   be in `[0, 63]`. v0 picks them per the class table; if no signal, it
+   centers (32, 32) as a deterministic default rather than uniform-random.
+3. **`reasoning` carries trace**: v0 SHOULD write a compact trace into
+   `reasoning` (action chosen, score, why) so the recording layer captures
+   the chain (per §3.7 + Part 5 Decision 1 "thin tracing in reasoning blob").
+   v0 MUST NOT embed table-state in `reasoning` — solver state lives in
+   process memory across the play session, NOT in the wire format.
+
+### 11.3 Candidate strategies (cost / quality tradeoffs under 8 GB / 2 vCPU)
+
+| # | Strategy | Per-tick cost | Quality on ls20 (measured / structural) | Generalization | Fit for v0 |
+|---|---|---|---|---|---|
+| **A** | Pure random (`random.choice(GameAction)`) — current `choose_random_action` baseline | O(1) | 14% efficacy on 81-tick recording (g-315-30) — wasted ~43% of ticks on always-illegal ACTION5/6/7 | Methodology-neutral (no learning at all) | **Reject.** Already deployed; rb-1028 proves it leaves 42.9% structural efficacy on the table. |
+| **B** | Available-filtered random (`random.choice(frame.available_actions)`) | O(\|A\|) | ~24% efficacy on ls20 (random over {1,2,3,4} with measured per-action rates) — captures the structural 42.9% filter win, no scoring | Generalizes perfectly (no class state at all) | **Strict-best baseline.** Use as the test-surface baseline (§11.5). Not v0 itself — leaves the easy class-local wins unbooked. |
+| **C** | Per-class efficacy with bootstrap (the primer's §1-§5 mechanism) — filter + table-scored argmax with cold-start uniform-random under `CONFIDENCE_THRESHOLD=5`, echo-classified updates, 0.3-drop re-bootstrap | O(\|A\|) read + O(1) write per tick | On ls20 after convergence: dominated by actions 3 (92%) and 4 (92%, top info-gain); table-projected ≥60% efficacy vs B's 24%, vs A's 14% | **CLASS-LOCAL tables, methodology cross-class.** Per primer §5: filter, bootstrap, echo taxonomy transfer; specific rates do not. | **Chosen — see §11.4.** |
+| **D** | Lightweight tree-search / 1-2 ply lookahead | O(\|A\|^depth × grid-diff cost) — even 2-ply on \|A\|=4 with 64×64 grid blows the per-tick budget | Unmeasured; conjectural | Methodology cross-class but adds class-specific state model | **Defer to v1+.** Tiny-compute envelope can't support state-model + lookahead without an LLM seeding what to enumerate. Primer "What's deliberately deferred" lists multi-step planning explicitly. |
+
+(Strategy E — LLM/BitNet seeding for non-decidable states — is the v2+ path
+per `echo/self.md` "math first, network never by default". Not enumerated
+here because it sits outside the v0 envelope entirely.)
+
+### 11.4 Chosen v0 strategy: per-class efficacy with bootstrap (Strategy C)
+
+V0 solver instantiates the spec in `solver-strategy-primer.md`. Rationale,
+tied to each of `echo/self.md`'s three integration-goal constraints:
+
+1. **Tiny-compute-safe.** Per-tick cost is O(\|available_actions\|) for the
+   filter + score plus O(1) for the echo update — well under the 8 GB / 2
+   vCPU envelope at the streaming tick rate. No LLM in the hot path. The
+   grid is read O(grid_size) for the cells-changed info-gain proxy (≤16 KiB
+   per frame; cache-friendly).
+2. **Framework-routed.** The solver consumes `frame_data` from the streaming
+   client (§11.1) and emits a `Decision` dict for the streaming response
+   (§11.2). It never bypasses the AyoAI streaming contract; nothing in the
+   solver touches the ARC backend directly or routes around the env-key /
+   server-session / stream triple of §2.2.
+3. **Generalization-preserving.** Per the primer §5, efficacy tables are
+   CLASS-LOCAL (`class_efficacy[arc_game_id][action_id]`); the table for
+   `ls20` says NOTHING about `as66`. What transfers is methodology — the
+   filter pattern (§1), the bootstrap-then-score loop (§4), the
+   echo-classification taxonomy (§3). The benchmark explicitly rewards
+   skill ACQUISITION across novel environments; memorization is the failure
+   mode it exists to expose.
+
+Pre-build encoding (per the encoding-build-encoding cycle): the
+implementation mechanism is already specified — solver-v0 audits its
+behavior against `solver-strategy-primer.md` §§1-5 and `rb-1031` (the
+bootstrap-then-score bundle); measured deviations land back as updates to
+the primer, not new design-doc parts. This Part 11 records the
+first-principles WHY of the strategy choice; the primer is the HOW.
+
+Why not Strategy B as v0? B captures the structural 42.9% available_actions
+filter win, but does no per-action learning. On ls20, action 4 (92%
+efficacy, top info-gain) and action 1 (100% efficacy probe lever) are
+~4-7× more valuable per tick than action 2 (42%, state-conditional). B
+weights them equally; C captures the difference within
+`CONFIDENCE_THRESHOLD × |A|` = ~20 ticks of bootstrap on a 4-action class.
+The marginal complexity (one per-class table, five echo outcomes, a
+re-bootstrap rule) is small relative to the quality gain — and it composes
+cleanly with future v1+ extensions (precondition modeling for action 2's
+gating; pattern-signature-driven proposal; lookahead).
+
+### 11.5 Test surface — offline solver-behavior verification
+
+V0 ships with the following test surface (run via `uv run pytest tests/` in
+the integration repo; offline = no live ARC backend, no live AyoAI server).
+Each test is a contract assertion derivable from §11.1 / §11.2 / the primer
+— not an end-to-end play test (that is `g-315-06`'s job once the spine
+unblocks).
+
+1. **Filter invariant test.** Given a `frame_data` with
+   `available_actions=[ACTION1, ACTION2, ACTION3, ACTION4]`, assert the
+   solver's `Decision.action` is NEVER `ACTION5`, `ACTION6`, or `ACTION7`,
+   across ≥1000 invocations with varying internal state. Enforces primer §1.
+2. **Bootstrap-then-score test.** On a fresh class (no table state), assert
+   the first `CONFIDENCE_THRESHOLD × |available_actions|` decisions are
+   uniform-over-`available_actions` (KS-test against uniform, p > 0.05).
+   On the (`CONFIDENCE_THRESHOLD × |A|`+1)th decision, with a hand-seeded
+   table where action 4 dominates, assert `Decision.action == ACTION4`.
+   Enforces primer §4.
+3. **Echo-classification test.** For each of the five echo outcomes (redraw
+   / partial-change / no-op / win-transition / game-over-transition),
+   construct a hand-crafted (frame_before, action_issued, frame_after)
+   triple and assert the table updates match the primer §3 row exactly
+   (invocations, grid_changed, score_changes, state_transitions counters).
+4. **Re-bootstrap test.** Seed a class with `action 3` at 92% efficacy over
+   100 invocations, then feed 10 consecutive `no-op` echoes for action 3.
+   Assert `action 3`'s `invocations` counter is reset (re-bootstrap trigger)
+   while other actions' counters are preserved (per-action, not full-class
+   reset). Enforces primer §4 0.3-drop rule.
+5. **Class-locality test.** Seed `ls20` table with action 4 at 92%; switch
+   `arc_game_id` to `as66` mid-test; assert `as66` decisions are
+   uniform-random over its available_actions (no carry-over) and `ls20`'s
+   table is preserved unchanged on the eventual switch-back. Enforces
+   primer §5 cross-class invariant.
+6. **Decision-shape test.** For every `Decision` returned, assert:
+   `action ∈ available_actions`; if `action == ACTION6`, `x ∈ [0,63]` AND
+   `y ∈ [0,63]`; `reasoning` is JSON-serializable AND ≤16 KiB. Enforces
+   §11.2 invariants on the wire-bound output.
+7. **Baseline regression test.** Strategy B (filtered random) is the
+   strict-best regression baseline: across the recorded 81-tick ls20
+   sequence from `g-315-30`, assert solver-v0 achieves ≥B's measured
+   efficacy. If v0 ever regresses below B on the same recording, the
+   bootstrap or scoring math is broken.
+
+The replay corpus (`recordings/*.recording.jsonl` per §3.7) is the
+ground-truth source for tests 2-3 and 7. Test 4-5 use hand-constructed
+states because they probe edge cases (re-bootstrap trigger; class switch)
+that the 81-tick recording does not contain.
+
+### 11.6 Out of scope for v0 (defer to post-v0 Idea goals)
+
+Pulled forward from `solver-strategy-primer.md` "What's deliberately
+deferred" so the design doc reader has the same picture as the primer
+reader:
+
+- **Precondition modeling** for state-gated actions (action 2's 42%
+  efficacy is state-conditional; a v1 extension hypothesizes WHAT state
+  enables it).
+- **Cross-class structural-family hypotheses** (e.g. "classes with
+  `available_actions=[1..4]` have action 1 as the 100% lever"); requires
+  ≥3 classes' recordings before any hypothesis can be tested.
+- **Multi-step planning / lookahead** (Strategy D in §11.3); requires a
+  forward state model the solver doesn't have at v0.
+- **Pattern-signature-driven action proposal** (replace the §2 score
+  function with a learned proposal distribution); v1+ extension.
+- **LLM/BitNet seeding** for non-decidable states (math first, network
+  never by default); v2+ path entirely outside the v0 envelope.
+- **`reasoning` blob as persistent state carrier** — explicitly rejected.
+  Solver state lives in process memory; the `reasoning` blob is per-tick
+  trace only. A future Idea may revisit this if cross-session resumption
+  becomes a requirement.
+
+Each is a candidate Idea goal post-v0. Do not inline-extend the design
+doc OR the primer with them; file them as Idea goals against `asp-315`
+when the v0 implementation lands and the next decision point opens.
