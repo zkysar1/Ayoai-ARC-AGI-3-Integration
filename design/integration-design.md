@@ -1,11 +1,11 @@
 ---
 title: "ARC-AGI-3 ↔ AyoAI Integration Design"
-status: "v1.2 (client-side session-open implemented; server-startup chain gap discovered, gated on Alpha via g-315-11)"
+status: "v1.3 (streaming client through cutover spec: g-315-15 mock wire-in, g-315-17 arc_game_id wire-shape, g-315-20 §3.6 retry-with-backoff + illegal-action substitution, g-315-22 ADD/UPDATE/DELETE lifecycle, g-315-28 cutover spec; server-startup chain still gated on Alpha via g-315-11)"
 authored_by: "echo"
 authored_at: "2026-05-16"
 authoring_goal: "g-315-01"
-last_updated_at: "2026-05-16"
-last_updated_goal: "g-315-03"
+last_updated_at: "2026-05-18"
+last_updated_goal: "g-315-43"
 parent_aspiration: "asp-315 — AyoAI plays ARC-AGI-3 end-to-end through the framework"
 ---
 
@@ -317,8 +317,15 @@ boundary breaks, the right answer is to STOP and fix the boundary.
 ### 3.7 Recording
 
 The existing `recorder.py` writes per-tick `FrameData` to
-`recordings/{game}.random-{uuid}.jsonl`. Naming becomes
-`recordings/{game}.ayoai-{uuid}.jsonl` when the AyoAI client is active.
+`recordings/{prefix}.{guid}.recording.jsonl` where `RECORDING_SUFFIX =
+".recording.jsonl"` is fixed (`recorder.py:7`) and `prefix` is
+constructor-supplied. `main.py:432` sets
+`prefix = f"{args.game}.{'mock' if args.mock_url else 'ayoai'}"`, producing
+`recordings/{game}.{ayoai|mock}.{guid}.recording.jsonl` end-to-end.
+`Recorder.get_prefix` supports richer multi-segment prefixes (the class
+docstring shows the 4-tuple form `{game}.{solver}.{level}.{guid}.recording.jsonl`,
+e.g. `locksmith.random.50.UUID.recording.jsonl`), so future solvers can encode
+partition dimensions in the filename without a recorder change.
 The AyoAI per-tick reasoning blob (echoed via `last_reasoning`) lands in
 the recording's `action_input.reasoning` field, so a recording is a
 complete forensic trace.
@@ -385,6 +392,15 @@ complete forensic trace.
 
 ## Part 6 — Implementation goals (downstream of this design)
 
+> **Note (g-315-43, 2026-05-18):** The numbering below reflects the original
+> design-time plan (g-315-02..08). Actual asp-315 numbering diverged during
+> execution as decomposition + cross-agent handoffs landed — e.g., g-315-11
+> (the SERVER-side counterpart to g-315-03's CLIENT-side session-open),
+> g-315-15/17/20/22/28 (streaming client through cutover spec), and the
+> iter-35 follow-ups (g-315-42 design-parity audit, g-315-43 this refresh).
+> See `world/aspirations.jsonl` `asp-315` for the current canonical numbering.
+> The goals listed below remain valid as a logical roadmap; the IDs differ.
+
 These are the goals this design unlocks. Echo files them as serial children
 of asp-315 after the design is committed. None are decided here — this
 document is the contract they implement against.
@@ -409,10 +425,20 @@ document is the contract they implement against.
 
 ## Part 7 — Open questions (none block g-315-02)
 
-- Streaming retry: should the per-tick AyoAI client expose a circuit
-  breaker that mirrors `serverReadinessTracker` 1:1, or is a thinner
-  retry loop sufficient for a single-domain client with no multi-env
-  multiplexing? (Decided at g-315-03 implementation time.)
+- **[RESOLVED at g-315-15 / g-315-20, 2026-05-16]** Streaming retry: should
+  the per-tick AyoAI client expose a circuit breaker that mirrors
+  `serverReadinessTracker` 1:1, or is a thinner retry loop sufficient for a
+  single-domain client with no multi-env multiplexing? **Chose thinner retry**:
+  `MAX_TRANSIENT_RETRIES = 4` with `TRANSIENT_RETRY_BASE_DELAY_S = 2.0` and
+  exponential backoff `delay = TRANSIENT_RETRY_BASE_DELAY_S * 2^(attempt-1)`
+  (max 5 attempts total, cumulative wait ≤30s) — implemented in
+  `ayoai_streaming_client.py:68-69, 443-507`. No separate circuit-breaker
+  state machine. Rationale: a single-domain client doesn't need the
+  multi-env serialization that `serverReadinessTracker` exists for, and
+  Decision 5 ("abort, not fall back") makes a deeper retry policy actively
+  wrong — repeated failures should surface as contract breakage, not silent
+  retry. g-315-20 added §3.6 illegal-action substitution as the
+  complementary policy for in-spec but non-actionable responses.
 - Decision authoring path on AyoAI: deterministic-math-only-first, or do
   we leave a TODO marker for a BitNet seed? Self mandates "math first,
   network never (by default)" — so v0 is deterministic. Re-evaluated at
