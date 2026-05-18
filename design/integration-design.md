@@ -1,11 +1,11 @@
 ---
 title: "ARC-AGI-3 ↔ AyoAI Integration Design"
-status: "v1.4 (streaming client through cutover spec + v0 solver first-principles design (Part 11): g-315-15 mock wire-in, g-315-17 arc_game_id wire-shape, g-315-20 §3.6 retry-with-backoff + illegal-action substitution, g-315-22 ADD/UPDATE/DELETE lifecycle, g-315-28 cutover spec, g-315-43 doc refresh, g-315-45 Part 11 v0 solver strategy choice; server-startup chain still gated on Alpha via g-315-11)"
+status: "v1.5 (streaming client through cutover spec + v0 solver first-principles design (Part 11) + §3.6 client/framework responsibility split (§3.6.1/.2): g-315-15 mock wire-in, g-315-17 arc_game_id wire-shape, g-315-20 §3.6 retry-with-backoff + illegal-action substitution, g-315-22 ADD/UPDATE/DELETE lifecycle, g-315-28 cutover spec, g-315-43 doc refresh, g-315-45 Part 11 v0 solver strategy choice, g-315-50 §3.6 audit + spec disambiguation; server-startup chain still gated on Alpha via g-315-11 — g-315-47/48/49 alpha decomposition in flight)"
 authored_by: "echo"
 authored_at: "2026-05-16"
 authoring_goal: "g-315-01"
 last_updated_at: "2026-05-18"
-last_updated_goal: "g-315-45"
+last_updated_goal: "g-315-50"
 parent_aspiration: "asp-315 — AyoAI plays ARC-AGI-3 end-to-end through the framework"
 ---
 
@@ -313,6 +313,60 @@ detection; it never authors a new one.
 The "abort instead of fallback" stance is doctrinal: per `<agent>/self.md`,
 a solver that bypasses AyoAI scores zero against the mission. If the
 boundary breaks, the right answer is to STOP and fix the boundary.
+
+#### 3.6.1 Client-responsibility vs framework-responsibility split (g-315-50, 2026-05-18)
+
+The §3.6 failure-response column conflates two distinct responsibilities.
+The audit landed in `g-315-50` (Echo Idle Playbook item 3 — streaming-
+client resilience audit) clarified the split:
+
+| Action verb in §3.6 column | Belongs to | Surface |
+|---|---|---|
+| "Retry with exponential backoff" / "Retry 4× with backoff" | **Integration client** (this repo) | `ayoai_streaming_client.py` retry envelope at lines 68-69 + 443-508; `ayoai_client.py` session-open polling at line 188-190 |
+| "Substitute RESET and log the deviation" | **Integration client** (this repo) | `ayoai_streaming_client.py` `_decode_decision` lines 583-607 |
+| "Abort the play" / "send DELETE" / "close scorecard" | **Integration client** (this repo) | `main.py:188-201` catch `AyoaiStreamingError` → `break`; `finally` clause at lines 239-244 sends DELETE; scorecard close fires at game-end ceremony |
+| "CREATE_BLOCKER (capability-routed)" / "release goal + file Investigate" / "file Investigate g-315-XX" | **AyoAI Mind framework** (Echo session loop, separate codebase) | The integration client raises a terminal exception; the framework's per-iteration error-response protocol (`.claude/rules/error-response.md`) is what files the Investigate / CREATE_BLOCKER on top of the raised exception |
+
+The integration client's responsibility ends at "raise a terminal
+exception cleanly and emit DELETE + scorecard close before exit." Filing
+goals, capability-routing blockers, and releasing the framework's claim
+on the goal are all Mind-side responses to the raised exception — not
+behaviors the integration client can or should encode. The previous §3.6
+language read ambiguously because it mixed both layers in a single
+response column.
+
+Practical implication: when an exception escapes
+`run_game_loop` (`AyoaiStreamingError`, `AyoaiSessionError`, or
+`AyoaiTimeoutError`), the Mind agent running the play observes the
+non-zero exit code + log line and routes accordingly. Three rules govern
+that framework-side response:
+
+1. **`AyoaiTimeoutError`** from session-open (`ayoai_client.py`)
+   → file CREATE_BLOCKER per `.claude/rules/capability-before-user.md`
+   (e.g., `AyoAI server not ready after 90 attempts`).
+2. **`AyoaiStreamingApiError` after 4 transient retries** from
+   `choose_action` → file Investigate goal + release the play goal
+   (per `g-315-06` verification path).
+3. **`AyoaiStreamingProtocolError` (missing `data.decision`, malformed
+   action, x/y out of range)** → file Investigate goal naming the
+   protocol violation; do NOT auto-retry (the wire-shape is wrong).
+
+The integration client surfaces these exceptions verbatim; the Mind
+agent's loop logic + `error-response.md` does the rest. Audit lineage:
+`g-315-50` outcome notes + `exp-g-315-50-resilience-audit.md`.
+
+#### 3.6.2 Session-open delay shape (constant, not exponential)
+
+The §3.6 row 1 phrase "exponential backoff" is shorthand for "delay
+between polls"; the actual Roblox parity (per `SendUpdate.server.lua:130-249`
+and `ayoai_client.py` `DEFAULT_RETRY_DELAY_S=1.0` + `DEFAULT_MAX_ATTEMPTS=90`)
+is a **constant** 1-second delay with progressive **log** intervals at
+`[1, 5, 10, 20, 30, 45, 60]` attempts. The implementation matches Roblox
+exactly; the spec word "exponential" was inherited from the streaming-side
+retry envelope (which IS exponential at 2s × 2^n) and applied
+ambiguously to the session-open polling. Reading: row 1 = "delay between
+polls (Roblox parity: constant 1s)"; row 2 = "exponential 2s × 2^n
+transient retry (parity with `SendUpdate.server.lua:35`)".
 
 ### 3.7 Recording
 
