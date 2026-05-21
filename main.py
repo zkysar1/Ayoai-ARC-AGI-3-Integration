@@ -298,6 +298,30 @@ def main() -> None:
             "chain) is still gated."
         ),
     )
+    parser.add_argument(
+        "--solver-name",
+        type=str,
+        default=None,
+        help=(
+            "Solver/decision-source name encoded into the recording prefix "
+            "(third segment of game.solver.level.guid.recording.jsonl per "
+            "recorder.get_prefix docstring). Defaults to 'mock' when "
+            "--mock-url is set, else 'ayoai'. g-315-44 cutover — when "
+            "named solvers (v0, etc.) land per g-315-05 spec, pass the "
+            "concrete name here so recordings are self-describing."
+        ),
+    )
+    parser.add_argument(
+        "--level",
+        type=str,
+        default="0",
+        help=(
+            "Level/instance identifier encoded into the recording prefix "
+            "(fourth segment of game.solver.level.guid.recording.jsonl per "
+            "recorder.get_prefix docstring). Defaults to '0' as placeholder "
+            "until env-class level conventions land (g-315-44 cutover)."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -425,11 +449,16 @@ def main() -> None:
         api_key=os.getenv("AYOAI_API_KEY", "") if not args.mock_url else "",
     )
 
-    # Setup recorder if requested. Prefix names the decision source so
-    # baseline-vs-AyoAI score comparisons are obvious from the filename.
+    # Setup recorder if requested. Prefix encodes game.solver.level so
+    # recordings are self-describing — matches recorder.get_prefix
+    # docstring (game.solver.level.guid.recording.jsonl). g-315-44 cutover
+    # from 2-segment {game}.{mock|ayoai} to 3-segment form; CLI args
+    # --solver-name and --level default-derive from --mock-url + "0" to
+    # preserve existing call sites that pass only --game / --mock-url.
     recorder = None
     if args.record:
-        prefix = f"{args.game}.{'mock' if args.mock_url else 'ayoai'}"
+        solver_name = args.solver_name or ("mock" if args.mock_url else "ayoai")
+        prefix = f"{args.game}.{solver_name}.{args.level}"
         recorder = Recorder(prefix=prefix)
         logger.info(f"Recording to: {recorder.filename}")
         # Record the session-open evidence (or mock-URL bind) as the first
