@@ -1,11 +1,11 @@
 ---
 title: "ARC-AGI-3 ↔ AyoAI Integration Design"
-status: "v1.5 (streaming client through cutover spec + v0 solver first-principles design (Part 11) + §3.6 client/framework responsibility split (§3.6.1/.2): g-315-15 mock wire-in, g-315-17 arc_game_id wire-shape, g-315-20 §3.6 retry-with-backoff + illegal-action substitution, g-315-22 ADD/UPDATE/DELETE lifecycle, g-315-28 cutover spec, g-315-43 doc refresh, g-315-45 Part 11 v0 solver strategy choice, g-315-50 §3.6 audit + spec disambiguation; server-startup chain still gated on Alpha via g-315-11 — g-315-47/48/49 alpha decomposition in flight)"
+status: "v1.6 (server-startup chain RESOLVED via user-driven first-principles correction 2026-05-21: Option D selected — extend CollectAyoEnvironmentInBatchesOnStartUp with client_type dispatch instead of building a sibling Lambda. Original g-315-47/48/49 (Option A SAES) reverted via g-315-74. Phase 1/2 refactor 35+36 tests green. ARC client now POSTs to Collect with client_type='arc' via _initiate_cold_start before polling readiness. Prior: v1.5 streaming client through cutover spec + v0 solver first-principles design (Part 11) + §3.6 client/framework responsibility split (§3.6.1/.2): g-315-15 mock wire-in, g-315-17 arc_game_id wire-shape, g-315-20 §3.6 retry-with-backoff + illegal-action substitution, g-315-22 ADD/UPDATE/DELETE lifecycle, g-315-28 cutover spec, g-315-43 doc refresh, g-315-45 Part 11 v0 solver strategy choice, g-315-50 §3.6 audit + spec disambiguation)"
 authored_by: "echo"
 authored_at: "2026-05-16"
 authoring_goal: "g-315-01"
-last_updated_at: "2026-05-18"
-last_updated_goal: "g-315-50"
+last_updated_at: "2026-05-21"
+last_updated_goal: "g-315-74"
 parent_aspiration: "asp-315 — AyoAI plays ARC-AGI-3 end-to-end through the framework"
 ---
 
@@ -732,7 +732,7 @@ Roblox state dumps have been collected. ARC has no equivalent dump
 collection — the env config lives in DDB via
 `ManageEnvironmentsAndTasks`, not in per-session EFS dumps.
 
-### 10.3 Three architectural paths (Alpha to choose; g-315-11)
+### 10.3 Three architectural paths (Alpha to choose; g-315-11) — SUPERSEDED 2026-05-21
 
 1. **New ARC-compatible cold-start entry point**: a fresh public Lambda
    that takes `{ayoServerKey, ayoEnvironmentKey}` ONLY, reads env config
@@ -753,10 +753,60 @@ collection — the env config lives in DDB via
    dumps to process, while the env files are already on EFS. The cleanest
    reuse of existing paths; only widens the registration Lambda.
 
-The choice is Alpha's; the verification criterion is identical for all
-three: a freshly issued ARC card_id + ayoEnvironmentKey=arc-agi-3 ->
-GetStreamingUrlAndStatus returns isStreamingReady=true within the 90-attempt
-budget.
+### 10.3a Resolution — Option D (user-driven first-principles correction, 2026-05-21)
+
+Alpha chose Option A on 2026-05-18 (g-315-11) and built the
+`StartAyoEnvironmentSession` Lambda (g-315-47, commit 407536ff). Before
+that Lambda deployed (CI failed with ResourceNotFoundException — never
+provisioned to AWS), the user audited the architecture from first
+principles and surfaced **Option D**:
+
+> The flow (collect what's needed → stand up a game server → notify the
+> client) is identical regardless of source. Why is the entry point
+> coupled to the client source?
+
+All three encoded options had inherited the unexamined assumption that
+`CollectAyoEnvironmentInBatchesOnStartUp` could not be extended without
+risking the Roblox path. Once that assumption was challenged, the right
+move became obvious: extend Collect itself with `body.client_type`
+dispatch:
+
+- `client_type='roblox'` (or absent — default preserves backward compat
+  for any Roblox client that doesn't send the field) → existing batch
+  path: save `{N}_dump.json`, on `isLastBatch=true` invoke
+  `CreateAyoEnvironmentFromAllDumps`, on first batch invoke
+  `AssignAyoEnvironmentServerInstance` with cold-start fallback.
+- `client_type` in `{'arc', 'web-playground', 'cli'}` → non-roblox
+  branch: validate env in `AyoEnvironments` DDB + check pre-baked
+  `env.json` on EFS, write minimal `AyoServerEnvironment_OnStartup.json`
+  sentinel (rejects 409 on duplicate), invoke
+  `AssignAyoEnvironmentServerInstance` → `StartAyoServerEnvironment`
+  fallback. NO dump assembly. Rate-limit tier `'listing'`.
+
+**Implementation**: Phase 1 refactor of Collect (35/35 tests green,
+`LAMBDA_VERSION = "2026-05-21-cold-start-unified"`); Phase 2 ARC client
+`_initiate_cold_start` wired into `open_ayoai_session` (36/36 ayoai_client
+tests + 155/155 full ARC suite green); Phase 3 SAES Lambda revert (GitHub
+archived, local dir removed, AWS Lambda was never deployed); Phase 4/5
+knowledge corrections (this section, the world tree, cross-agent
+notifications).
+
+**Verification criterion (unchanged)**: a freshly issued ARC card_id +
+ayoEnvironmentKey=arc-agi-3 → ARC client calls `_initiate_cold_start`
+→ POSTs to Collect with `client_type='arc'` → 200 returns
+`{status:starting, server_key, instance_id, invocation_type}` → ARC
+client then polls `GetStreamingUrlAndStatus` until
+`isStreamingReady=true` within the 90-attempt budget.
+
+The original choice criterion was identical across A/B/C; Option D meets
+the same criterion AND avoids the cost of operating two cold-start
+Lambdas. Documented as Maintain g-315-74. Tree node cross-ref:
+`cold-start-handshake.md` §7 (post-mortem); RB entry: rb-1140
+("First-principles probe before accepting inherited framing").
+
+The historical Options 1/2/3 above are retained for design-archaeology
+purposes — they document the option-space narrowing that the
+first-principles probe broke through.
 
 ### 10.4 Downstream impact
 

@@ -43,6 +43,17 @@ logger = logging.getLogger(__name__)
 # an env-key router (corrected in g-315-02, see guard-572).
 RESOLUTION_URL = "https://api.ayoai.com/httpV1/GetStreamingUrlAndStatus"
 
+# Cold-start entry point — same Lambda Roblox uses (SyncEnvironment.server.lua:152),
+# unified by g-315-47 corrective refactor. We POST {ayoServerKey,
+# ayoEnvironmentKey, client_type:"arc"} once to initiate; Collect then triggers
+# AssignAyoEnvironmentServerInstance → StartAyoServerEnvironment fallback. The
+# subsequent RESOLUTION_URL polling reflects readiness state.
+COLD_START_URL = "https://api.ayoai.com/httpV1/CollectAyoEnvironmentInBatchesOnStartUp"
+
+# client_type sent on the cold-start POST. Maps to the non-roblox branch in
+# the Collect Lambda (env must be DDB-registered + EFS-pre-baked).
+CLIENT_TYPE_ARC = "arc"
+
 # Roblox parity: same cap (SendUpdate.server.lua:140), same intervals
 # (SendUpdate.server.lua:166). One-second between attempts (line 146).
 DEFAULT_MAX_ATTEMPTS = 90
@@ -88,6 +99,89 @@ def _build_streaming_url(hostname: str) -> str:
 def _build_env_server_url(hostname: str) -> str:
     """Mirrors SendUpdate.server.lua:245 verbatim (ReportApi root, port 8686)."""
     return f"https://{hostname}:8686"
+
+
+def _initiate_cold_start(
+    card_id: str,
+    env_key: str,
+    api_key: str,
+    sess: requests.Session,
+    http_timeout_s: float,
+) -> dict | None:
+    """POST to Collect with client_type='arc' to start the AyoAI server.
+
+    Idempotent w.r.t. server-side state: 409 (duplicate startup) is treated
+    as success — the cold-start may have already been initiated by a prior
+    process for the same `card_id`, and the subsequent readiness poll
+    captures the current state regardless. All other non-200 responses
+    are terminal (env not registered, auth failure, pre-bake missing).
+
+    Args:
+        card_id: ARC scorecard card_id (used as ayoServerKey).
+        env_key: AyoAI environment key (e.g. "arc-agi-3").
+        api_key: AYOAI-API-KEY value.
+        sess: requests.Session for the POST.
+        http_timeout_s: Per-request timeout.
+
+    Returns:
+        Parsed response body dict on 200 (with status, server_key,
+        instance_id, invocation_type) or None on 409 (duplicate startup —
+        no body parsing required).
+
+    Raises:
+        AyoaiApiError: Lambda returned 4xx other than 409, or 5xx, or
+            transport failure. Terminal for the caller — the env is not
+            in a state from which polling can succeed.
+    """
+    payload = {
+        "ayoServerKey": card_id,
+        "ayoEnvironmentKey": env_key,
+        "client_type": CLIENT_TYPE_ARC,
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "AYOAI-API-KEY": api_key,
+    }
+    try:
+        r = sess.post(COLD_START_URL, headers=headers, json=payload, timeout=http_timeout_s)
+    except requests.exceptions.RequestException as e:
+        raise AyoaiApiError(
+            f"Cold-start request to Collect failed (transport): {e!r}"
+        ) from e
+
+    if r.status_code == 200:
+        try:
+            body = r.json()
+        except ValueError:
+            body = None
+        logger.info(
+            "Cold-start initiated for ayoServerKey=%s envKey=%s: %s",
+            card_id,
+            env_key,
+            body,
+        )
+        return body
+
+    if r.status_code == 409:
+        # State conflict — server-key already has a startup sentinel. Could
+        # be a prior crashed run or a concurrent client. Either way, the
+        # readiness poll will reveal the actual state.
+        logger.info(
+            "Cold-start already initiated for ayoServerKey=%s (HTTP 409); "
+            "proceeding to readiness poll",
+            card_id,
+        )
+        return None
+
+    # All other codes are terminal — surface to the caller.
+    try:
+        body_text = r.text[:500]
+    except Exception:
+        body_text = "<unreadable>"
+    raise AyoaiApiError(
+        f"Cold-start request to Collect failed (HTTP {r.status_code}): "
+        f"{body_text}"
+    )
 
 
 def _classify_response(http_status: int, body: dict | None) -> tuple[str, str | None]:
@@ -185,6 +279,22 @@ def open_ayoai_session(
     last_status: str | None = None
 
     try:
+        # Initiate cold-start before polling. This was the missing wire-up:
+        # GetStreamingUrlAndStatus only REPORTS readiness — something has to
+        # tell the backend to provision the server first. Unified with the
+        # Roblox path via g-315-47 corrective refactor: same Collect Lambda,
+        # client_type='arc' selects the non-batch branch.
+        cold_start_body = _initiate_cold_start(
+            card_id, env_key, resolved_api_key, sess, http_timeout_s
+        )
+        status_log.append({
+            "t": round(time.time() - start_t, 3),
+            "attempt": 0,
+            "status": "INITIATED",
+            "invocation_type": (cold_start_body or {}).get("invocation_type"),
+            "instance_id": (cold_start_body or {}).get("instance_id"),
+        })
+
         for attempt in range(1, max_attempts + 1):
             if attempt > 1:
                 time.sleep(retry_delay_s)

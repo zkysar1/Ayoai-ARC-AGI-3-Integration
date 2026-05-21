@@ -16,6 +16,8 @@ import pytest
 import requests
 
 from ayoai_client import (
+    CLIENT_TYPE_ARC,
+    COLD_START_URL,
     DEFAULT_ENV_KEY,
     LOG_INTERVALS,
     RESOLUTION_URL,
@@ -26,6 +28,7 @@ from ayoai_client import (
     _build_env_server_url,
     _build_streaming_url,
     _classify_response,
+    _initiate_cold_start,
     open_ayoai_session,
 )
 
@@ -55,10 +58,36 @@ def _fail_body(error: str = "rate limit hit") -> dict:
     return {"status": "fail", "error": error}
 
 
-def _make_session_mock(responses: list) -> MagicMock:
-    """Build a MagicMock session whose .post() returns responses in order."""
+def _cold_start_response(
+    status_code: int = 200,
+    invocation_type: str = "warm_pool",
+    instance_id: str = "i-test-warm",
+) -> MagicMock:
+    """Build a mock response for the Collect cold-start POST.
+
+    Default is a 200 warm-pool success so existing tests can focus on the
+    polling logic. Tests that exercise cold-start error paths construct the
+    response explicitly and pass it via cold_start= override.
+    """
+    return _mock_response(status_code, {
+        "status": "starting",
+        "server_key": "test-srv",
+        "instance_id": instance_id,
+        "invocation_type": invocation_type,
+    })
+
+
+def _make_session_mock(responses: list, cold_start=None) -> MagicMock:
+    """Build a MagicMock session whose .post() returns responses in order.
+
+    A default 200-success cold-start response is prepended unless an
+    explicit cold_start mock is provided. This keeps existing polling-
+    focused tests concise while supporting cold-start-specific scenarios.
+    """
+    if cold_start is None:
+        cold_start = _cold_start_response()
     session = MagicMock(spec=requests.Session)
-    session.post = MagicMock(side_effect=responses)
+    session.post = MagicMock(side_effect=[cold_start] + responses)
     return session
 
 
@@ -163,8 +192,10 @@ def test_open_session_ready_first_attempt():
     assert info.streaming_url == "https://host-1:8787/AyoStreamingUpdates"
     assert info.env_server_url == "https://host-1:8686"
     assert info.attempts == 1
-    assert len(info.status_log) == 1
-    assert info.status_log[0]["status"] == "READY"
+    # status_log now carries an INITIATED entry from cold-start + the READY poll
+    assert len(info.status_log) == 2
+    assert info.status_log[0]["status"] == "INITIATED"
+    assert info.status_log[1]["status"] == "READY"
 
 
 def test_open_session_ready_after_warming(monkeypatch):
@@ -182,17 +213,34 @@ def test_open_session_ready_after_warming(monkeypatch):
     assert info.attempts == 4
     assert info.ayoai_hostname == "host-warm"
     statuses = [e["status"] for e in info.status_log]
-    assert statuses == ["WARMING", "WARMING", "WARMING", "READY"]
+    assert statuses == ["INITIATED", "WARMING", "WARMING", "WARMING", "READY"]
 
 
 def test_open_session_passes_correct_payload():
     session = _make_session_mock([_mock_response(200, _success_body())])
     open_ayoai_session("card-Z", env_key="arc-agi-3", api_key="my-key", session=session)
-    session.post.assert_called_once()
+    # Two POSTs: cold-start to Collect, then readiness poll to GetStreamingUrlAndStatus
+    assert session.post.call_count == 2
+    # Last call is the polling — payload + headers match Roblox parity
     _, kwargs = session.post.call_args
     assert kwargs["json"] == {"ayoServerKey": "card-Z", "ayoEnvironmentKey": "arc-agi-3"}
     assert kwargs["headers"]["AYOAI-API-KEY"] == "my-key"
     assert kwargs["headers"]["Content-Type"] == "application/json"
+
+
+def test_open_session_first_call_is_cold_start():
+    """The first POST is the cold-start to Collect; payload carries client_type='arc'."""
+    session = _make_session_mock([_mock_response(200, _success_body())])
+    open_ayoai_session("card-Z", env_key="arc-agi-3", api_key="my-key", session=session)
+    first_call = session.post.call_args_list[0]
+    args, kwargs = first_call
+    assert args[0] == COLD_START_URL
+    assert kwargs["json"] == {
+        "ayoServerKey": "card-Z",
+        "ayoEnvironmentKey": "arc-agi-3",
+        "client_type": "arc",
+    }
+    assert kwargs["headers"]["AYOAI-API-KEY"] == "my-key"
 
 
 def test_open_session_uses_resolution_url():
@@ -268,11 +316,108 @@ def test_log_intervals_constant_matches_roblox():
     assert LOG_INTERVALS == {1, 5, 10, 20, 30, 45, 60}
 
 
+# ---------- _initiate_cold_start ---------- #
+
+
+def test_initiate_cold_start_200_returns_body():
+    """200 from Collect → returns parsed response body."""
+    sess = MagicMock(spec=requests.Session)
+    sess.post.return_value = _mock_response(200, {
+        "status": "starting",
+        "server_key": "card-Q",
+        "instance_id": "i-warm-1",
+        "invocation_type": "warm_pool",
+    })
+    body = _initiate_cold_start("card-Q", "arc-agi-3", "k", sess, 10.0)
+    assert body is not None
+    assert body["invocation_type"] == "warm_pool"
+    assert body["instance_id"] == "i-warm-1"
+
+
+def test_initiate_cold_start_409_returns_none():
+    """409 from Collect → treated as success (duplicate startup, proceed to poll)."""
+    sess = MagicMock(spec=requests.Session)
+    sess.post.return_value = _mock_response(409, {"error": "already started"})
+    body = _initiate_cold_start("card-Q", "arc-agi-3", "k", sess, 10.0)
+    assert body is None
+
+
+def test_initiate_cold_start_404_raises():
+    """404 (env not registered) → AyoaiApiError terminal."""
+    sess = MagicMock(spec=requests.Session)
+    sess.post.return_value = _mock_response(404, {"error": "env not registered"})
+    with pytest.raises(AyoaiApiError, match="HTTP 404"):
+        _initiate_cold_start("card-Q", "arc-agi-3", "k", sess, 10.0)
+
+
+def test_initiate_cold_start_500_raises():
+    """5xx → AyoaiApiError terminal (server-side issue, caller decides retry)."""
+    sess = MagicMock(spec=requests.Session)
+    sess.post.return_value = _mock_response(500, {})
+    with pytest.raises(AyoaiApiError, match="HTTP 500"):
+        _initiate_cold_start("card-Q", "arc-agi-3", "k", sess, 10.0)
+
+
+def test_initiate_cold_start_transport_error_raises():
+    """Transport-level failure → AyoaiApiError with 'transport' marker."""
+    sess = MagicMock(spec=requests.Session)
+    sess.post.side_effect = requests.exceptions.ConnectionError("DNS failed")
+    with pytest.raises(AyoaiApiError, match="transport"):
+        _initiate_cold_start("card-Q", "arc-agi-3", "k", sess, 10.0)
+
+
+def test_initiate_cold_start_payload_shape():
+    """Verify the exact wire shape sent to Collect."""
+    sess = MagicMock(spec=requests.Session)
+    sess.post.return_value = _mock_response(200, {"status": "starting"})
+    _initiate_cold_start("card-Q", "arc-agi-3", "my-key", sess, 10.0)
+    args, kwargs = sess.post.call_args
+    assert args[0] == COLD_START_URL
+    assert kwargs["json"] == {
+        "ayoServerKey": "card-Q",
+        "ayoEnvironmentKey": "arc-agi-3",
+        "client_type": CLIENT_TYPE_ARC,
+    }
+    assert kwargs["headers"]["AYOAI-API-KEY"] == "my-key"
+    assert kwargs["headers"]["Content-Type"] == "application/json"
+    assert kwargs["timeout"] == 10.0
+
+
+def test_open_session_cold_start_404_surfaces_to_caller():
+    """A 404 on cold-start (env not registered) raises immediately —
+    polling does not start because there's nothing to poll for.
+    """
+    session = _make_session_mock(
+        responses=[],  # no polling responses needed — cold-start raises first
+        cold_start=_mock_response(404, {"error": "env not registered"}),
+    )
+    with pytest.raises(AyoaiApiError, match="HTTP 404"):
+        open_ayoai_session("card-K", api_key="k", session=session)
+    # Cold-start was attempted; no polling call followed
+    assert session.post.call_count == 1
+
+
+def test_open_session_cold_start_409_proceeds_to_poll():
+    """A 409 (duplicate startup) does NOT abort — polling continues as normal."""
+    session = _make_session_mock(
+        [_mock_response(200, _success_body("host-warm"))],
+        cold_start=_mock_response(409, {"error": "already started"}),
+    )
+    info = open_ayoai_session("card-L", api_key="k", session=session)
+    assert info.ayoai_hostname == "host-warm"
+    assert session.post.call_count == 2
+    # The INITIATED entry still appears; invocation_type is None on 409
+    assert info.status_log[0]["status"] == "INITIATED"
+    assert info.status_log[0].get("invocation_type") is None
+
+
 # ---------- Status log evidence ---------- #
 
 
 def test_status_log_records_each_attempt():
-    """The status_log is the audit trail captured into the recording (outcome 3)."""
+    """The status_log is the audit trail captured into the recording (outcome 3).
+    Includes one INITIATED entry (cold-start) followed by per-poll entries.
+    """
     session = _make_session_mock([
         _mock_response(200, _success_body(ready=False)),
         _mock_response(200, _success_body("h-final", ready=True)),
@@ -280,12 +425,16 @@ def test_status_log_records_each_attempt():
     info = open_ayoai_session(
         "card-H", api_key="k", session=session, retry_delay_s=0.0
     )
-    assert len(info.status_log) == 2
-    assert info.status_log[0]["attempt"] == 1
-    assert info.status_log[1]["attempt"] == 2
-    assert info.status_log[0]["status"] == "WARMING"
-    assert info.status_log[1]["status"] == "READY"
-    assert "t" in info.status_log[0]
+    assert len(info.status_log) == 3
+    # [0] is the cold-start initiation marker
+    assert info.status_log[0]["status"] == "INITIATED"
+    assert info.status_log[0]["attempt"] == 0
+    # [1] and [2] are the polling attempts
+    assert info.status_log[1]["attempt"] == 1
+    assert info.status_log[2]["attempt"] == 2
+    assert info.status_log[1]["status"] == "WARMING"
+    assert info.status_log[2]["status"] == "READY"
+    assert "t" in info.status_log[1]
 
 
 def test_status_log_records_error_message():
