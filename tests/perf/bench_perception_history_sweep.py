@@ -62,12 +62,14 @@ REGRESSION_GATE_KIB = 1024.0
 BASELINE_H5_PEAK_KIB = 97.8  # g-315-97 post-refactor @ history=5
 BASELINE_H5_WALL_MS = 41.9  # g-315-97 post-refactor @ history=5
 
-# Realistic-frame regime (g-315-101). Real ARC frames are NOT uniform-random:
-# most cells are a static background that never changes tick-to-tick, with a
-# small set of mobile actors. Matches the ls20-class dual-role finding (~60
-# mobile value-8 actors over a large static field). static_set (cells with
-# churn==0) is therefore LARGE and ~history-insensitive in this regime, unlike
-# the random regime where static cells vanish as history deepens.
+# Realistic-frame regime (g-315-101; static_set removed g-315-102). Real ARC
+# frames are NOT uniform-random: most cells are a static background that never
+# changes tick-to-tick, with a small set of mobile actors. Matches the
+# ls20-class dual-role finding (~60 mobile actors over a large static field).
+# g-315-101 found the old stored static_set (one (r,c) tuple per churn==0 cell)
+# made this regime peak at 337 KiB (3.1x random); g-315-102 ELIMINATED static_set
+# (now a lazy roles-derived property), so this regime now matches the random
+# floor instead of dominating it.
 BG_VALUE = 4  # ls20-dominant background palette value (static field)
 MOBILE_COUNT = 60  # ls20 dual-role: ~60 mobile actors over the static field
 
@@ -215,10 +217,11 @@ def main() -> None:
     print(f"[wall] prediction (2): wallclock {scaling}")
     print()
 
-    # ── Realistic-frame regime (g-315-101) ──────────────────────────────────
-    # Random frames understate static_set (cells with churn==0). Re-run with a
-    # realistic static background + MOBILE_COUNT mobile actors and compare peak
-    # per depth against the random regime measured above.
+    # ── Realistic-frame regime (g-315-101; static_set removed g-315-102) ─────
+    # g-315-101 found random frames understated the old stored static_set and
+    # quantified its cost at 337 KiB. g-315-102 removed static_set, so this block
+    # now confirms the realistic regime matches the random floor (the static field
+    # no longer adds a per-cell tuple set). Compare peak per depth against random.
     rng2 = random.Random(43)
     r_current, r_full_history = _realistic_frames(rng2, max(HISTORY_DEPTHS))
     static_cells = GRID_SIZE * GRID_SIZE - MOBILE_COUNT
@@ -260,7 +263,9 @@ def main() -> None:
     )
     print(
         f"[realistic] mean peak is {r_mean / rnd_mean:.1f}x the random-frame mean "
-        f"({rnd_mean:.1f} KiB) -- static_set ({static_cells} static cells) dominates"
+        f"({rnd_mean:.1f} KiB) -- static_set REMOVED (g-315-102): the {static_cells}-cell "
+        f"static field no longer adds a per-cell tuple set, so realistic now matches "
+        f"the random floor (was 3.1x / 337 KiB pre-refactor)"
     )
     over_target = r_max >= DESIGN_TARGET_KIB
     print(

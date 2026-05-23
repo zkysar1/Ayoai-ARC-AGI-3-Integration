@@ -121,7 +121,6 @@ class FrameFeatures:
     values: list[int]  # flat palette values, indexed r * width + c
     roles: list[str]  # flat role labels: "static"|"mobile"|"rare"|"unknown"
     churns: list[float]  # flat churn ratios 0.0..1.0
-    static_cells: set[tuple[int, int]]
     multi_layer: bool
 
     @property
@@ -133,6 +132,27 @@ class FrameFeatures:
         (``values`` / ``roles`` / ``churns``) are the canonical storage;
         aggregate consumers should iterate those directly (see role_hint)."""
         return _CellGridView(self)
+
+    @property
+    def static_cells(self) -> set[tuple[int, int]]:
+        """Lazy set of (row, col) positions whose value never changed across
+        observed history (role == "static"), derived on access from the flat
+        ``roles`` array rather than stored.
+
+        ``roles`` already encodes staticness — ``_classify_role`` returns
+        "static" exactly when ``churn <= 0.0`` with history, which is the same
+        membership condition the old stored ``static_set`` accumulated — so the
+        explicit set was fully redundant. Deriving it on demand keeps one (r,c)
+        tuple per static cell OUT of extract()'s peak (g-315-102: ~226 KiB at a
+        4036-cell static background, the dominant consumer there). Iterates the
+        flat array and builds only int tuples — no CellAttribute — per
+        guard-629; the sole consumer (the API test) is not on a per-tick path."""
+        w = self.width
+        return {
+            (i // w, i % w)
+            for i, role in enumerate(self.roles)
+            if role == "static"
+        }
 
 
 # Churn band thresholds — values match the dual-role finding documented in
@@ -191,7 +211,6 @@ def extract(
             values=[],
             roles=[],
             churns=[],
-            static_cells=set(),
             multi_layer=False,
         )
 
@@ -214,7 +233,6 @@ def extract(
     values: list[int] = [0] * n_cells
     roles: list[str] = ["unknown"] * n_cells
     churns: list[float] = [0.0] * n_cells
-    static_set: set[tuple[int, int]] = set()
     # churn is n_changes / transitions with transitions bounded by the history
     # depth, so only a handful of distinct ratios occur per frame. Cache them
     # so the churns array holds references to a few shared float objects rather
@@ -248,8 +266,6 @@ def extract(
                     cached = n_changes / transitions
                     churn_cache[ckey] = cached
                 churn = cached
-                if churn <= 0.0:
-                    static_set.add((r, c))
             i = row_base + c
             values[i] = current_value
             roles[i] = _classify_role(churn, has_history)
@@ -264,7 +280,6 @@ def extract(
         values=values,
         roles=roles,
         churns=churns,
-        static_cells=static_set,
         multi_layer=n_layers > 1,
     )
 
