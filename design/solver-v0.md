@@ -29,17 +29,33 @@ ARC-AGI-3 frame → AyoAI streaming → AyoaiV1StreamClient.choose_action(frame_
 
 ## Compute envelope
 
-Per Part 11 §11.4 (tiny-compute-safe rationale):
+Per Part 11 §11.4 (tiny-compute-safe rationale). The "Memory" column
+distinguishes INPUT (bytes read per frame) from OUTPUT (per-FrameFeatures
+peak after extract). The two are NOT the same — see g-315-92 microbench
+(2026-05-22) for measured values.
 
-| Stage | Per-tick cost | Memory |
-|---|---|---|
-| `perception.extract` | O(layers × height × width) — typical 64×64 grid, ≤16 KiB read | ≤16 KiB per FrameFeatures |
-| `signatures.filter_actions` | O(\|registered\| × \|candidates\|) — 4 signatures × ≤7 actions | O(1) |
-| `policy.choose` | O(\|candidates\| + \|history\|) — history capped at rate-limit window | O(\|history\|), append-only |
-| `client_adapter` | O(1) per dispatch | O(1) |
+| Stage | Per-tick wallclock | Input read | Output peak (tracemalloc, single call) |
+|---|---|---|---|
+| `perception.extract` | ~55 ms @ 64×64 + history=5 | ≤16 KiB grid | **~480 KiB FrameFeatures** (4096 CellAttribute dataclass instances dominate) |
+| `signatures.filter_actions` | ~10 µs @ 4 sigs × 7 actions | — | O(1) |
+| `policy.choose` | ~19 µs @ history=50 | — | O(\|history\|), append-only |
+| `client_adapter` | O(1) per dispatch | — | O(1) |
 
-Total per-tick budget well under 8 GB / 2 vCPU at streaming tick rate. No
-LLM in the hot path. The decision authority for any future BitNet/LLM
+The 480 KiB output peak fits comfortably under the 8 GB / 2 vCPU envelope
+(0.012% of 4 GB RAM, headroom for ~8000 concurrent FrameFeatures). Earlier
+revisions of this table conflated input read with output peak and claimed
+"≤16 KiB per FrameFeatures" — that was the input number. g-315-92 measured
+the output empirically; g-315-93 corrected the conflation. The microbench
+in `tests/perf/test_solver_v0_envelope.py` is the regression guard-rail
+(threshold set ~2× measured baseline).
+
+If the per-cell dataclass shape ever needs to shrink (e.g., for batch
+inference of N frames simultaneously), the lever is parallel arrays
+(`values: list[int]`, `roles: list[str]`, `churns: list[float]`) instead
+of `list[CellAttribute]`. Expected reduction: ~5× peak (~100 KiB). Filed
+as a future Idea goal under asp-315.
+
+No LLM in the hot path. The decision authority for any future BitNet/LLM
 seeding sits in `policy.choose` and is explicitly deferred to v2+ per
 Part 11 §11.6.
 

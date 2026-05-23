@@ -927,6 +927,13 @@ tied to each of `echo/self.md`'s three integration-goal constraints:
    vCPU envelope at the streaming tick rate. No LLM in the hot path. The
    grid is read O(grid_size) for the cells-changed info-gain proxy (≤16 KiB
    per frame; cache-friendly).
+
+   The ≤16 KiB number above describes the INPUT grid read, not the OUTPUT
+   `FrameFeatures` peak. Measured per-call FrameFeatures peak at 64×64 +
+   history=5 is ~480 KiB (g-315-92 microbench, 2026-05-22) — dominated by
+   4096 `CellAttribute` dataclass instances. Still 0.012% of a 4 GB RAM
+   box, so the envelope holds. See `design/solver-v0.md` "Compute envelope"
+   for the full table separating input read from output peak.
 2. **Framework-routed.** The solver consumes `frame_data` from the streaming
    client (§11.1) and emits a `Decision` dict for the streaming response
    (§11.2). It never bypasses the AyoAI streaming contract; nothing in the
