@@ -20,6 +20,11 @@ into a deterministic policy that the solver consumes for action selection:
 6. RESET (0) fallback: when every signature drops every candidate
    (rare; sig-15 multi_layer overlay forces RESET), return 0.
 
+decide() wraps choose() into a complete PolicyDecision: for ACTION6 (the
+complex spatial action) it derives an (x, y) target cell from perception
+(_target_cell); choose() alone returns only the action id and cannot
+specify where ACTION6 acts (g-315-103).
+
 The policy is offline-testable: choose() is a pure function over
 FrameFeatures + accumulated ActionOutcome history. No HTTP, no Lambda,
 no live env dependency.
@@ -34,6 +39,7 @@ from solver_v0.perception import FrameFeatures
 from solver_v0.signatures import filter_actions
 
 ACTION_RESET = 0
+ACTION6 = 6  # complex/spatial action — needs (x, y); see HandBuiltPolicy.decide
 ACTION_NOOP_SKIP_WINDOW = 5
 ACTION_NOOP_SKIP_THRESHOLD = 2
 ACTION_RATE_LIMIT_WINDOW = 6
@@ -51,6 +57,25 @@ class ActionOutcome:
 
     action: int
     frame_changed: bool
+
+
+@dataclass(frozen=True)
+class PolicyDecision:
+    """A complete policy decision: an action id plus optional spatial
+    coordinates for the complex action (ACTION6).
+
+    Simple actions (RESET, ACTION1-5, ACTION7) carry x=y=None. ACTION6
+    carries (x, y) each in 0..63, derived from perception by
+    HandBuiltPolicy._target_cell. ``decide()`` is the complete-decision
+    entry point a caller uses to issue a fully-specified action over the
+    AyoAI streaming contract; ``choose()`` remains the action-id-only
+    selector for callers (and the signature-gate unit tests) that do not
+    need coordinates.
+    """
+
+    action: int
+    x: Optional[int] = None
+    y: Optional[int] = None
 
 
 @dataclass
@@ -106,6 +131,81 @@ class HandBuiltPolicy:
 
         # 6. Otherwise lowest-id candidate (deterministic fallback).
         return min(candidates)
+
+    def decide(self, features: FrameFeatures) -> PolicyDecision:
+        """Complete decision: select an action id (via choose) and, when the
+        selected action is the complex spatial action (ACTION6), attach its
+        (x, y) target cell derived from perception. Simple actions return
+        x=y=None.
+
+        choose() alone returns a bare action id and cannot supply the
+        coordinates ACTION6 requires, so a caller issuing ACTION6 from
+        choose() output would emit it without (x, y). decide() closes that
+        gap: the coordinate is computed deterministically from the per-cell
+        roles/churns (no LLM, no game-specific constant), keeping the policy
+        inside the tiny-compute envelope and generalizing across environment
+        classes (g-315-103).
+        """
+        action = self.choose(features)
+        if action != ACTION6:
+            return PolicyDecision(action=action)
+        target = self._target_cell(features)
+        if target is None:
+            # No salient perception target (first frame / no history /
+            # uniform grid). Fall back to the geometric center — a
+            # class-agnostic neutral coordinate derived from grid
+            # dimensions, never a game-specific cell — so ACTION6 stays
+            # valid instead of being emitted without coordinates.
+            if features.width <= 0 or features.height <= 0:
+                return PolicyDecision(action=action, x=0, y=0)
+            return PolicyDecision(
+                action=action,
+                x=min(features.width // 2, 63),
+                y=min(features.height // 2, 63),
+            )
+        x, y = target
+        return PolicyDecision(action=action, x=x, y=y)
+
+    def _target_cell(self, features: FrameFeatures) -> Optional[tuple[int, int]]:
+        """Deterministic class-agnostic target cell for ACTION6.
+
+        Returns (x, y) = (col, row) of the cell ACTION6 should address, or
+        None when no salient cell exists (uniform grid / no history, where
+        every role is "unknown").
+
+        Heuristic (provisional — same LOW-confidence posture as the ls20
+        signatures; refine from recordings): target the highest-churn
+        ``mobile`` cell, the most active actor and the likeliest subject of
+        a spatial action. If no mobile cells exist, target the first
+        ``rare`` cell (a low-but-nonzero-churn distinctive event cell).
+        Ties break by lowest flat index (row-major) for determinism.
+
+        Iterates the flat ``roles`` / ``churns`` arrays directly
+        (guard-629 / sig-14 precedent), constructing no CellAttribute
+        instances on the per-tick path. Coordinate convention: x = column,
+        y = row (ARC ComplexAction x/y are horizontal/vertical grid coords);
+        both are bounded by the <=64x64 grid so they always satisfy
+        ComplexAction's 0..63 validation.
+        """
+        w = features.width
+        if w <= 0:
+            return None
+        best_mobile_i = -1
+        best_mobile_churn = -1.0
+        first_rare_i = -1
+        churns = features.churns
+        for i, role in enumerate(features.roles):
+            if role == "mobile":
+                c = churns[i]
+                if c > best_mobile_churn:
+                    best_mobile_churn = c
+                    best_mobile_i = i
+            elif role == "rare" and first_rare_i < 0:
+                first_rare_i = i
+        chosen_i = best_mobile_i if best_mobile_i >= 0 else first_rare_i
+        if chosen_i < 0:
+            return None
+        return (chosen_i % w, chosen_i // w)
 
     def _action2_noop_recently(self) -> bool:
         """True iff the last ACTION_NOOP_SKIP_THRESHOLD ACTION2 attempts

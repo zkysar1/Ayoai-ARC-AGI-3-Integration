@@ -11,6 +11,8 @@ by HandBuiltPolicy.choose():
 4. invalid-rate < 1 percent over 1000-tick simulation
 5. ACTION1 tiebreaker - when ACTION3 is unavailable, prefer ACTION1
    over higher-numbered candidates
+6. ACTION6 coordinate targeting (g-315-103) - decide() attaches a
+   perception-derived (x, y) target cell to the complex spatial action
 
 All tests are offline - no Lambda, no HTTP, no recording fixtures.
 """
@@ -23,6 +25,7 @@ from solver_v0.perception import extract
 from solver_v0.policy import (
     ActionOutcome,
     HandBuiltPolicy,
+    PolicyDecision,
     invalid_action_rate,
 )
 
@@ -147,3 +150,61 @@ def test_policy_action1_tiebreaker_when_action3_unavailable() -> None:
     chosen = policy.choose(features)
 
     assert chosen == 1  # explicit ACTION1 tiebreaker, not min() coincidence
+
+
+def test_policy_decide_action6_targets_highest_churn_mobile_cell() -> None:
+    """g-315-103: decide() must attach (x, y) to ACTION6, derived from
+    perception. On a non-ls20 frame (so sig-13 does not drop ACTION6) where
+    only ACTION6 is available and one cell is mobile (changed every observed
+    tick), decide() returns PolicyDecision(action=6, x=col, y=row) of that
+    mobile cell. choose() alone returns only the bare action id 6.
+    """
+    # Non-ls20 palette (no value-4/3 dominance) so sig-13/14 predicates do
+    # not fire; single layer so sig-15 does not fire. Cell (row=1,col=1)
+    # flips every observed tick -> churn 1.0 -> role "mobile"; all other
+    # cells stay 5 -> "static".
+    current = [[[5, 5], [5, 9]]]
+    history = [[[[5, 5], [5, 1]]], [[[5, 5], [5, 7]]]]
+    features = extract(current, available_actions=[6], history=history)
+
+    policy = HandBuiltPolicy()
+    decision = policy.decide(features)
+
+    assert isinstance(decision, PolicyDecision)
+    assert decision.action == 6  # ACTION6 selected (only candidate)
+    # mobile cell is (row=1, col=1) -> x=col=1, y=row=1
+    assert (decision.x, decision.y) == (1, 1)
+    assert 0 <= decision.x <= 63 and 0 <= decision.y <= 63
+    # choose() alone still returns only the bare action id (back-compat).
+    assert policy.choose(features) == 6
+
+
+def test_policy_decide_simple_action_has_no_coordinates() -> None:
+    """decide() returns x=y=None for simple (non-ACTION6) actions. With
+    ACTION3 available it is the preferred default, and simple actions carry
+    no spatial coordinate.
+    """
+    features = extract([[[5, 5], [5, 9]]], available_actions=[3])
+
+    decision = HandBuiltPolicy().decide(features)
+
+    assert decision.action == 3
+    assert decision.x is None
+    assert decision.y is None
+
+
+def test_policy_decide_action6_falls_back_to_center_without_salient_cell() -> None:
+    """When ACTION6 is selected but no perception target exists (no history
+    -> every role is "unknown", no mobile/rare cell), decide() falls back to
+    the grid's geometric center: a class-agnostic neutral coordinate, never a
+    game-specific cell. ACTION6 stays valid rather than coordinate-less.
+    """
+    # 4x4 uniform single-layer frame, no history -> all roles "unknown".
+    current = [[[5, 5, 5, 5] for _ in range(4)]]
+    features = extract(current, available_actions=[6])
+
+    decision = HandBuiltPolicy().decide(features)
+
+    assert decision.action == 6
+    assert (decision.x, decision.y) == (2, 2)  # center of the 4x4 grid
+    assert 0 <= decision.x <= 63 and 0 <= decision.y <= 63
