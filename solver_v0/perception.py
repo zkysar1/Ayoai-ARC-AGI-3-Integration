@@ -37,18 +37,102 @@ class CellAttribute:
     churn: float  # 0.0 (never changed) .. 1.0 (changed every observed tick)
 
 
+class _CellRowView:
+    """Lazy per-row view over FrameFeatures parallel arrays. Materializes a
+    CellAttribute only when a specific column is indexed or iterated, so the
+    legacy ``cells[r][c].role`` API survives without storing height*width
+    dataclass instances."""
+
+    __slots__ = ("_ff", "_r")
+
+    def __init__(self, ff: "FrameFeatures", r: int) -> None:
+        self._ff = ff
+        self._r = r
+
+    def __len__(self) -> int:
+        return self._ff.width
+
+    def __getitem__(self, c: int) -> CellAttribute:
+        ff = self._ff
+        if c < 0:
+            c += ff.width
+        if not (0 <= c < ff.width):
+            raise IndexError(c)
+        i = self._r * ff.width + c
+        return CellAttribute(value=ff.values[i], role=ff.roles[i], churn=ff.churns[i])
+
+    def __iter__(self):
+        ff = self._ff
+        base = self._r * ff.width
+        for c in range(ff.width):
+            i = base + c
+            yield CellAttribute(value=ff.values[i], role=ff.roles[i], churn=ff.churns[i])
+
+
+class _CellGridView:
+    """Lazy 2D view preserving the historical ``FrameFeatures.cells`` API
+    (``cells[r][c]``, ``for row in cells: for cell in row``, ``isinstance(cell,
+    CellAttribute)``, truthiness) over the flat parallel arrays. Constructing a
+    CellAttribute on demand keeps extract()'s peak allocation to three flat
+    lists instead of height*width frozen-dataclass instances (g-315-97)."""
+
+    __slots__ = ("_ff",)
+
+    def __init__(self, ff: "FrameFeatures") -> None:
+        self._ff = ff
+
+    def __len__(self) -> int:
+        return self._ff.height
+
+    def __bool__(self) -> bool:
+        return self._ff.height > 0 and self._ff.width > 0
+
+    def __getitem__(self, r: int) -> "_CellRowView":
+        ff = self._ff
+        if r < 0:
+            r += ff.height
+        if not (0 <= r < ff.height):
+            raise IndexError(r)
+        return _CellRowView(ff, r)
+
+    def __iter__(self):
+        for r in range(self._ff.height):
+            yield _CellRowView(self._ff, r)
+
+
 @dataclass
 class FrameFeatures:
-    """Aggregated features for one frame in the context of recent history."""
+    """Aggregated features for one frame in the context of recent history.
+
+    Per-cell attributes are stored as three flat parallel arrays
+    (``values`` / ``roles`` / ``churns``), each indexed by ``r * width + c``,
+    rather than a ``list[list[CellAttribute]]``. This drops the per-frame peak
+    from ~480 KiB (4096 frozen-dataclass instances at 64x64) toward ~100 KiB
+    (g-315-97). The legacy ``cells[r][c].role`` API is preserved via the
+    ``cells`` property, which returns a lazy view that builds a CellAttribute
+    only on access.
+    """
 
     palette: Counter[int]
     available_actions: list[int]
     n_layers: int
     height: int
     width: int
-    cells: list[list[CellAttribute]]
+    values: list[int]  # flat palette values, indexed r * width + c
+    roles: list[str]  # flat role labels: "static"|"mobile"|"rare"|"unknown"
+    churns: list[float]  # flat churn ratios 0.0..1.0
     static_cells: set[tuple[int, int]]
     multi_layer: bool
+
+    @property
+    def cells(self) -> "_CellGridView":
+        """Lazy 2D view preserving the ``cells[r][c].role/.value/.churn`` API.
+
+        Does NOT materialize ``height * width`` CellAttribute instances — each
+        is built on demand during indexing or iteration. The parallel arrays
+        (``values`` / ``roles`` / ``churns``) are the canonical storage;
+        aggregate consumers should iterate those directly (see role_hint)."""
+        return _CellGridView(self)
 
 
 # Churn band thresholds — values match the dual-role finding documented in
@@ -104,7 +188,9 @@ def extract(
             n_layers=0,
             height=0,
             width=0,
-            cells=[],
+            values=[],
+            roles=[],
+            churns=[],
             static_cells=set(),
             multi_layer=False,
         )
@@ -121,11 +207,22 @@ def extract(
             palette.update(row)
 
     has_history = bool(history)
-    cells: list[list[CellAttribute]] = []
+    n_cells = height * width
+    # Preallocate flat parallel arrays (avoids append-driven list-growth
+    # reallocation spikes). Initial fillers reference shared singletons:
+    # cached int 0, the interned "unknown" literal, the shared 0.0 float.
+    values: list[int] = [0] * n_cells
+    roles: list[str] = ["unknown"] * n_cells
+    churns: list[float] = [0.0] * n_cells
     static_set: set[tuple[int, int]] = set()
+    # churn is n_changes / transitions with transitions bounded by the history
+    # depth, so only a handful of distinct ratios occur per frame. Cache them
+    # so the churns array holds references to a few shared float objects rather
+    # than height*width freshly-allocated floats (keeps the peak near ~100 KiB).
+    churn_cache: dict[tuple[int, int], float] = {}
 
     for r in range(height):
-        row_attrs: list[CellAttribute] = []
+        row_base = r * width
         for c in range(width):
             current_value = primary[r][c]
             churn = 0.0
@@ -145,14 +242,18 @@ def extract(
                     for i in range(1, len(values_at_pos))
                     if values_at_pos[i] != values_at_pos[i - 1]
                 )
-                churn = n_changes / transitions
+                ckey = (n_changes, transitions)
+                cached = churn_cache.get(ckey)
+                if cached is None:
+                    cached = n_changes / transitions
+                    churn_cache[ckey] = cached
+                churn = cached
                 if churn <= 0.0:
                     static_set.add((r, c))
-            role = _classify_role(churn, has_history)
-            row_attrs.append(
-                CellAttribute(value=current_value, role=role, churn=churn)
-            )
-        cells.append(row_attrs)
+            i = row_base + c
+            values[i] = current_value
+            roles[i] = _classify_role(churn, has_history)
+            churns[i] = churn
 
     return FrameFeatures(
         palette=palette,
@@ -160,7 +261,9 @@ def extract(
         n_layers=n_layers,
         height=height,
         width=width,
-        cells=cells,
+        values=values,
+        roles=roles,
+        churns=churns,
         static_cells=static_set,
         multi_layer=n_layers > 1,
     )
@@ -174,8 +277,6 @@ def role_hint(features: FrameFeatures) -> dict[str, int]:
         {"static": 50, "mobile": 12, "rare": 8} or {"unknown": 70} when
         extract() was called without history.
     """
-    counts: Counter[str] = Counter()
-    for row in features.cells:
-        for cell in row:
-            counts[cell.role] += 1
-    return dict(counts)
+    # Iterate the flat roles array directly (not the lazy cells view), so this
+    # aggregate constructs no CellAttribute instances (g-315-97).
+    return dict(Counter(features.roles))

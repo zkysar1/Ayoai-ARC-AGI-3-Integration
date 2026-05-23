@@ -158,9 +158,10 @@ def _sig14_predicate(features: FrameFeatures) -> bool:
 
 
 def _sig14_filter(actions: list[int], features: FrameFeatures) -> list[int]:
-    mobile_count = sum(
-        1 for row in features.cells for cell in row if cell.role == "mobile"
-    )
+    # Iterate the flat roles array (g-315-97) rather than the lazy cells view —
+    # avoids constructing height*width CellAttribute instances on the per-tick
+    # policy path when this ls20 signature fires.
+    mobile_count = sum(1 for role in features.roles if role == "mobile")
     if mobile_count >= 5:
         return [a for a in actions if a != 4]
     return list(actions)
