@@ -49,9 +49,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
+from urllib.parse import urlparse
 
 import requests
 
@@ -62,6 +64,18 @@ logger = logging.getLogger(__name__)
 DEFAULT_HTTP_TIMEOUT_S = 10.0
 DECIDED_BY_AYOAI = "ayoai-v1"
 DECIDED_BY_CLIENT = "client"
+
+# g-315-96: client-side DNS retry on transient NXDOMAIN. Alpha's g-315-95
+# analysis (Route53 ayoai.com zone is PUBLIC not private, ACM cert is
+# *.ayoai.com only) identified the NXDOMAIN at first send_add as transient
+# CNAME-propagation lag, not a zone-privacy issue. Fix: probe the streaming
+# hostname with exponential backoff before declaring the connection failed.
+# Schedule per alpha's spec: 1s, 2s, 4s, 8s, 16s (31s cumulative budget at
+# attempt 5). Total budget capped by DNS_WARM_MAX_TOTAL_S so a stuck resolver
+# can't extend the loop indefinitely.
+DNS_WARM_MAX_ATTEMPTS = 5
+DNS_WARM_BASE_DELAY_S = 1.0
+DNS_WARM_MAX_TOTAL_S = 30.0
 
 # §3.6 retry parameters (parity with SendUpdate.server.lua's
 # MAX_TRANSIENT_RETRIES + TRANSIENT_RETRY_DELAY * 2^attempt).
@@ -93,6 +107,102 @@ class AyoaiStreamingApiError(AyoaiStreamingError):
 
 class AyoaiStreamingProtocolError(AyoaiStreamingError):
     """Response shape invalid (missing fields, unknown action name, x/y out of range)."""
+
+
+class AyoaiStreamingDnsError(AyoaiStreamingError):
+    """DNS resolution for the streaming hostname failed after the warm-up retry budget.
+
+    Raised by `resolve_streaming_host_with_retry` (and `AyoaiStreamingClient.warm_dns`)
+    when getaddrinfo cannot resolve the streaming-URL hostname within the
+    configured attempts + total-budget envelope. Distinguishes the transient
+    CNAME-propagation lag class from a genuinely-missing hostname so the caller
+    can surface a clear error rather than the urllib3 NameResolutionError tail.
+    """
+
+
+def resolve_streaming_host_with_retry(
+    streaming_url: str,
+    *,
+    max_attempts: int = DNS_WARM_MAX_ATTEMPTS,
+    base_delay_s: float = DNS_WARM_BASE_DELAY_S,
+    max_total_s: float = DNS_WARM_MAX_TOTAL_S,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    resolve_fn: Callable[[str], list] | None = None,
+) -> str:
+    """Probe streaming_url's hostname with exponential backoff until it resolves.
+
+    Per g-315-96 / alpha's g-315-95 analysis: the AyoAI dispatcher returns a
+    vanity hostname (form: ec2-X-Y-Z-W.ayoai.com) that may not have propagated
+    to the public resolver at session-open time. This helper closes the gap
+    between session-open (Lambda says READY) and first POST (urllib3 calls
+    getaddrinfo). Schedule: base * 2^attempt, e.g. 1s/2s/4s/8s/16s.
+
+    Args:
+        streaming_url: Fully-resolved URL from `AyoaiSessionInfo.streaming_url`.
+        max_attempts: How many resolution probes to try before giving up.
+        base_delay_s: First-attempt sleep before retry; doubles each attempt.
+        max_total_s: Wall-clock cap on cumulative sleeps (defense-in-depth).
+        sleep_fn: Injectable sleep — tests pass a no-op or counter.
+        resolve_fn: Injectable resolver — tests pass a stub. Default uses
+            socket.getaddrinfo with AF_UNSPEC + SOCK_STREAM.
+
+    Returns:
+        The resolved hostname (parsed from streaming_url) on success.
+
+    Raises:
+        AyoaiStreamingDnsError: when no attempt resolved within the budget.
+        ValueError: when streaming_url does not parse to a non-empty hostname.
+    """
+    parsed = urlparse(streaming_url)
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError(
+            f"resolve_streaming_host_with_retry: streaming_url has no hostname "
+            f"(parsed={parsed!r})"
+        )
+
+    if resolve_fn is None:
+        def _default_resolve(h: str) -> list:
+            return socket.getaddrinfo(h, None, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM)
+        resolve_fn = _default_resolve
+
+    last_error: Exception | None = None
+    cumulative_sleep_s = 0.0
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resolve_fn(hostname)
+            if attempt > 1:
+                logger.info(
+                    "DNS warm-up resolved hostname=%s on attempt %d (%.1fs cumulative sleep)",
+                    hostname, attempt, cumulative_sleep_s,
+                )
+            return hostname
+        except (socket.gaierror, OSError) as exc:
+            last_error = exc
+            if attempt >= max_attempts:
+                break
+            delay = base_delay_s * (2 ** (attempt - 1))
+            if cumulative_sleep_s + delay > max_total_s:
+                # Budget exhausted — don't sleep beyond the cap.
+                logger.warning(
+                    "DNS warm-up budget exhausted for hostname=%s "
+                    "(attempt %d, %.1fs cumulative, next would push past %.1fs cap)",
+                    hostname, attempt, cumulative_sleep_s, max_total_s,
+                )
+                break
+            logger.info(
+                "DNS warm-up attempt %d/%d failed for hostname=%s (%s); "
+                "sleeping %.1fs before retry",
+                attempt, max_attempts, hostname, type(exc).__name__, delay,
+            )
+            sleep_fn(delay)
+            cumulative_sleep_s += delay
+
+    raise AyoaiStreamingDnsError(
+        f"DNS resolution failed for streaming hostname={hostname!r} after "
+        f"{max_attempts} attempts (cumulative sleep {cumulative_sleep_s:.1f}s, "
+        f"last error: {type(last_error).__name__}: {last_error})"
+    )
 
 
 @dataclass
@@ -243,6 +353,31 @@ class AyoaiStreamingClient:
 
     def __exit__(self, *exc: Any) -> None:
         self.close()
+
+    def warm_dns(
+        self,
+        *,
+        max_attempts: int = DNS_WARM_MAX_ATTEMPTS,
+        base_delay_s: float = DNS_WARM_BASE_DELAY_S,
+        max_total_s: float = DNS_WARM_MAX_TOTAL_S,
+    ) -> str:
+        """Resolve the streaming hostname with exponential backoff.
+
+        Wraps `resolve_streaming_host_with_retry` against `self.streaming_url`,
+        using `self._retry_sleep` so test injection still works. Call this
+        between session-open and the first send_add to close the
+        CNAME-propagation-lag window per g-315-96.
+
+        Returns the resolved hostname on success; raises
+        `AyoaiStreamingDnsError` on exhaustion.
+        """
+        return resolve_streaming_host_with_retry(
+            self.streaming_url,
+            max_attempts=max_attempts,
+            base_delay_s=base_delay_s,
+            max_total_s=max_total_s,
+            sleep_fn=self._retry_sleep,
+        )
 
     # ---------- Public API ---------- #
 

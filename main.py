@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from ayoai_client import AyoaiSessionError, AyoaiSessionInfo, open_ayoai_session
 from ayoai_streaming_client import (
     AyoaiStreamingClient,
+    AyoaiStreamingDnsError,
     AyoaiStreamingError,
 )
 from recorder import Recorder
@@ -448,6 +449,24 @@ def main() -> None:
         arc_game_id=args.game,
         api_key=os.getenv("AYOAI_API_KEY", "") if not args.mock_url else "",
     )
+
+    # g-315-96: warm DNS for live mode only. Closes the CNAME-propagation
+    # window between Lambda READY and first send_add (alpha's g-315-95
+    # analysis identified this as a transient lag on dynamic vanity hostnames
+    # ec2-X-Y-Z-W.ayoai.com). Mock mode targets localhost / 127.0.0.1, which
+    # never needs resolution retry — skip to keep tests fast and deterministic.
+    if ayoai_session is not None:
+        try:
+            resolved_host = streaming_client.warm_dns()
+            logger.info(
+                "DNS warm-up: streaming hostname=%s resolved", resolved_host
+            )
+        except AyoaiStreamingDnsError as exc:
+            logger.error(
+                "DNS warm-up FAILED — aborting play before first send_add: %s", exc
+            )
+            streaming_client.close()
+            return
 
     # Setup recorder if requested. Prefix encodes game.solver.level so
     # recordings are self-describing — matches recorder.get_prefix

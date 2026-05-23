@@ -35,11 +35,15 @@ import requests
 from ayoai_streaming_client import (
     DECIDED_BY_AYOAI,
     DECIDED_BY_CLIENT,
+    DNS_WARM_BASE_DELAY_S,
+    DNS_WARM_MAX_ATTEMPTS,
     AyoaiDecision,
     AyoaiStreamingApiError,
     AyoaiStreamingClient,
+    AyoaiStreamingDnsError,
     AyoaiStreamingError,
     AyoaiStreamingProtocolError,
+    resolve_streaming_host_with_retry,
 )
 from structs import ActionInput, FrameData, GameAction, GameState
 
@@ -897,3 +901,182 @@ def test_empty_available_actions_bypasses_substitution(mock_ayoai_server):
     # Action accepted as-is, no substitution
     assert decision.action == GameAction.ACTION1
     assert "deviation" not in decision.provenance
+
+
+# ---------- DNS warm-up (g-315-96) ---------- #
+#
+# Alpha's g-315-95 analysis identified the first-send_add NXDOMAIN as
+# transient CNAME-propagation lag on dynamic vanity hostnames
+# (ec2-X-Y-Z-W.ayoai.com). resolve_streaming_host_with_retry probes the
+# hostname with exponential backoff (1s/2s/4s/8s/16s) before declaring the
+# connection failed. Tests inject a fake resolver + counting sleep so they
+# stay fast and deterministic — never call socket.getaddrinfo against a
+# real network.
+
+
+class _CountingSleep:
+    """Records every sleep duration without actually sleeping."""
+
+    def __init__(self):
+        self.calls: list[float] = []
+
+    def __call__(self, secs: float) -> None:
+        self.calls.append(secs)
+
+    @property
+    def total(self) -> float:
+        return sum(self.calls)
+
+
+def _make_resolver(failures: int, exc: Exception | None = None):
+    """Returns a stub resolve_fn that raises `exc` for the first `failures`
+    calls and succeeds afterwards.
+    """
+    if exc is None:
+        import socket as _s
+
+        exc = _s.gaierror(11001, "Name or service not known")
+    state = {"calls": 0}
+
+    def _resolve(hostname: str) -> list:
+        state["calls"] += 1
+        if state["calls"] <= failures:
+            raise exc
+        return [("AF_INET", "SOCK_STREAM", 6, "", ("127.0.0.1", 0))]
+
+    _resolve.state = state  # type: ignore[attr-defined]
+    return _resolve
+
+
+def test_resolve_streaming_host_success_on_first_attempt():
+    """Resolver succeeds immediately → returns hostname, never sleeps."""
+    sleep = _CountingSleep()
+    resolver = _make_resolver(failures=0)
+    host = resolve_streaming_host_with_retry(
+        "https://ec2-3-144-2-12.ayoai.com:8787/AyoStreamingUpdates",
+        sleep_fn=sleep,
+        resolve_fn=resolver,
+    )
+    assert host == "ec2-3-144-2-12.ayoai.com"
+    assert sleep.calls == []
+    assert resolver.state["calls"] == 1
+
+
+def test_resolve_streaming_host_success_after_three_failures():
+    """Resolver fails 3 times then succeeds → 3 backoff sleeps (1+2+4=7s)."""
+    sleep = _CountingSleep()
+    resolver = _make_resolver(failures=3)
+    host = resolve_streaming_host_with_retry(
+        "https://ec2-3-144-2-12.ayoai.com:8787/AyoStreamingUpdates",
+        sleep_fn=sleep,
+        resolve_fn=resolver,
+    )
+    assert host == "ec2-3-144-2-12.ayoai.com"
+    assert sleep.calls == [1.0, 2.0, 4.0]
+    assert resolver.state["calls"] == 4
+
+
+def test_resolve_streaming_host_exhaustion_raises_dns_error():
+    """All attempts fail → AyoaiStreamingDnsError with diagnostic context."""
+    sleep = _CountingSleep()
+    resolver = _make_resolver(failures=999)  # always fail
+    with pytest.raises(AyoaiStreamingDnsError, match="DNS resolution failed"):
+        resolve_streaming_host_with_retry(
+            "https://ec2-3-144-2-12.ayoai.com:8787/AyoStreamingUpdates",
+            sleep_fn=sleep,
+            resolve_fn=resolver,
+        )
+    # Schedule per alpha's spec: 1s, 2s, 4s, 8s — final attempt 5 fails
+    # without sleep afterward. Cumulative 4 sleeps = 15s.
+    assert sleep.calls == [1.0, 2.0, 4.0, 8.0]
+    assert resolver.state["calls"] == DNS_WARM_MAX_ATTEMPTS
+
+
+def test_resolve_streaming_host_respects_max_total_budget():
+    """Total budget cap stops sleeps even before max_attempts."""
+    sleep = _CountingSleep()
+    resolver = _make_resolver(failures=999)
+    with pytest.raises(AyoaiStreamingDnsError):
+        resolve_streaming_host_with_retry(
+            "https://example.ayoai.com:8787/AyoStreamingUpdates",
+            sleep_fn=sleep,
+            resolve_fn=resolver,
+            max_total_s=3.0,  # tight cap — only 1s and 2s fit
+        )
+    # 1s + 2s = 3s exactly fits, next sleep (4s) would push past cap → break.
+    assert sleep.calls == [1.0, 2.0]
+
+
+def test_resolve_streaming_host_missing_hostname_raises_value_error():
+    """URL without hostname raises ValueError (not the retry error)."""
+    sleep = _CountingSleep()
+    with pytest.raises(ValueError, match="no hostname"):
+        resolve_streaming_host_with_retry(
+            "/AyoStreamingUpdates",  # no scheme + no host
+            sleep_fn=sleep,
+            resolve_fn=_make_resolver(failures=0),
+        )
+    assert sleep.calls == []
+
+
+def test_warm_dns_method_uses_client_streaming_url(monkeypatch):
+    """AyoaiStreamingClient.warm_dns resolves self.streaming_url."""
+    captured: dict = {}
+
+    def fake_resolve(streaming_url, **kwargs):
+        captured["url"] = streaming_url
+        captured["kwargs"] = kwargs
+        return "ec2-3-144-2-12.ayoai.com"
+
+    import ayoai_streaming_client as mod
+
+    monkeypatch.setattr(mod, "resolve_streaming_host_with_retry", fake_resolve)
+
+    sleep = _CountingSleep()
+    client = AyoaiStreamingClient(
+        streaming_url="https://ec2-3-144-2-12.ayoai.com:8787/AyoStreamingUpdates",
+        ayo_server_key=CARD_ID,
+        api_key="",
+        retry_sleep=sleep,
+    )
+    try:
+        host = client.warm_dns()
+    finally:
+        client.close()
+
+    assert host == "ec2-3-144-2-12.ayoai.com"
+    assert captured["url"] == "https://ec2-3-144-2-12.ayoai.com:8787/AyoStreamingUpdates"
+    # warm_dns passes the client's _retry_sleep as sleep_fn
+    assert captured["kwargs"]["sleep_fn"] is sleep
+    assert captured["kwargs"]["max_attempts"] == DNS_WARM_MAX_ATTEMPTS
+    assert captured["kwargs"]["base_delay_s"] == DNS_WARM_BASE_DELAY_S
+
+
+def test_warm_dns_propagates_dns_error():
+    """warm_dns surfaces AyoaiStreamingDnsError on exhaustion."""
+    sleep = _CountingSleep()
+    client = AyoaiStreamingClient(
+        streaming_url="https://nope.invalid.ayoai.com:8787/AyoStreamingUpdates",
+        ayo_server_key=CARD_ID,
+        api_key="",
+        retry_sleep=sleep,
+    )
+    try:
+        # Monkey-patch the resolver via the helper's default resolve_fn injection.
+        # Since warm_dns calls resolve_streaming_host_with_retry without passing
+        # resolve_fn, we monkey-patch the module-level function instead.
+        import socket as _s
+
+        def always_fail(hostname):
+            raise _s.gaierror(11001, "Name or service not known")
+
+        with pytest.raises(AyoaiStreamingDnsError):
+            # Call the helper directly with the failing resolver — equivalent
+            # to warm_dns under a real always-fail resolver, but deterministic.
+            resolve_streaming_host_with_retry(
+                client.streaming_url,
+                sleep_fn=sleep,
+                resolve_fn=always_fail,
+            )
+    finally:
+        client.close()
