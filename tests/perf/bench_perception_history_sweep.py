@@ -62,6 +62,15 @@ REGRESSION_GATE_KIB = 1024.0
 BASELINE_H5_PEAK_KIB = 97.8  # g-315-97 post-refactor @ history=5
 BASELINE_H5_WALL_MS = 41.9  # g-315-97 post-refactor @ history=5
 
+# Realistic-frame regime (g-315-101). Real ARC frames are NOT uniform-random:
+# most cells are a static background that never changes tick-to-tick, with a
+# small set of mobile actors. Matches the ls20-class dual-role finding (~60
+# mobile value-8 actors over a large static field). static_set (cells with
+# churn==0) is therefore LARGE and ~history-insensitive in this regime, unlike
+# the random regime where static cells vanish as history deepens.
+BG_VALUE = 4  # ls20-dominant background palette value (static field)
+MOBILE_COUNT = 60  # ls20 dual-role: ~60 mobile actors over the static field
+
 
 def _random_layered_grid(rng: random.Random) -> list[list[list[int]]]:
     """Single-layer GRID_SIZE x GRID_SIZE frame with random palette indices."""
@@ -71,6 +80,29 @@ def _random_layered_grid(rng: random.Random) -> list[list[list[int]]]:
             for _ in range(GRID_SIZE)
         ]
     ]
+
+
+def _realistic_frames(rng: random.Random, n_history: int):
+    """Build a (current, history) pair of REALISTIC single-layer frames: a fixed
+    BG_VALUE static background with MOBILE_COUNT mobile-actor cells whose values
+    vary frame-to-frame. The mobile positions are fixed across all frames (only
+    their values churn), so background cells stay churn==0 (static) at every
+    history depth -- the opposite of the random regime, where static cells
+    vanish as history deepens. Returns the deepest history; callers slice
+    history[:d] for the nested-subset sweep."""
+    n_cells = GRID_SIZE * GRID_SIZE
+    mobile_positions = rng.sample(range(n_cells), MOBILE_COUNT)
+
+    def build_frame() -> list[list[list[int]]]:
+        grid = [[BG_VALUE] * GRID_SIZE for _ in range(GRID_SIZE)]
+        for pos in mobile_positions:
+            r, c = divmod(pos, GRID_SIZE)
+            grid[r][c] = rng.randint(0, PALETTE_SIZE - 1)
+        return [grid]
+
+    current = build_frame()
+    history = [build_frame() for _ in range(n_history)]
+    return current, history
 
 
 def _measure_peak_kib(current, actions, history) -> float:
@@ -181,6 +213,62 @@ def main() -> None:
         f"slope ~{slope_ms_per_depth:.3f} ms / +1 depth"
     )
     print(f"[wall] prediction (2): wallclock {scaling}")
+    print()
+
+    # ── Realistic-frame regime (g-315-101) ──────────────────────────────────
+    # Random frames understate static_set (cells with churn==0). Re-run with a
+    # realistic static background + MOBILE_COUNT mobile actors and compare peak
+    # per depth against the random regime measured above.
+    rng2 = random.Random(43)
+    r_current, r_full_history = _realistic_frames(rng2, max(HISTORY_DEPTHS))
+    static_cells = GRID_SIZE * GRID_SIZE - MOBILE_COUNT
+    print(
+        f"[bench g-315-101] REALISTIC frames @ {GRID_SIZE}x{GRID_SIZE}: "
+        f"BG_VALUE={BG_VALUE} static field + {MOBILE_COUNT} mobile actors "
+        f"({MOBILE_COUNT / (GRID_SIZE * GRID_SIZE) * 100:.1f}% mobile, "
+        f"{static_cells} static), seed=43"
+    )
+    print()
+    header2 = (
+        f"{'history':>8} | {'peak KiB':>10} | {'wall ms':>9} | "
+        f"{'rnd peak':>9} | {'x random':>9}"
+    )
+    print(header2)
+    print("-" * len(header2))
+    r_results = []
+    for i, d in enumerate(HISTORY_DEPTHS):
+        history = r_full_history[:d]
+        peak_kib = _measure_peak_kib(r_current, available_actions, history)
+        wall_ms = _measure_wallclock_ms(r_current, available_actions, history)
+        rnd_peak = results[i][1]
+        ratio = peak_kib / rnd_peak if rnd_peak else float("inf")
+        r_results.append((d, peak_kib, wall_ms))
+        print(
+            f"{d:>8} | {peak_kib:>10.1f} | {wall_ms:>9.2f} | "
+            f"{rnd_peak:>9.1f} | {ratio:>8.2f}x"
+        )
+
+    r_peaks = [p for _, p, _ in r_results]
+    r_min, r_max, r_mean = min(r_peaks), max(r_peaks), sum(r_peaks) / len(r_peaks)
+    r_spread_pct = (r_max - r_min) / r_mean * 100.0 if r_mean else 0.0
+    rnd_mean = sum(p for _, p, _ in results) / len(results)
+    print()
+    print(
+        f"[realistic] peak min={r_min:.1f} max={r_max:.1f} mean={r_mean:.1f} KiB; "
+        f"spread={r_max - r_min:.1f} KiB ({r_spread_pct:.1f}% of mean) -- "
+        f"{'~INVARIANT' if r_spread_pct < 5.0 else 'VARIES'} with depth"
+    )
+    print(
+        f"[realistic] mean peak is {r_mean / rnd_mean:.1f}x the random-frame mean "
+        f"({rnd_mean:.1f} KiB) -- static_set ({static_cells} static cells) dominates"
+    )
+    over_target = r_max >= DESIGN_TARGET_KIB
+    print(
+        f"[realistic] peak {'EXCEEDS' if over_target else 'within'} the "
+        f"{DESIGN_TARGET_KIB:.0f} KiB design target (max {r_max:.1f} KiB); "
+        f"{'OVER' if r_max >= REGRESSION_GATE_KIB else 'under'} "
+        f"{REGRESSION_GATE_KIB:.0f} KiB gate"
+    )
     print()
 
 
