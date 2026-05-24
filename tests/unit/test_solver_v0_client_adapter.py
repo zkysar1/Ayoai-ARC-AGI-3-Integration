@@ -124,6 +124,44 @@ def test_recording_replay_threads_score_into_features(tmp_path: Path) -> None:
         assert adapter.next_frame() is None
 
 
+def test_recording_replay_threads_available_actions(tmp_path: Path) -> None:
+    """g-315-111: RecordingReplayAdapter threads data.available_actions
+    (FrameData.available_actions, a per-frame sibling of frame) into
+    FrameFeatures.available_actions when present, and falls back to the
+    caller-supplied default when the record omits the field (back-compat:
+    pre-g-315-111 recordings carry no available_actions field)."""
+    recording = tmp_path / "avail.recording.jsonl"
+    lines = [
+        # frame WITH available_actions -> threaded ([1,2,3], NOT the default)
+        {
+            "timestamp": "t0",
+            "data": {
+                "game_id": "ls20",
+                "frame": [[[4, 4], [3, 4]]],
+                "available_actions": [1, 2, 3],
+            },
+        },
+        # frame WITHOUT available_actions -> caller default
+        {"timestamp": "t1", "data": {"game_id": "ls20", "frame": [[[8, 8], [8, 8]]]}},
+    ]
+    with recording.open("w", encoding="utf-8") as fh:
+        for entry in lines:
+            fh.write(json.dumps(entry) + "\n")
+
+    with RecordingReplayAdapter(recording, available_actions=[0, 1, 2, 3, 4]) as adapter:
+        threaded = adapter.next_frame()
+        assert isinstance(threaded, FrameFeatures)
+        # data.available_actions threaded, NOT the [0,1,2,3,4] caller default
+        assert threaded.available_actions == [1, 2, 3]
+
+        fallback = adapter.next_frame()
+        assert isinstance(fallback, FrameFeatures)
+        # absent field -> caller default (back-compat)
+        assert fallback.available_actions == [0, 1, 2, 3, 4]
+
+        assert adapter.next_frame() is None
+
+
 def test_recording_replay_requires_context_manager(tmp_path: Path) -> None:
     """RecordingReplayAdapter must refuse next_frame() if not entered as a
     context manager. The file handle is owned by __enter__/__exit__ so

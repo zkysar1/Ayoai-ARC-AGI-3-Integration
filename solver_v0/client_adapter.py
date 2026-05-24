@@ -113,11 +113,13 @@ class RecordingReplayAdapter:
     """Deterministic replay over a recording JSONL file.
 
     Each line is parsed as JSON; the inner ``data.frame`` field is the 3D
-    layer/row/col array. ``available_actions`` is not in the recording
-    schema, so the adapter falls back to a caller-supplied default
-    (typically the full 0..7 range, matching ls20). ``data.score`` IS in
-    the schema (FrameData.score, 0-254) and is threaded into
-    FrameFeatures.score when present (g-315-108).
+    layer/row/col array. ``data.available_actions`` IS in the recording
+    schema (FrameData.available_actions, per-frame) and is threaded into
+    the perception filter when present (g-315-111); the caller-supplied
+    default is used only as a back-compat fallback for older recordings
+    that predate the field. ``data.score`` IS in the schema
+    (FrameData.score, 0-254) and is threaded into FrameFeatures.score
+    when present (g-315-108).
     """
 
     def __init__(
@@ -165,13 +167,21 @@ class RecordingReplayAdapter:
         frame = data.get("frame")
         if not isinstance(frame, list):
             return None
+        # FrameData.available_actions is a per-frame sibling of frame inside
+        # data; thread it so the policy filters on the REAL frame's legal set
+        # on replay (g-315-111). Absent / non-list -> fall back to the
+        # caller-supplied default (back-compat: pre-schema recordings that
+        # predate the field). The faithful set makes the section-1 filter
+        # invariant testable on replay instead of measuring the caller default.
+        avail = data.get("available_actions")
+        available = avail if isinstance(avail, list) else self._available
         # FrameData.score is a sibling of frame inside data (0-254); thread it
-        # like available_actions so the policy's score-delta preference can fire
-        # on replay (g-315-108). Absent / non-int -> None (back-compat: older
-        # recordings and the session_open record carry no score field).
+        # so the policy's score-delta preference can fire on replay (g-315-108).
+        # Absent / non-int -> None (back-compat: older recordings and the
+        # session_open record carry no score field).
         score = data.get("score")
         return extract(
             frame,
-            available_actions=self._available,
+            available_actions=available,
             score=score if isinstance(score, int) else None,
         )
