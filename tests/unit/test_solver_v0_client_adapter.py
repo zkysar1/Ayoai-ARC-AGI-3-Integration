@@ -93,6 +93,37 @@ def test_recording_replay_adapter_yields_in_order(tmp_path: Path) -> None:
         assert adapter.next_frame() is None
 
 
+def test_recording_replay_threads_score_into_features(tmp_path: Path) -> None:
+    """g-315-108: RecordingReplayAdapter threads data.score (FrameData.score, a
+    sibling of frame, 0-254) into FrameFeatures.score when present, and leaves
+    it None when the record omits score (back-compat: pre-g-315-108 recordings
+    and the session_open record carry no score field)."""
+    recording = tmp_path / "scored.recording.jsonl"
+    lines = [
+        # frame WITH score -> features.score == 7
+        {
+            "timestamp": "t0",
+            "data": {"game_id": "ls20", "frame": [[[4, 4], [3, 4]]], "score": 7},
+        },
+        # frame WITHOUT score -> features.score is None
+        {"timestamp": "t1", "data": {"game_id": "ls20", "frame": [[[8, 8], [8, 8]]]}},
+    ]
+    with recording.open("w", encoding="utf-8") as fh:
+        for entry in lines:
+            fh.write(json.dumps(entry) + "\n")
+
+    with RecordingReplayAdapter(recording, available_actions=[0, 1, 2, 3]) as adapter:
+        scored = adapter.next_frame()
+        assert isinstance(scored, FrameFeatures)
+        assert scored.score == 7  # data.score threaded through (g-315-108)
+
+        unscored = adapter.next_frame()
+        assert isinstance(unscored, FrameFeatures)
+        assert unscored.score is None  # absent score -> None (back-compat)
+
+        assert adapter.next_frame() is None
+
+
 def test_recording_replay_requires_context_manager(tmp_path: Path) -> None:
     """RecordingReplayAdapter must refuse next_frame() if not entered as a
     context manager. The file handle is owned by __enter__/__exit__ so

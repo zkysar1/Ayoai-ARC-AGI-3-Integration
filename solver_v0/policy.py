@@ -10,7 +10,7 @@ into a deterministic policy that the solver consumes for action selection:
 2. General no-op suppression (g-315-107): drop ANY action whose last
    >=2 attempts in the recent window all no-op'd (frame_changed=False),
    not just ACTION2. Prevents a stuck no-op loop on any action -- notably
-   the ACTION3 default that rule 4 would otherwise re-issue forever, an
+   the ACTION3 default that rule 5 would otherwise re-issue forever, an
    unbounded waste under the quadratic scoring model (solver-strategy
    primer section 7.5). (ls20-class.md: ACTION2 is context-sensitive and
    no-ops 58% of the time -- the original ACTION2-only motivation, now
@@ -18,11 +18,17 @@ into a deterministic policy that the solver consumes for action selection:
 3. ACTION4 rate-limit: at most one ACTION4 in the last 6 ticks
    (ls20-class.md: ACTION4 is high-leverage and 92% effective but
    over-issuing reverts progress).
-4. ACTION3 default: when no other rule fires, prefer ACTION3 (92% effect
+4. Score-delta preference (g-315-108): when accumulated history shows a
+   positive mean score-delta for any candidate, prefer the candidate with
+   the highest such mean. Score-advance is the scored objective (quadratic
+   level_score, primer section 7); frame-change (rules 5/6) is only a proxy.
+   Falls through when no candidate has a positive score signal (cold start,
+   or the caller never threaded score), preserving pre-g-315-108 behavior.
+5. ACTION3 default: when no other rule fires, prefer ACTION3 (92% effect
    rate, the most reliable default per ls20-class.md).
-5. ACTION1 tiebreaker: when ACTION3 is unavailable, prefer ACTION1
+6. ACTION1 tiebreaker: when ACTION3 is unavailable, prefer ACTION1
    (always changes state, cheap exploration).
-6. RESET (0) fallback: when every signature drops every candidate
+7. RESET (0) fallback: when every signature drops every candidate
    (rare; sig-15 multi_layer overlay forces RESET), return 0.
 
 decide() wraps choose() into a complete PolicyDecision: for ACTION6 (the
@@ -53,15 +59,19 @@ ACTION_RATE_LIMIT_MAX = 1
 
 @dataclass(frozen=True)
 class ActionOutcome:
-    """A single past action and whether the frame changed in response.
+    """A single past action, whether the frame changed, and (when known) the
+    env score-delta it produced.
 
-    Used by HandBuiltPolicy to gate ACTION2 noop-skip and ACTION4
-    rate-limit. The history is append-only; observe() is the single
-    writer.
+    Used by HandBuiltPolicy to gate no-op suppression, ACTION4 rate-limit, and
+    the score-delta selection preference (g-315-108). The history is
+    append-only; observe() is the single writer. ``score_delta`` is None when
+    the caller had no score signal for the tick (back-compat: pre-g-315-108
+    callers and the signature-gate unit tests omit it).
     """
 
     action: int
     frame_changed: bool
+    score_delta: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -96,11 +106,19 @@ class HandBuiltPolicy:
 
     history: List[ActionOutcome] = field(default_factory=list)
 
-    def observe(self, action: int, frame_changed: bool) -> None:
-        """Record an action and whether the frame changed. Called by
-        the caller AFTER the action lands and the response is observed.
+    def observe(
+        self, action: int, frame_changed: bool, score_delta: Optional[int] = None
+    ) -> None:
+        """Record an action, whether the frame changed, and (when known) the
+        env score-delta it produced. Called by the caller AFTER the action
+        lands and the response is observed. ``score_delta`` defaults to None
+        for callers with no score signal (back-compat, g-315-108).
         """
-        self.history.append(ActionOutcome(action=action, frame_changed=frame_changed))
+        self.history.append(
+            ActionOutcome(
+                action=action, frame_changed=frame_changed, score_delta=score_delta
+            )
+        )
 
     def choose(self, features: FrameFeatures) -> int:
         """Select the next action id given current frame features.
@@ -118,7 +136,7 @@ class HandBuiltPolicy:
         # 2. General no-op suppression (g-315-107): drop ANY candidate whose
         #    recent consecutive attempts all no-op'd. Generalizes the former
         #    ACTION2-only rule so a stuck no-op loop on any action (notably the
-        #    ACTION3 default that rule 4 re-issues whenever present) self-
+        #    ACTION3 default that rule 5 re-issues whenever present) self-
         #    suppresses after THRESHOLD no-ops instead of repeating unbounded.
         candidates = [c for c in candidates if not self._action_noop_recently(c)]
         if not candidates:
@@ -131,15 +149,26 @@ class HandBuiltPolicy:
         if not candidates:
             return ACTION_RESET
 
-        # 4. ACTION3 default: 92% frame-change rate (the most reliable).
+        # 4. Score-delta preference (g-315-108): prefer the candidate with the
+        #    highest POSITIVE mean historical score-delta. Score-advance is the
+        #    scored objective; mere frame-change is only a proxy -- under the
+        #    quadratic model every frame-changing-but-not-score-advancing action
+        #    is pure ai_actions waste (primer section 7 / rb-1274). Falls through
+        #    when no candidate has a positive score signal (early ticks, or score
+        #    never threaded), keeping the frame-change heuristic below as default.
+        best = self._best_positive_score_delta_action(candidates)
+        if best is not None:
+            return best
+
+        # 5. ACTION3 default: 92% frame-change rate (the most reliable).
         if 3 in candidates:
             return 3
 
-        # 5. ACTION1 tiebreaker: 100% frame-change rate (cheap exploration).
+        # 6. ACTION1 tiebreaker: 100% frame-change rate (cheap exploration).
         if 1 in candidates:
             return 1
 
-        # 6. Otherwise lowest-id candidate (deterministic fallback).
+        # 7. Otherwise lowest-id candidate (deterministic fallback).
         return min(candidates)
 
     def decide(self, features: FrameFeatures) -> PolicyDecision:
@@ -234,6 +263,37 @@ class HandBuiltPolicy:
             return False
         last_n = action_recent[-ACTION_NOOP_SKIP_THRESHOLD:]
         return all(not o.frame_changed for o in last_n)
+
+    def _best_positive_score_delta_action(
+        self, candidates: List[int]
+    ) -> Optional[int]:
+        """Among ``candidates``, return the action whose mean historical
+        score-delta is highest AND strictly positive, or None when no candidate
+        has any recorded positive-mean score-delta.
+
+        Score-advance is the scored objective (primer section 7: level_score =
+        (human_baseline / ai_actions)^2); frame-change is only a proxy. When the
+        history carries score-delta signal, preferring the best positive-mean
+        action over the frame-change default (choose() rule 5) directly
+        optimizes the scored objective (g-315-108). Returning None on no-signal
+        keeps behavior identical to pre-g-315-108 on the cold-start path, so
+        generalization is preserved. Ties (equal mean) break to the lowest
+        action id for determinism (sorted iteration + strict-greater test)."""
+        best_action: Optional[int] = None
+        best_mean = 0.0  # strictly-positive gate: only means > 0 qualify
+        for action_id in sorted(set(candidates)):
+            deltas = [
+                o.score_delta
+                for o in self.history
+                if o.action == action_id and o.score_delta is not None
+            ]
+            if not deltas:
+                continue
+            mean = sum(deltas) / len(deltas)
+            if mean > best_mean:
+                best_mean = mean
+                best_action = action_id
+        return best_action
 
     def _action4_at_quota(self) -> bool:
         """True iff ACTION4 was used at-or-above ACTION_RATE_LIMIT_MAX

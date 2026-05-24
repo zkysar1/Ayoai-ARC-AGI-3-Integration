@@ -122,6 +122,10 @@ class FrameFeatures:
     roles: list[str]  # flat role labels: "static"|"mobile"|"rare"|"unknown"
     churns: list[float]  # flat churn ratios 0.0..1.0
     multi_layer: bool
+    # Raw env score for this frame (FrameData.score, 0-254), or None when the
+    # caller did not supply it. Threaded through so the policy can prefer
+    # score-advancing actions over merely-frame-changing ones (g-315-108).
+    score: Optional[int] = None
 
     @property
     def cells(self) -> "_CellGridView":
@@ -177,6 +181,7 @@ def extract(
     current_frame: list[list[list[int]]],
     available_actions: Iterable[int],
     history: Optional[list[list[list[list[int]]]]] = None,
+    score: Optional[int] = None,
 ) -> FrameFeatures:
     """Extract FrameFeatures from a frame plus optional recent history.
 
@@ -194,6 +199,10 @@ def extract(
             layers of each history entry. Each history entry is allowed
             to be a shorter grid — missing positions are treated as
             "no observation" rather than synthetic zero values.
+        score: optional raw env score for this frame (FrameData.score,
+            0-254). Stored verbatim on FrameFeatures.score; None when the
+            caller has no score signal. The policy derives score-deltas
+            from the score it observes per tick (g-315-108).
 
     Returns:
         FrameFeatures populated with palette, cells, static set, and
@@ -212,6 +221,7 @@ def extract(
             roles=[],
             churns=[],
             multi_layer=False,
+            score=score,
         )
 
     n_layers = len(current_frame)
@@ -281,6 +291,7 @@ def extract(
         roles=roles,
         churns=churns,
         multi_layer=n_layers > 1,
+        score=score,
     )
 
 

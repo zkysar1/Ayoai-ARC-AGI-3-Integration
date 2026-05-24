@@ -115,7 +115,9 @@ class RecordingReplayAdapter:
     Each line is parsed as JSON; the inner ``data.frame`` field is the 3D
     layer/row/col array. ``available_actions`` is not in the recording
     schema, so the adapter falls back to a caller-supplied default
-    (typically the full 0..7 range, matching ls20).
+    (typically the full 0..7 range, matching ls20). ``data.score`` IS in
+    the schema (FrameData.score, 0-254) and is threaded into
+    FrameFeatures.score when present (g-315-108).
     """
 
     def __init__(
@@ -163,4 +165,13 @@ class RecordingReplayAdapter:
         frame = data.get("frame")
         if not isinstance(frame, list):
             return None
-        return extract(frame, available_actions=self._available)
+        # FrameData.score is a sibling of frame inside data (0-254); thread it
+        # like available_actions so the policy's score-delta preference can fire
+        # on replay (g-315-108). Absent / non-int -> None (back-compat: older
+        # recordings and the session_open record carry no score field).
+        score = data.get("score")
+        return extract(
+            frame,
+            available_actions=self._available,
+            score=score if isinstance(score, int) else None,
+        )

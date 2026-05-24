@@ -7,13 +7,16 @@ by HandBuiltPolicy.choose():
    in features.available_actions must be dropped
 2. general no-op skip (g-315-107; was ACTION2-only) - after 2 consecutive
    no-ops of ANY action in the recent window, that action must not be
-   chosen (incl. the ACTION3 rule-4 default, breaking a stuck no-op loop)
+   chosen (incl. the ACTION3 rule-5 default, breaking a stuck no-op loop)
 3. ACTION4 rate-limit - at most 1 ACTION4 per 6-tick window
 4. invalid-rate < 1 percent over 1000-tick simulation
 5. ACTION1 tiebreaker - when ACTION3 is unavailable, prefer ACTION1
    over higher-numbered candidates
 6. ACTION6 coordinate targeting (g-315-103) - decide() attaches a
    perception-derived (x, y) target cell to the complex spatial action
+7. score-delta preference (g-315-108) - prefer the candidate with the
+   highest POSITIVE mean historical score-delta over the ACTION3
+   frame-change default; absent/zero/negative mean falls through
 
 All tests are offline - no Lambda, no HTTP, no recording fixtures.
 """
@@ -183,6 +186,69 @@ def test_policy_action1_tiebreaker_when_action3_unavailable() -> None:
     chosen = policy.choose(features)
 
     assert chosen == 1  # explicit ACTION1 tiebreaker, not min() coincidence
+
+
+def test_policy_prefers_positive_score_delta_over_frame_change_default() -> None:
+    """g-315-108: rule 4 prefers the candidate with the highest POSITIVE mean
+    historical score-delta over the ACTION3 frame-change default (rule 5).
+    Score-advance is the scored objective (quadratic level_score); frame-change
+    is only a proxy. A zero mean does NOT qualify (strictly-positive gate), and
+    selection is mean-based, not lowest-id.
+    """
+    features = _ls20_features_with([1, 3])
+
+    # ACTION1 has a positive mean score-delta; ACTION3 has zero. Rule 4 must
+    # prefer ACTION1 even though ACTION3 is the rule-5 frame-change default,
+    # and ACTION3's zero mean is excluded by the strictly-positive gate.
+    policy = HandBuiltPolicy(
+        history=[
+            ActionOutcome(action=1, frame_changed=True, score_delta=2),
+            ActionOutcome(action=1, frame_changed=True, score_delta=3),
+            ActionOutcome(action=3, frame_changed=True, score_delta=0),
+        ]
+    )
+    assert policy.choose(features) == 1  # score-advance beats frame-change default
+
+    # Two positive means -> the HIGHER wins (mean-based, not lowest-id). ACTION3
+    # mean (4) > ACTION1 mean (1); a lowest-id tiebreak would wrongly pick 1.
+    higher3 = HandBuiltPolicy(
+        history=[
+            ActionOutcome(action=1, frame_changed=True, score_delta=1),
+            ActionOutcome(action=3, frame_changed=True, score_delta=4),
+        ]
+    )
+    assert higher3.choose(features) == 3  # highest positive mean selected
+
+
+def test_policy_score_delta_absent_preserves_action3_default() -> None:
+    """g-315-108 back-compat: history with frame_changed flags but NO
+    score_delta (pre-g-315-108 callers / signature-gate tests) leaves rule 4
+    with no positive signal, so choose() falls through to the ACTION3 default
+    (rule 5) -- identical to pre-change behavior.
+    """
+    features = _ls20_features_with([1, 3])
+    policy = HandBuiltPolicy(
+        history=[
+            ActionOutcome(action=1, frame_changed=True),
+            ActionOutcome(action=3, frame_changed=True),
+        ]
+    )
+    assert policy.choose(features) == 3  # ACTION3 default preserved (back-compat)
+
+
+def test_policy_negative_score_delta_preserves_action3_default() -> None:
+    """g-315-108 strictly-positive gate: an action with a NEGATIVE mean
+    score-delta (it lost points) must NOT be preferred. Rule 4 returns None and
+    choose() falls through to the ACTION3 frame-change default (rule 5).
+    """
+    features = _ls20_features_with([1, 3])
+    policy = HandBuiltPolicy(
+        history=[
+            ActionOutcome(action=1, frame_changed=True, score_delta=-1),
+            ActionOutcome(action=1, frame_changed=True, score_delta=-2),
+        ]
+    )
+    assert policy.choose(features) == 3  # negative mean does not trigger rule 4
 
 
 def test_policy_decide_action6_targets_highest_churn_mobile_cell() -> None:
