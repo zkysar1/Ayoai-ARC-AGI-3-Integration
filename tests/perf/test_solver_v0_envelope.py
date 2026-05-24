@@ -44,6 +44,9 @@ N_ITERATIONS = 1000
 #   perception.extract      54.4 ms wallclock, 479.7 KiB tracemalloc peak
 #   signatures.filter_actions    10.0 us wallclock
 #   policy.choose                19.4 us wallclock
+#   policy.decide (ACTION6 path)  904 us wallclock (g-315-104, 2026-05-23):
+#     choose() + the _target_cell flat roles/churns scan over the full 64x64
+#     grid (4096 cells). The scan, not choose(), dominates this path.
 #
 # DIVERGENCE: design/integration-design.md Part 11 section 11.4 claimed
 # "<= 16 KiB per FrameFeatures" -- the actual measurement is 480 KiB
@@ -54,6 +57,13 @@ PERCEPTION_PEAK_KIB_MAX = 1024.0  # 2x measured 480 KiB; tiny-compute box has Gi
 PERCEPTION_WALLCLOCK_MS_MAX = 120.0  # 2x measured 54 ms; ARC tick rate is sub-Hz
 SIGNATURES_WALLCLOCK_US_MAX = 100.0  # 10x measured 10 us
 POLICY_WALLCLOCK_US_MAX = 100.0  # 5x measured 19 us
+# decide() under ACTION6 selection runs choose() PLUS the _target_cell flat
+# scan over the full 64x64 grid (4096 cells; guard-629 flat-array iteration,
+# the rb-1259 perception->decision bridge). ~2x the 904 us measured baseline
+# (g-315-104). At ARC's sub-Hz tick rate this is negligible headroom; the
+# guard-rail catches a regression (e.g. reintroducing per-cell CellAttribute
+# construction), not a tiny-compute-envelope breach.
+POLICY_DECIDE_WALLCLOCK_US_MAX = 2000.0
 
 
 def _random_layered_grid() -> list[list[list[int]]]:
@@ -184,4 +194,55 @@ def test_policy_choose_wallclock(capsys):
     assert mean_us < POLICY_WALLCLOCK_US_MAX, (
         f"policy.choose over wall-clock envelope: "
         f"{mean_us:.2f} us > {POLICY_WALLCLOCK_US_MAX} us"
+    )
+
+
+def test_policy_decide_action6_wallclock(capsys):
+    """decide() under ACTION6 selection (g-315-104). choose() returns only an
+    action id; decide() additionally derives the ACTION6 target cell via the
+    _target_cell flat roles/churns scan (guard-629 / rb-1259 bridge). That scan
+    over the full 64x64 grid is the worst-case per-tick cost the choose()
+    envelope test does NOT cover.
+
+    Force ACTION6: available_actions=[6] so sig-12 leaves only ACTION6 as a
+    candidate; a random (non-ls20) palette keeps sig-13/14 from dropping it and
+    the single-layer frame keeps sig-15 from firing. With history present the
+    grid is mostly 'mobile', so _target_cell runs the full scan (not the
+    center fallback).
+    """
+    current = _random_layered_grid()
+    history = [_random_layered_grid() for _ in range(HISTORY_DEPTH)]
+    features = perception.extract(current, [6], history)
+
+    pol = policy.HandBuiltPolicy()
+    # Populate history so choose()'s rate-limit + noop-skip paths exercise.
+    for i in range(50):
+        pol.observe(action=(i % 7) + 1, frame_changed=(i % 2 == 0))
+
+    # Sanity: confirm decide() actually selects ACTION6 and ran the target
+    # scan (else this microbench would measure a hollow choose()+None path).
+    warm = pol.decide(features)
+    assert warm.action == 6, f"expected ACTION6 selection, got {warm.action}"
+    assert warm.x is not None and warm.y is not None, (
+        "ACTION6 decide() must attach (x, y) — the _target_cell path did not run"
+    )
+
+    t0 = time.perf_counter_ns()
+    for _ in range(N_ITERATIONS):
+        pol.decide(features)
+    t1 = time.perf_counter_ns()
+
+    mean_ns = (t1 - t0) / N_ITERATIONS
+    mean_us = mean_ns / 1000.0
+
+    with capsys.disabled():
+        print(
+            f"\n[envelope] policy.decide (ACTION6 path) @ {GRID_SIZE}x{GRID_SIZE} "
+            f"history={HISTORY_DEPTH}: mean={mean_us:.2f} us ({mean_ns:.0f} ns) "
+            f"over N={N_ITERATIONS} iterations"
+        )
+
+    assert mean_us < POLICY_DECIDE_WALLCLOCK_US_MAX, (
+        f"policy.decide (ACTION6) over wall-clock envelope: "
+        f"{mean_us:.2f} us > {POLICY_DECIDE_WALLCLOCK_US_MAX} us"
     )
