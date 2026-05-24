@@ -7,9 +7,14 @@ into a deterministic policy that the solver consumes for action selection:
 1. sig-12 gate: every choice MUST pass through signatures.filter_actions
    (sig-12 cross-class confidence 0.95 drops actions not in
    features.available_actions; sig-13/14/15 apply ls20-specific rules).
-2. ACTION2 noop-skip: after >=2 consecutive ACTION2 no-ops in recent
-   history, drop ACTION2 from candidates (ls20-class.md: ACTION2 is
-   context-sensitive and no-ops 58% of the time).
+2. General no-op suppression (g-315-107): drop ANY action whose last
+   >=2 attempts in the recent window all no-op'd (frame_changed=False),
+   not just ACTION2. Prevents a stuck no-op loop on any action -- notably
+   the ACTION3 default that rule 4 would otherwise re-issue forever, an
+   unbounded waste under the quadratic scoring model (solver-strategy
+   primer section 7.5). (ls20-class.md: ACTION2 is context-sensitive and
+   no-ops 58% of the time -- the original ACTION2-only motivation, now
+   generalized to every action.)
 3. ACTION4 rate-limit: at most one ACTION4 in the last 6 ticks
    (ls20-class.md: ACTION4 is high-leverage and 92% effective but
    over-issuing reverts progress).
@@ -110,9 +115,14 @@ class HandBuiltPolicy:
         if not candidates:
             return ACTION_RESET
 
-        # 2. ACTION2 noop-skip: drop ACTION2 when recent attempts no-op'd.
-        if self._action2_noop_recently():
-            candidates = [c for c in candidates if c != 2]
+        # 2. General no-op suppression (g-315-107): drop ANY candidate whose
+        #    recent consecutive attempts all no-op'd. Generalizes the former
+        #    ACTION2-only rule so a stuck no-op loop on any action (notably the
+        #    ACTION3 default that rule 4 re-issues whenever present) self-
+        #    suppresses after THRESHOLD no-ops instead of repeating unbounded.
+        candidates = [c for c in candidates if not self._action_noop_recently(c)]
+        if not candidates:
+            return ACTION_RESET
 
         # 3. ACTION4 rate-limit: drop ACTION4 when at-or-above quota.
         if self._action4_at_quota():
@@ -207,15 +217,22 @@ class HandBuiltPolicy:
             return None
         return (chosen_i % w, chosen_i // w)
 
-    def _action2_noop_recently(self) -> bool:
-        """True iff the last ACTION_NOOP_SKIP_THRESHOLD ACTION2 attempts
-        in the trailing ACTION_NOOP_SKIP_WINDOW all returned
-        frame_changed=False."""
+    def _action_noop_recently(self, action_id: int) -> bool:
+        """True iff the last ACTION_NOOP_SKIP_THRESHOLD attempts of
+        ``action_id`` in the trailing ACTION_NOOP_SKIP_WINDOW all returned
+        frame_changed=False.
+
+        Generalizes the former ACTION2-only suppressor (g-315-107) to any
+        action id, so a stuck no-op loop on ANY action -- notably the ACTION3
+        default that choose() rule 4 would otherwise re-issue forever --
+        self-suppresses after THRESHOLD consecutive no-ops instead of wasting
+        unbounded actions. The THRESHOLD>=2 gate avoids over-suppressing on a
+        single no-op (one no-op may be context, not a dead action; guard-487)."""
         recent = self.history[-ACTION_NOOP_SKIP_WINDOW:]
-        action2_recent = [o for o in recent if o.action == 2]
-        if len(action2_recent) < ACTION_NOOP_SKIP_THRESHOLD:
+        action_recent = [o for o in recent if o.action == action_id]
+        if len(action_recent) < ACTION_NOOP_SKIP_THRESHOLD:
             return False
-        last_n = action2_recent[-ACTION_NOOP_SKIP_THRESHOLD:]
+        last_n = action_recent[-ACTION_NOOP_SKIP_THRESHOLD:]
         return all(not o.frame_changed for o in last_n)
 
     def _action4_at_quota(self) -> bool:

@@ -5,8 +5,9 @@ by HandBuiltPolicy.choose():
 
 1. invalid-action gate (sig-12 cross-class, conf=0.95) - actions not
    in features.available_actions must be dropped
-2. ACTION2 noop-history skip - after 2 consecutive ACTION2 no-ops in
-   the recent window, ACTION2 must not be chosen
+2. general no-op skip (g-315-107; was ACTION2-only) - after 2 consecutive
+   no-ops of ANY action in the recent window, that action must not be
+   chosen (incl. the ACTION3 rule-4 default, breaking a stuck no-op loop)
 3. ACTION4 rate-limit - at most 1 ACTION4 per 6-tick window
 4. invalid-rate < 1 percent over 1000-tick simulation
 5. ACTION1 tiebreaker - when ACTION3 is unavailable, prefer ACTION1
@@ -73,6 +74,38 @@ def test_policy_skips_action2_after_two_noops() -> None:
 
     assert chosen != 2  # ACTION2 noop-skipped
     assert chosen == 1  # falls to ACTION1 tiebreaker
+
+
+def test_policy_breaks_stuck_noop_action3_loop() -> None:
+    """g-315-107: general no-op suppression generalizes the former
+    ACTION2-only rule to ANY action. After >=2 consecutive ACTION3 no-ops
+    in the trailing window, ACTION3 must be dropped even though it is the
+    rule-4 preferred default -- otherwise rule 4 would re-issue the dead
+    ACTION3 forever, wasting unbounded actions under the quadratic scoring
+    model. The policy must fall to the ACTION1 tiebreaker.
+
+    Also verifies the THRESHOLD>=2 boundary (guard-487 over-suppression):
+    a SINGLE ACTION3 no-op must NOT suppress ACTION3 -- one no-op may be
+    context-dependent, not a dead action.
+    """
+    features = _ls20_features_with([1, 3])
+
+    # Two consecutive ACTION3 no-ops -> ACTION3 suppressed, fall to ACTION1.
+    stuck = HandBuiltPolicy(
+        history=[
+            ActionOutcome(action=3, frame_changed=False),
+            ActionOutcome(action=3, frame_changed=False),
+        ]
+    )
+    chosen = stuck.choose(features)
+    assert chosen != 3  # stuck ACTION3 no-op loop broken (g-315-107)
+    assert chosen == 1  # falls to ACTION1 tiebreaker
+
+    # Boundary: a single ACTION3 no-op must NOT suppress (threshold >= 2).
+    one_noop = HandBuiltPolicy(
+        history=[ActionOutcome(action=3, frame_changed=False)]
+    )
+    assert one_noop.choose(features) == 3  # still the preferred default
 
 
 def test_policy_rate_limits_action4() -> None:
