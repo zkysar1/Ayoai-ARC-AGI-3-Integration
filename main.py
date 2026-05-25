@@ -23,6 +23,7 @@ from ayoai_streaming_client import (
     AyoaiStreamingError,
 )
 from recorder import Recorder
+from solver_v0.streaming_adapter import SolverV0StreamingAdapter
 from structs import FrameData, GameAction, GameState, Scorecard
 
 logger = logging.getLogger()
@@ -323,6 +324,20 @@ def main() -> None:
             "until env-class level conventions land (g-315-44 cutover)."
         ),
     )
+    parser.add_argument(
+        "--use-solver-v0",
+        action="store_true",
+        help=(
+            "Route per-tick decisions through solver_v0/HandBuiltPolicy "
+            "locally (in-process, no AyoAI Lambda or mock-server HTTP). "
+            "Preserves framework-routing per echo/self.md Constraint 2 "
+            "(decisions still flow through the streaming-contract surface, "
+            "just with a local decision source). When set, --mock-url and "
+            "the live AyoAI session-open are bypassed; SolverV0StreamingAdapter "
+            "is wired as the streaming_client. Recording prefix's solver "
+            "segment defaults to 'solver-v0'. g-315-115."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -401,7 +416,21 @@ def main() -> None:
     # chain) lands.
     ayoai_session: AyoaiSessionInfo | None = None
     env_key = os.getenv("AYOAI_ENV_KEY", "arc-agi-3")
-    if args.mock_url:
+    streaming_url: str | None = None
+    if args.use_solver_v0:
+        # g-315-115: --use-solver-v0 routes decisions through
+        # SolverV0StreamingAdapter (in-process HandBuiltPolicy.decide()),
+        # bypassing both the live AyoAI session-open and the mock-server
+        # HTTP loopback. The adapter preserves the AyoaiStreamingClient
+        # public surface (ADD/UPDATE/DELETE shape) so framework-routing
+        # per echo/self.md Constraint 2 holds even with a local decision
+        # source. ayoai_session stays None -> warm_dns is skipped.
+        logger.info(
+            "Solver-v0 mode: routing decisions through local "
+            "SolverV0StreamingAdapter (--use-solver-v0 set; no live "
+            "AyoAI session-open, no --mock-url required)"
+        )
+    elif args.mock_url:
         logger.info(
             f"Mock mode: routing decisions through {args.mock_url} "
             f"(--mock-url set, skipping live AyoAI session-open)"
@@ -439,16 +468,25 @@ def main() -> None:
             return
 
     # g-315-15 + g-315-17: instantiate the streaming decision client.
+    # g-315-115: when --use-solver-v0 is set, swap in SolverV0StreamingAdapter
+    # at this site so run_game_loop() targets the local solver via the
+    # same per-tick contract.
     # Replaces the choose_random_action() stub at the call site below.
     # AYOAI_API_KEY may be empty for mock mode (the mock ignores the header).
     # arc_game_id passes args.game so each unit's `arc_game_id` attribute
     # carries the canonical value (integration-design.md §3.2).
-    streaming_client = AyoaiStreamingClient(
-        streaming_url=streaming_url,
-        ayo_server_key=card_id,
-        arc_game_id=args.game,
-        api_key=os.getenv("AYOAI_API_KEY", "") if not args.mock_url else "",
-    )
+    if args.use_solver_v0:
+        streaming_client = SolverV0StreamingAdapter(
+            ayo_server_key=card_id,
+            arc_game_id=args.game,
+        )
+    else:
+        streaming_client = AyoaiStreamingClient(
+            streaming_url=streaming_url,
+            ayo_server_key=card_id,
+            arc_game_id=args.game,
+            api_key=os.getenv("AYOAI_API_KEY", "") if not args.mock_url else "",
+        )
 
     # g-315-96: warm DNS for live mode only. Closes the CNAME-propagation
     # window between Lambda READY and first send_add (alpha's g-315-95
@@ -476,7 +514,11 @@ def main() -> None:
     # preserve existing call sites that pass only --game / --mock-url.
     recorder = None
     if args.record:
-        solver_name = args.solver_name or ("mock" if args.mock_url else "ayoai")
+        solver_name = args.solver_name or (
+            "solver-v0" if args.use_solver_v0
+            else "mock" if args.mock_url
+            else "ayoai"
+        )
         prefix = f"{args.game}.{solver_name}.{args.level}"
         recorder = Recorder(prefix=prefix)
         logger.info(f"Recording to: {recorder.filename}")
