@@ -24,6 +24,15 @@ into a deterministic policy that the solver consumes for action selection:
    level_score, primer section 7); frame-change (rules 5/6) is only a proxy.
    Falls through when no candidate has a positive score signal (cold start,
    or the caller never threaded score), preserving pre-g-315-108 behavior.
+4.5. Palette-novelty curiosity boost (g-315-112, from g-315-110 Finding 3c):
+   when rule 4 has no signal (no positive score-delta) but the current
+   palette signature has been observed before AND candidate visit-counts
+   on it are NOT uniform, prefer the candidate least-tried on this palette.
+   Provides score-INDEPENDENT exploration on traces where score never moves
+   (rb-1274 reward-proxy mismatch); mechanism shape transfers from
+   adaptation-iaus-framework (Dave Mark IAUS curiosity boost). Cold start
+   (palette never seen) and uniform-count plateau both return None and
+   fall through to rule 5, preserving pre-g-315-112 behavior.
 5. ACTION3 default: when no other rule fires, prefer ACTION3 (92% effect
    rate, the most reliable default per ls20-class.md).
 6. ACTION1 tiebreaker: when ACTION3 is unavailable, prefer ACTION1
@@ -97,14 +106,32 @@ class PolicyDecision:
 class HandBuiltPolicy:
     """Deterministic action selector encoding ls20-class.md Solver
     Implications. Stateless from the caller's perspective except for the
-    history slot which observe() appends to and choose() reads from.
+    history slot which observe() appends to and choose() reads from, and
+    the visit_counts slot which the curiosity-boost rule consults.
 
     Fields:
         history: list of ActionOutcome - past actions + frame-change
                  flag. New entries appended via observe().
+        visit_counts: per-palette-signature visit counts for the rule-4.5
+                 curiosity-boost (g-315-112). Outer key is the palette
+                 signature ``tuple(sorted(features.palette.items()))``;
+                 inner dict maps action_id -> times that action has been
+                 issued against this palette. Populated by observe() using
+                 ``_last_palette_sig`` set during the matching choose() call.
+                 Per-episode in practice: a fresh HandBuiltPolicy is
+                 constructed for each episode, so visit_counts resets at
+                 episode boundary without any explicit reset call.
+        _last_palette_sig: the palette signature of the most recent
+                 choose() call. observe() reads it to attribute the
+                 action to the palette it was issued against; None when
+                 observe() is called without a preceding choose() (e.g.,
+                 constructor-seeded history in unit tests), in which case
+                 the visit-count increment is skipped.
     """
 
     history: List[ActionOutcome] = field(default_factory=list)
+    visit_counts: dict[tuple, dict[int, int]] = field(default_factory=dict)
+    _last_palette_sig: Optional[tuple] = field(default=None, repr=False)
 
     def observe(
         self, action: int, frame_changed: bool, score_delta: Optional[int] = None
@@ -113,12 +140,20 @@ class HandBuiltPolicy:
         env score-delta it produced. Called by the caller AFTER the action
         lands and the response is observed. ``score_delta`` defaults to None
         for callers with no score signal (back-compat, g-315-108).
+
+        When a palette signature was recorded by the most recent choose()
+        call, also increment visit_counts[palette_sig][action] for the
+        curiosity-boost rule (g-315-112). Skipped when _last_palette_sig
+        is None (observe() called without a preceding choose()).
         """
         self.history.append(
             ActionOutcome(
                 action=action, frame_changed=frame_changed, score_delta=score_delta
             )
         )
+        if self._last_palette_sig is not None:
+            per_action = self.visit_counts.setdefault(self._last_palette_sig, {})
+            per_action[action] = per_action.get(action, 0) + 1
 
     def choose(self, features: FrameFeatures) -> int:
         """Select the next action id given current frame features.
@@ -127,6 +162,14 @@ class HandBuiltPolicy:
         filters or by the per-action rate / noop gates. Otherwise
         returns the highest-priority candidate per the rules above.
         """
+        # Stash the palette signature for observe() to attribute the next
+        # action against. Hashable: ``sorted(palette.items())`` produces a
+        # deterministic ordering of (color, count) pairs regardless of
+        # insertion order in the Counter. Used by rule 4.5 below and by
+        # observe() to increment visit_counts[palette_sig][action].
+        palette_sig = tuple(sorted(features.palette.items()))
+        self._last_palette_sig = palette_sig
+
         # 1. sig-12 + sig-13/14/15 gate (signatures.filter_actions composes
         #    every applicable signature's filter sequentially).
         candidates = filter_actions(list(range(1, 8)), features)
@@ -159,6 +202,15 @@ class HandBuiltPolicy:
         best = self._best_positive_score_delta_action(candidates)
         if best is not None:
             return best
+
+        # 4.5. Palette-novelty curiosity boost (g-315-112): when score-delta
+        #      has no signal, prefer the candidate least-tried on the current
+        #      palette signature. Returns None on cold start (palette never
+        #      seen) or uniform plateau (all candidates equally visited),
+        #      preserving rule 5 fall-through behavior.
+        novel = self._least_visited_action(palette_sig, candidates)
+        if novel is not None:
+            return novel
 
         # 5. ACTION3 default: 92% frame-change rate (the most reliable).
         if 3 in candidates:
@@ -294,6 +346,40 @@ class HandBuiltPolicy:
                 best_mean = mean
                 best_action = action_id
         return best_action
+
+    def _least_visited_action(
+        self, palette_sig: tuple, candidates: List[int]
+    ) -> Optional[int]:
+        """Among ``candidates``, return the one least-visited on the current
+        palette signature, OR None when no signal exists.
+
+        Signal-presence requires (a) the palette signature has been observed
+        at least once before AND (b) candidate visit-counts are NOT uniform.
+        Cold start (palette never seen) returns None. Uniform plateau (all
+        candidates have identical visit counts -- e.g., every candidate
+        tried once each on this palette) also returns None, letting rule 5
+        ACTION3 default re-take control. Ties between non-uniform counts
+        break to the lowest action id for determinism (sort by (count, id)
+        ascending).
+
+        Rule 4.5 of choose(). Together with the observe()-side increment of
+        visit_counts[palette_sig][action], this provides score-INDEPENDENT
+        exploration over palette fingerprints (g-315-112 / Finding 3c of
+        solver-strategy-primer 7.5): on a score=0 trace where rule 4
+        always falls through, rule 4.5 picks a different candidate each
+        time a familiar palette recurs until all candidates have been tried
+        once, then yields back to rule 5."""
+        per_action = self.visit_counts.get(palette_sig)
+        if per_action is None:
+            return None  # palette never seen — cold start, no signal
+        counts = [(per_action.get(c, 0), c) for c in candidates]
+        # All-equal counts (including all-zero when palette was seen but no
+        # candidate was attempted -- shouldn't happen in practice, but
+        # cheap to guard) -> no preference -> fall through to rule 5.
+        if len(set(n for n, _ in counts)) == 1:
+            return None
+        counts.sort()  # ascending by (count, action_id)
+        return counts[0][1]
 
     def _action4_at_quota(self) -> bool:
         """True iff ACTION4 was used at-or-above ACTION_RATE_LIMIT_MAX

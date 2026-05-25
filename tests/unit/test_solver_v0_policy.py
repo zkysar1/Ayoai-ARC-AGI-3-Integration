@@ -307,3 +307,132 @@ def test_policy_decide_action6_falls_back_to_center_without_salient_cell() -> No
     assert decision.action == 6
     assert (decision.x, decision.y) == (2, 2)  # center of the 4x4 grid
     assert 0 <= decision.x <= 63 and 0 <= decision.y <= 63
+
+
+# ──────────────────────────────────────────────────────────────────────
+# g-315-112: palette-novelty curiosity-boost rule (rule 4.5)
+# Implements g-315-110 Finding 3c (solver-strategy-primer §7.5): score-
+# INDEPENDENT exploration at the palette signature level. On a score=0
+# trace where rule 4 always falls through, rule 4.5 prefers the candidate
+# least-tried on the current palette signature, producing action variation
+# instead of the static-default ACTION3 emitted every frame by rule 5.
+# ──────────────────────────────────────────────────────────────────────
+
+
+def test_policy_palette_novelty_boost_prefers_least_visited_action() -> None:
+    """g-315-112 rule 4.5: when the current palette signature has been
+    observed at least once before AND candidate visit-counts are not
+    uniform, choose() returns the candidate with the LOWEST visit count
+    on that palette (not the ACTION3 default).
+    """
+    features = _ls20_features_with([1, 2, 3, 4])
+    policy = HandBuiltPolicy()
+
+    # Tick 1: palette never seen -> rule 4.5 returns None -> ACTION3 default.
+    assert policy.choose(features) == 3
+    policy.observe(3, frame_changed=True)
+    # visit_counts now has the palette sig with {3: 1}.
+
+    # Tick 2 (same palette): visit_counts has one entry, candidates [1,2,3,4]
+    # have counts [(0,1),(0,2),(1,3),(0,4)] -> NOT uniform -> rule 4.5 fires
+    # -> lowest-id with lowest count -> ACTION1 chosen instead of ACTION3.
+    assert policy.choose(features) == 1
+    policy.observe(1, frame_changed=True)
+    # visit_counts: {3: 1, 1: 1}.
+
+    # Tick 3 (same palette): counts [(1,1),(0,2),(1,3),(0,4)] -> ACTION2.
+    assert policy.choose(features) == 2
+    policy.observe(2, frame_changed=True)
+    # visit_counts: {3: 1, 1: 1, 2: 1}.
+
+    # Tick 4 (same palette): counts [(1,1),(1,2),(1,3),(0,4)] -> ACTION4.
+    # No ACTION4 in trailing history yet -> rate-limit gate passes.
+    assert policy.choose(features) == 4
+
+
+def test_policy_palette_novelty_cold_start_falls_to_action3_default() -> None:
+    """g-315-112 cold-start fallback: when the palette signature has
+    never been observed, rule 4.5 returns None and choose() falls through
+    to rule 5 (ACTION3 default). This preserves pre-g-315-112 behavior
+    on the first tick of any episode and on constructor-seeded history
+    (which never populates visit_counts).
+    """
+    features = _ls20_features_with([1, 3])
+
+    # No history, no observe() calls -> visit_counts is empty -> cold start.
+    assert HandBuiltPolicy().choose(features) == 3
+
+    # Constructor-seeded history WITHOUT observe() also leaves visit_counts
+    # empty -> rule 4.5 still falls through -> ACTION3 default preserved.
+    seeded = HandBuiltPolicy(
+        history=[
+            ActionOutcome(action=1, frame_changed=True),
+            ActionOutcome(action=3, frame_changed=True),
+        ]
+    )
+    assert seeded.choose(features) == 3
+
+
+def test_policy_palette_novelty_uniform_plateau_falls_to_action3_default() -> None:
+    """g-315-112 uniform-plateau fallback: when all candidates have IDENTICAL
+    visit counts on the current palette (e.g., each candidate tried exactly
+    once), rule 4.5 has no preference signal -> returns None -> rule 5
+    ACTION3 default re-takes control. The plateau IS the cold-start of the
+    next exploration cycle.
+    """
+    features = _ls20_features_with([1, 2, 3, 4])
+    policy = HandBuiltPolicy()
+
+    # Cycle through all four candidates once on the same palette by calling
+    # choose()/observe() in lock-step. After the cycle, visit_counts has
+    # {1:1, 2:1, 3:1, 4:1} on the palette -> all uniform.
+    for _ in range(4):
+        chosen = policy.choose(features)
+        policy.observe(chosen, frame_changed=True)
+
+    # Plateau reached. Rule 4.5 sees uniform counts -> returns None ->
+    # ACTION3 default re-takes control.
+    assert policy.choose(features) == 3
+
+
+def test_policy_palette_novelty_separate_palettes_have_independent_counts() -> None:
+    """g-315-112 per-palette isolation: visit_counts on palette A do NOT
+    influence rule 4.5 decisions on palette B. The signature key
+    ``tuple(sorted(features.palette.items()))`` partitions counts so two
+    distinct palettes evolve independently.
+    """
+    palette_a = _ls20_features_with([1, 3])  # ls20-like palette (4-dominant)
+    # Build a DIFFERENT palette (8-dominant) that still passes the available
+    # filter. Use a frame whose Counter differs from palette_a's frame.
+    palette_b_frame = [[[8, 8, 8, 8], [8, 8, 8, 8]]]
+    palette_b = extract(palette_b_frame, available_actions=[1, 3])
+
+    policy = HandBuiltPolicy()
+
+    # Visit palette A: ACTION3 default (cold start) -> observe(3).
+    assert policy.choose(palette_a) == 3
+    policy.observe(3, frame_changed=True)
+
+    # Visit palette B (different signature): cold start -> ACTION3 default,
+    # NOT ACTION1. Palette A's visit count must not pollute palette B.
+    assert policy.choose(palette_b) == 3
+    policy.observe(3, frame_changed=True)
+
+    # Back to palette A: visit_counts[A] has {3:1} -> rule 4.5 fires ->
+    # ACTION1 (least-visited candidate on palette A).
+    assert policy.choose(palette_a) == 1
+
+
+def test_policy_palette_novelty_observe_without_choose_skips_increment() -> None:
+    """g-315-112 observe() guard: when observe() is called without a
+    preceding choose() (e.g., synthetic test seeding), _last_palette_sig
+    is None and the visit_counts increment is skipped. Prevents
+    KeyError / pollution of visit_counts with a None-keyed entry.
+    """
+    policy = HandBuiltPolicy()
+
+    # Bare observe() without prior choose().
+    policy.observe(3, frame_changed=True)
+    assert policy.history == [ActionOutcome(action=3, frame_changed=True)]
+    assert policy.visit_counts == {}  # untouched
+    assert policy._last_palette_sig is None
