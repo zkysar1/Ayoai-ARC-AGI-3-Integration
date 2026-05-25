@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections import deque
 from pathlib import Path
 from typing import IO, Iterable, Iterator, Optional, Protocol
 
@@ -30,6 +31,12 @@ from solver_v0.perception import FrameFeatures, extract
 
 LIVE_ENV_VAR = "LIVE_ENDPOINT"
 DEFAULT_AVAILABLE_ACTIONS = [0, 1, 2, 3, 4, 5, 6, 7]
+# Frame-history window for perception.extract() churn computation. Matches
+# SolverV0StreamingAdapter.DEFAULT_HISTORY_DEPTH (streaming_adapter.py) and the
+# solver_v0 offline-eval convention (bundled fixtures pass ~8-frame histories).
+# g-315-116 / rb-1301: before this, RecordingReplayAdapter passed no history,
+# so every offline-eval measured perception's empty-history cold-start branch.
+DEFAULT_HISTORY_DEPTH = 8
 
 
 class ClientAdapter(Protocol):
@@ -120,21 +127,38 @@ class RecordingReplayAdapter:
     that predate the field. ``data.score`` IS in the schema
     (FrameData.score, 0-254) and is threaded into FrameFeatures.score
     when present (g-315-108).
+
+    A rolling window of recent FULL layered frames is maintained and passed
+    to ``perception.extract(history=)`` so roles/churns reflect real frame
+    transitions (g-315-116). Without it every offline-eval measured
+    perception's empty-history cold-start branch -- roles all "unknown",
+    churns all 0.0 -- collapsing every frame to a single signature (rb-1301).
+    History ordering mirrors SolverV0StreamingAdapter: extract() sees the
+    PRIOR frames; the current frame is appended AFTER extract consumes them.
     """
 
     def __init__(
         self,
         recording_path: Path,
         available_actions: Optional[list[int]] = None,
+        history_depth: int = DEFAULT_HISTORY_DEPTH,
     ) -> None:
         self._path = recording_path
         self._available = list(available_actions or DEFAULT_AVAILABLE_ACTIONS)
         self._iter: Optional[Iterator[dict[str, object]]] = None
         self._fh: Optional[IO[str]] = None
+        # Rolling window of recent FULL 3D layered frames (data.frame as-is),
+        # fed to perception.extract(history=) so roles/churns are computed
+        # against real frame transitions instead of the cold-start branch.
+        # rb-1300: history entries MUST be full layered frames
+        # ([layers][rows][cols]); extract indexes prev_frame[0] internally.
+        self._history: deque = deque(maxlen=max(1, history_depth))
 
     def __enter__(self) -> "RecordingReplayAdapter":
         self._fh = open(self._path, encoding="utf-8")
         self._iter = self._line_iter(self._fh)
+        # Fresh replay starts cold -- the first frame genuinely has no prior.
+        self._history.clear()
         return self
 
     def __exit__(self, *exc_info: object) -> None:
@@ -180,8 +204,19 @@ class RecordingReplayAdapter:
         # Absent / non-int -> None (back-compat: older recordings and the
         # session_open record carry no score field).
         score = data.get("score")
-        return extract(
+        # Pass the PRIOR frames as history so perception computes real per-cell
+        # churn / roles instead of the cold-start branch (g-315-116, rb-1301).
+        # list(self._history) snapshots the window BEFORE the current frame is
+        # appended -- extract reasons about transitions history -> current_frame,
+        # not current_frame -> itself (mirrors SolverV0StreamingAdapter ordering).
+        features = extract(
             frame,
             available_actions=available,
+            history=list(self._history),
             score=score if isinstance(score, int) else None,
         )
+        # Append the current FULL layered frame AFTER extract consumes the prior
+        # window. rb-1300: store the full [layers][rows][cols] frame, NOT
+        # frame[0] -- extract indexes prev_frame[0] internally.
+        self._history.append(frame)
+        return features

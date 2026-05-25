@@ -184,3 +184,128 @@ def test_protocol_conformance() -> None:
 
     # Static check that Protocol is importable and named correctly.
     assert ClientAdapter.__name__ == "ClientAdapter"
+
+
+def test_recording_replay_seeds_history_real_ls20() -> None:
+    """g-315-116 (verification outcome 2): replaying the real 81-frame ls20
+    random recording through RecordingReplayAdapter -- now that history is
+    seeded -- must produce >=50 distinct roles signatures AND >=50 distinct
+    churns signatures. Pre-fix (no history=) every frame collapsed to a single
+    all-"unknown"/all-0.0 signature (rb-1301), so this on-real-data assertion
+    is the direct guard against the g-315-116 regression.
+
+    The recording lives under the repo's gitignored recordings/ dir, so this
+    test skips when it is absent (CI / fresh checkout). The portable mechanism
+    guard that always runs is test_recording_replay_history_breaks_cold_start
+    below.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    matches = sorted(
+        (repo_root / "recordings").glob("ls20-*.random.*.recording.jsonl")
+    )
+    if not matches:
+        pytest.skip("no ls20 random recording present (recordings/ is gitignored)")
+    recording = matches[0]
+
+    roles_sigs: set[tuple[str, ...]] = set()
+    churns_sigs: set[tuple[float, ...]] = set()
+    frames = 0
+    with RecordingReplayAdapter(recording) as adapter:
+        while True:
+            ff = adapter.next_frame()
+            if ff is None:
+                break
+            frames += 1
+            roles_sigs.add(tuple(ff.roles))
+            churns_sigs.add(tuple(ff.churns))
+
+    assert frames >= 50, f"expected a multi-frame recording, got {frames}"
+    assert len(roles_sigs) >= 50, (
+        f"roles collapsed to {len(roles_sigs)} distinct sigs over {frames} "
+        "frames -- history seeding not effective (g-315-116 regression / rb-1301)"
+    )
+    assert len(churns_sigs) >= 50, (
+        f"churns collapsed to {len(churns_sigs)} distinct sigs over {frames} "
+        "frames -- history seeding not effective (g-315-116 regression / rb-1301)"
+    )
+
+
+def test_recording_replay_history_breaks_cold_start(tmp_path: Path) -> None:
+    """g-315-116 portable mechanism guard (always runs, no real recording).
+
+    With history seeded, a sequence where different cells change on different
+    frames must yield MULTIPLE distinct roles/churns signatures -- the pre-fix
+    cold-start branch collapsed every frame to one all-"unknown"/all-0.0
+    signature (rb-1301). Also asserts the boundary semantics: the FIRST frame
+    is genuinely cold (history empty -> all "unknown") while later frames carry
+    history-derived non-"unknown" roles.
+    """
+    recording = tmp_path / "varying.recording.jsonl"
+    # 1-layer frames; one more cell flips 5->6 on each successive frame, so the
+    # per-cell churn pattern (and thus roles+churns signature) differs frame to
+    # frame once history is present.
+    frames_in = [
+        [[[5, 5, 5, 5]]],  # f0: history empty -> cold start
+        [[[5, 5, 5, 5]]],  # f1: identical -> all static once history present
+        [[[6, 5, 5, 5]]],  # f2: cell0 flips
+        [[[6, 6, 5, 5]]],  # f3: cell1 flips
+        [[[6, 6, 6, 5]]],  # f4: cell2 flips
+        [[[6, 6, 6, 6]]],  # f5: cell3 flips
+    ]
+    with recording.open("w", encoding="utf-8") as fh:
+        for fr in frames_in:
+            fh.write(json.dumps({"data": {"frame": fr}}) + "\n")
+
+    roles_sigs: set[tuple[str, ...]] = set()
+    churns_sigs: set[tuple[float, ...]] = set()
+    per_frame_roles: list[tuple[str, ...]] = []
+    with RecordingReplayAdapter(recording) as adapter:
+        while True:
+            ff = adapter.next_frame()
+            if ff is None:
+                break
+            roles_sigs.add(tuple(ff.roles))
+            churns_sigs.add(tuple(ff.churns))
+            per_frame_roles.append(tuple(ff.roles))
+
+    # First frame is cold (no prior) -> every role "unknown".
+    assert set(per_frame_roles[0]) == {"unknown"}
+    # A later frame must carry history-derived (non-"unknown") roles -- proves
+    # extract received seeded history rather than the cold-start branch.
+    assert any(
+        any(r != "unknown" for r in sig) for sig in per_frame_roles[1:]
+    ), "no later frame had a history-derived role -- history not seeded"
+    # Collapse is fixed: the bug produced exactly 1 distinct signature.
+    assert len(roles_sigs) >= 3, f"roles still collapsing: {len(roles_sigs)} sigs"
+    assert len(churns_sigs) >= 3, f"churns still collapsing: {len(churns_sigs)} sigs"
+
+
+def test_recording_replay_history_holds_full_layered_frames(tmp_path: Path) -> None:
+    """g-315-116 / rb-1300 (verification outcome b): the adapter must accumulate
+    FULL 3D layered frames ([layers][rows][cols]) in its history -- NOT
+    pre-extracted primary layers ([rows][cols]). perception.extract indexes
+    prev_frame[0] internally, so storing primary-only would silently feed it
+    the wrong shape."""
+    recording = tmp_path / "layered.recording.jsonl"
+    # 2-layer frames so a full-layered entry is unambiguously distinguishable
+    # from a primary-only grid.
+    frames_in = [
+        [[[1, 1], [1, 1]], [[2, 2], [2, 2]]],
+        [[[3, 1], [1, 1]], [[2, 2], [2, 2]]],
+    ]
+    with recording.open("w", encoding="utf-8") as fh:
+        for fr in frames_in:
+            fh.write(json.dumps({"data": {"frame": fr}}) + "\n")
+
+    with RecordingReplayAdapter(recording) as adapter:
+        adapter.next_frame()
+        adapter.next_frame()
+        stored = list(adapter._history)
+
+    assert len(stored) == 2
+    # Each stored entry is byte-identical to the FULL layered data.frame.
+    assert stored[0] == frames_in[0]
+    assert stored[1] == frames_in[1]
+    # Explicit shape guard: the layer dimension survives (2 layers, not the
+    # 2 rows a primary-only grid would have left).
+    assert len(stored[0]) == 2 and isinstance(stored[0][0][0], list)
