@@ -309,3 +309,79 @@ def test_recording_replay_history_holds_full_layered_frames(tmp_path: Path) -> N
     # Explicit shape guard: the layer dimension survives (2 layers, not the
     # 2 rows a primary-only grid would have left).
     assert len(stored[0]) == 2 and isinstance(stored[0][0][0], list)
+
+
+def test_recording_replay_skips_non_frame_records(tmp_path: Path) -> None:
+    """g-315-125 regression (portable, always runs): non-frame records -- the
+    session-open preamble (data.kind/ayo_server_key, NO data.frame) at line 0,
+    AND any metadata row mid-stream -- must be SKIPPED, not treated as
+    end-of-stream. Pre-fix, next_frame() returned None on the first such record;
+    the ClientAdapter Protocol reads None as 'source exhausted', so a real
+    recording (which always opens with the preamble) yielded 0 frames
+    (g-315-118 confirmed the vc33 recording yielded 0/51 pre-fix). The fix
+    reserves None for genuine StopIteration and ``continue``s past non-frame
+    records (rb-1339).
+    """
+    recording = tmp_path / "preamble.recording.jsonl"
+    lines = [
+        # session-open preamble at line 0 -- the real streaming client writes
+        # this first on every recording (connection metadata, no frame).
+        {"timestamp": "t0", "data": {"kind": "session_open", "ayo_server_key": "k"}},
+        {"timestamp": "t1", "data": {"game_id": "ls20", "frame": [[[4, 4], [3, 4]]]}},
+        # a non-frame metadata record MID-stream must also be skipped, not stop.
+        {"timestamp": "t2", "data": {"kind": "heartbeat"}},
+        {"timestamp": "t3", "data": {"game_id": "ls20", "frame": [[[8, 8], [8, 8]]]}},
+    ]
+    with recording.open("w", encoding="utf-8") as fh:
+        for entry in lines:
+            fh.write(json.dumps(entry) + "\n")
+
+    frames = []
+    with RecordingReplayAdapter(recording, available_actions=[0, 1, 2, 3]) as adapter:
+        while True:
+            ff = adapter.next_frame()
+            if ff is None:
+                break
+            frames.append(ff)
+
+    # Pre-fix: 0 frames (the preamble truncated the stream at line 0).
+    # Post-fix: both real frames yielded, preamble + mid-stream metadata skipped.
+    assert len(frames) == 2, (
+        f"expected 2 frames (preamble + mid-stream metadata skipped), got "
+        f"{len(frames)} -- non-frame records must not signal end-of-stream "
+        "(g-315-125 regression / rb-1339)"
+    )
+    assert frames[0].palette == {4: 3, 3: 1}
+    assert frames[1].palette == {8: 4}
+
+
+def test_recording_replay_skips_preamble_real_recording() -> None:
+    """g-315-125 regression on real data (skips if the fixture is absent): every
+    real *.recording.jsonl the streaming client writes opens with a session-open
+    preamble. Replaying the vc33 incident recording must yield >0 frames --
+    pre-fix it yielded 0 because the preamble at line 0 was read as
+    end-of-stream (g-315-118 measured 0/51). Globbed specifically for the
+    solver-v0 vc33 recording (51 frame records); the ls20-*.ayoai.0 stubs are
+    intentionally NOT matched -- they are session-open-only (no frame records),
+    so they legitimately yield 0 frames even post-fix and would false-fail here.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    matches = sorted(
+        (repo_root / "recordings").glob("vc33-*.solver-v0.*.recording.jsonl")
+    )
+    if not matches:
+        pytest.skip("no vc33 solver-v0 recording present (recordings/ is gitignored)")
+    recording = matches[0]
+
+    frames = 0
+    with RecordingReplayAdapter(recording) as adapter:
+        while True:
+            ff = adapter.next_frame()
+            if ff is None:
+                break
+            frames += 1
+
+    assert frames > 0, (
+        f"{recording.name} yielded 0 frames -- the session-open preamble was "
+        "read as end-of-stream (g-315-125 regression / rb-1339)"
+    )

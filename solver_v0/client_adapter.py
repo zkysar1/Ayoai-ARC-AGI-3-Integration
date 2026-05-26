@@ -181,16 +181,26 @@ class RecordingReplayAdapter:
                 "RecordingReplayAdapter must be entered as a context manager "
                 "before next_frame() is called."
             )
-        try:
-            record = next(self._iter)
-        except StopIteration:
-            return None
-        data = record.get("data") if isinstance(record, dict) else None
-        if not isinstance(data, dict):
-            return None
-        frame = data.get("frame")
-        if not isinstance(frame, list):
-            return None
+        # Advance to the next FRAME-bearing record. Non-frame records -- the
+        # session-open preamble (data.kind/ayo_server_key, no data.frame) and
+        # any other metadata row -- are SKIPPED, not treated as end-of-stream.
+        # Returning None on the preamble would signal "source exhausted" to the
+        # ClientAdapter Protocol and truncate the whole replay at line 0 (0
+        # frames yielded for any real *.recording.jsonl, which all carry a
+        # session-open preamble); g-315-125, confirmed empirically in g-315-118.
+        # None is reserved for genuine StopIteration. (rb-1339)
+        while True:
+            try:
+                record = next(self._iter)
+            except StopIteration:
+                return None
+            data = record.get("data") if isinstance(record, dict) else None
+            if not isinstance(data, dict):
+                continue
+            frame = data.get("frame")
+            if not isinstance(frame, list):
+                continue
+            break
         # FrameData.available_actions is a per-frame sibling of frame inside
         # data; thread it so the policy filters on the REAL frame's legal set
         # on replay (g-315-111). Absent / non-list -> fall back to the
