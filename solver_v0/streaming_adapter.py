@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from typing import Any
+from typing import Any, Optional
 
 from ayoai_streaming_client import (
     AyoaiDecision,
@@ -58,6 +58,21 @@ DECIDED_BY_SOLVER_V0 = "solver-v0"
 # churn ratios. Matches solver_v0 offline-eval convention (the bundled
 # fixtures pass histories of ~8 frames).
 DEFAULT_HISTORY_DEPTH = 8
+
+
+def _class_slug_from_game_id(game_id: str) -> Optional[str]:
+    """Extract the class slug (prefix before the first '-') from an ARC
+    game_id, e.g. 'ls20-fa137e247ce6' -> 'ls20'. Returns None for an empty
+    game_id or one whose prefix is empty (leading '-'), so the policy stays
+    permissive (game_class=None) when the class is unknown -- preserving
+    pre-g-315-120 behavior rather than guessing a class. g-315-121: this is
+    what activates the g-315-120 game_class scope-gate for real games, by
+    populating it from main.py's arc_game_id (args.game) at the
+    default-policy construction site below."""
+    if not game_id:
+        return None
+    slug = game_id.split("-", 1)[0].strip()
+    return slug or None
 
 
 class SolverV0StreamingAdapter:
@@ -107,7 +122,17 @@ class SolverV0StreamingAdapter:
         self.arc_game_id = arc_game_id
         self.api_key = api_key
 
-        self._policy = policy if policy is not None else HandBuiltPolicy()
+        # g-315-121: when the adapter constructs the default policy, derive the
+        # class slug from arc_game_id (the game_id prefix) and thread it as
+        # game_class so the g-315-120 ls20-signature scope-gate activates for
+        # real games. A caller-supplied policy is respected as-is (it owns its
+        # game_class) -- main.py's --use-solver-v0 path passes no policy, so
+        # production flows through the default-construct branch here.
+        self._policy = (
+            policy
+            if policy is not None
+            else HandBuiltPolicy(game_class=_class_slug_from_game_id(arc_game_id))
+        )
         self._frame_history: deque = deque(maxlen=max(1, history_depth))
         self._previous_frame: FrameData | None = None
         self._previous_action: int | None = None

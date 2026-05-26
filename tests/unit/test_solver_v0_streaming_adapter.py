@@ -81,6 +81,45 @@ def test_adapter_constructor_accepts_ayoaiclient_kwargs() -> None:
     adapter.close()
 
 
+def test_adapter_populates_game_class_from_game_id_prefix() -> None:
+    """g-315-121: the adapter must populate the default policy's game_class
+    from the arc_game_id prefix (the class slug before the first '-'),
+    activating the g-315-120 ls20-signature scope-gate for real games.
+
+    Field-level: 'as66-<hash>' -> 'as66', 'ls20-<hash>' -> 'ls20', empty/absent
+    -> None (permissive back-compat). Behavioral: on an ls20-like-palette frame
+    with ACTION6 the only available action, an as66 policy KEEPS ACTION6 (sig-13
+    excluded by class scoping) while an ls20 policy DROPS it (sig-13 fires) and
+    falls to RESET -- the production half of the g-315-119 generalization-drift
+    fix (signature/policy halves live in test_solver_v0_signatures.py and
+    test_solver_v0_policy.py)."""
+    from solver_v0.perception import extract
+
+    # Field-level: slug parsed from the prefix before the first '-'.
+    assert (
+        SolverV0StreamingAdapter(arc_game_id="as66-016295f7a325").policy.game_class
+        == "as66"
+    )
+    assert (
+        SolverV0StreamingAdapter(arc_game_id="ls20-fa137e247ce6").policy.game_class
+        == "ls20"
+    )
+    # Back-compat: empty / absent game_id -> None (permissive, pre-g-315-120).
+    assert SolverV0StreamingAdapter(ayo_server_key="card-1").policy.game_class is None
+    assert SolverV0StreamingAdapter(arc_game_id="").policy.game_class is None
+
+    # Behavioral: 4x4 ls20-like palette {4:9, 3:5, 8:2} (pct(4)=0.56 >= 0.40 AND
+    # pct(3)=0.31 >= 0.30) genuinely fires sig-13; ACTION6 the only legal action.
+    # (NOT the module _real_frame helper, whose 2x4 palette has pct(3)=0.25 and
+    # does NOT fire sig-13.) Single-layer so sig-15 is inert here.
+    frame = [[[4, 4, 3, 8], [4, 4, 3, 8], [4, 4, 3, 4], [4, 3, 4, 3]]]
+    features = extract(frame, available_actions=[6])
+    # as66: sig-13 excluded by game_class enforcement -> ACTION6 survives -> chosen.
+    assert SolverV0StreamingAdapter(arc_game_id="as66-x").policy.choose(features) == 6
+    # ls20 (own class): sig-13 fires -> ACTION6 dropped -> RESET fallback.
+    assert SolverV0StreamingAdapter(arc_game_id="ls20-x").policy.choose(features) == 0
+
+
 def test_choose_action_NOT_PLAYED_returns_RESET_decided_by_client() -> None:
     """Game-control RESET short-circuit when state is NOT_PLAYED."""
     adapter = SolverV0StreamingAdapter(ayo_server_key="card-1")
