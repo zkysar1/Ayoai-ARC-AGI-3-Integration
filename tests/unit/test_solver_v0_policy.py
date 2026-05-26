@@ -465,3 +465,190 @@ def test_policy_palette_novelty_observe_without_choose_skips_increment() -> None
     assert policy.history == [ActionOutcome(action=3, frame_changed=True)]
     assert policy.visit_counts == {}  # untouched
     assert policy._last_palette_sig is None
+
+
+# ──────────────────────────────────────────────────────────────────────
+# g-315-124: coordinate-level reward learning + curiosity in _target_cell.
+# On a pure-ACTION6 class (vc33) choose() collapses to a single candidate, so
+# rules 4/4.5 are moot and the CLICK LOCATION is the whole decision. These
+# tests verify _target_cell's coordinate twin of rule 4 (reward preference) and
+# rule 4.5 (curiosity rotation), keyed on the cell feature-class
+# (role, churn-bucket) NEVER (x, y) — the generalization guard. Mirrors the
+# rule-4/4.5 action-id test pattern above. rb-1259 / rb-1274 / rb-1322.
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _three_candidate_action6_features():
+    """Non-ls20, single-layer frame whose ONLY available action is ACTION6 and
+    which has three salient cells with three DISTINCT feature-classes:
+
+        col0 (flat i=0): churn 1.0  -> ("mobile", 3)   [highest-churn mobile]
+        col1 (flat i=1): churn 0.5  -> ("mobile", 2)
+        col2 (flat i=2): churn 0.25 -> ("rare", 1)
+
+    col3 is static (never changes). Palette {1,2,3,4,5} is not ls20-like (no
+    value-4/3 dominance) so sig-13/14 do not drop ACTION6; single layer keeps
+    sig-15 quiet. width=4, one row, so flat index == column. Coordinate of a
+    chosen cell is (x, y) = (col, 0)."""
+    current = [[[1, 1, 1, 5]]]
+    history = [
+        [[[2, 1, 1, 5]]],
+        [[[3, 2, 1, 5]]],
+        [[[4, 2, 1, 5]]],
+        [[[5, 3, 2, 5]]],
+    ]
+    return extract(current, available_actions=[6], history=history)
+
+
+def test_target_cell_cold_start_falls_back_to_highest_churn_mobile() -> None:
+    """g-315-124 R5 fallback (pre-g-315-124 behavior preserved): with no reward
+    history and no curiosity visits, _target_cell targets the highest-churn
+    mobile cell. col0 (churn 1.0) beats col1 (churn 0.5); the rare col2 is not
+    reached. Identical to the pre-change heuristic on the cold-start path."""
+    features = _three_candidate_action6_features()
+    decision = HandBuiltPolicy().decide(features)
+    assert decision.action == 6
+    assert (decision.x, decision.y) == (0, 0)  # highest-churn mobile, no learning yet
+
+
+def test_target_cell_prefers_highest_positive_reward_feature_class() -> None:
+    """g-315-124 R4: _target_cell prefers the candidate cell whose feature-class
+    has the highest strictly-POSITIVE mean historical score-delta — overriding
+    the highest-churn-mobile fallback. Here ("rare", 1) earned +5 mean while
+    ("mobile", 3) earned 0, so decide() targets the rare cell (col2) instead of
+    the highest-churn mobile cell (col0). Coordinate twin of the rule-4
+    score-delta preference test above."""
+    features = _three_candidate_action6_features()
+    policy = HandBuiltPolicy(
+        history=[
+            ActionOutcome(
+                action=6, frame_changed=True, score_delta=4,
+                cell_role="rare", cell_churn_bucket=1,
+            ),
+            ActionOutcome(
+                action=6, frame_changed=True, score_delta=6,
+                cell_role="rare", cell_churn_bucket=1,
+            ),
+            # ("mobile", 3) mean 0 — excluded by the strictly-positive gate.
+            ActionOutcome(
+                action=6, frame_changed=True, score_delta=0,
+                cell_role="mobile", cell_churn_bucket=3,
+            ),
+        ]
+    )
+    decision = policy.decide(features)
+    assert decision.action == 6
+    assert (decision.x, decision.y) == (2, 0)  # rare cell (high reward), not mobile col0
+
+
+def test_target_cell_negative_reward_does_not_override_fallback() -> None:
+    """g-315-124 R4 strictly-positive gate: a feature-class with a NEGATIVE mean
+    score-delta must NOT be preferred. With ("rare", 1) at mean -3, R4 yields no
+    signal and _target_cell falls through to the highest-churn mobile fallback
+    (col0). Coordinate twin of test_policy_negative_score_delta_preserves_..."""
+    features = _three_candidate_action6_features()
+    policy = HandBuiltPolicy(
+        history=[
+            ActionOutcome(
+                action=6, frame_changed=True, score_delta=-3,
+                cell_role="rare", cell_churn_bucket=1,
+            ),
+        ]
+    )
+    decision = policy.decide(features)
+    assert decision.action == 6
+    assert (decision.x, decision.y) == (0, 0)  # negative reward → fallback mobile col0
+
+
+def test_target_cell_curiosity_rotates_unvisited_feature_classes() -> None:
+    """g-315-124 R4.5: with no reward signal but non-uniform per-episode
+    feature-class visit counts, _target_cell rotates to the least-visited
+    feature-class. Tick 1 cold-start → highest-churn mobile (col0); after
+    observing it, ("mobile", 3) has 1 visit while ("mobile", 2)/("rare", 1)
+    have 0, so tick 2 picks the lowest-index 0-visit candidate (col1), then
+    tick 3 picks col2. Coordinate twin of the palette-novelty rotation test."""
+    features = _three_candidate_action6_features()
+    policy = HandBuiltPolicy()
+
+    # Tick 1: cold start (empty visits) → R4.5 skipped → fallback mobile col0.
+    d1 = policy.decide(features)
+    assert (d1.x, d1.y) == (0, 0)
+    policy.observe(6, frame_changed=True)  # no score_delta; visits ("mobile",3)=1
+
+    # Tick 2: ("mobile",3)=1, others 0 → non-uniform → least-visited, lowest
+    # flat index among the 0-count candidates → col1.
+    d2 = policy.decide(features)
+    assert (d2.x, d2.y) == (1, 0)
+    policy.observe(6, frame_changed=True)  # visits ("mobile",2)=1
+
+    # Tick 3: ("mobile",3)=1, ("mobile",2)=1, ("rare",1)=0 → col2.
+    d3 = policy.decide(features)
+    assert (d3.x, d3.y) == (2, 0)
+
+
+def test_target_cell_reward_generalizes_across_position() -> None:
+    """g-315-124 GENERALIZATION GUARD: reward keys on the feature-class, NEVER
+    on (x, y). Reward is learned for ("rare", 1); on a NEW frame where the rare
+    cell sits at a DIFFERENT position (col0, not col2) and the highest-churn
+    mobile cell is at col2, _target_cell still targets the rare cell (col0) —
+    proving it followed the feature-class, not a memorized coordinate. This is
+    skill acquisition, not memorization (Self constraint gate 3)."""
+    # Frame B: col0 churn 0.25 -> ("rare",1); col2 churn 1.0 -> ("mobile",3).
+    current = [[[1, 5, 1, 5]]]
+    history = [
+        [[[1, 5, 2, 5]]],
+        [[[1, 5, 3, 5]]],
+        [[[1, 5, 4, 5]]],
+        [[[2, 5, 5, 5]]],
+    ]
+    features_b = extract(current, available_actions=[6], history=history)
+    policy = HandBuiltPolicy(
+        history=[
+            ActionOutcome(
+                action=6, frame_changed=True, score_delta=7,
+                cell_role="rare", cell_churn_bucket=1,
+            ),
+            ActionOutcome(
+                action=6, frame_changed=True, score_delta=5,
+                cell_role="rare", cell_churn_bucket=1,
+            ),
+        ]
+    )
+    decision = policy.decide(features_b)
+    assert decision.action == 6
+    # Rare cell now at col0 → (0,0). A coordinate-memorizing policy would have
+    # chased col2 (where reward was originally earned) or the mobile fallback.
+    assert (decision.x, decision.y) == (0, 0)
+
+
+def test_observe_attributes_action6_cell_feature_from_target_cell() -> None:
+    """g-315-124 observe() attribution: after a decide() that selects ACTION6,
+    observe(6, ...) records the targeted cell's feature-class (via
+    _last_cell_feature) on the ActionOutcome AND increments cell_feature_visits.
+    No adapter change is needed — the live caller just calls observe() as
+    before."""
+    features = _three_candidate_action6_features()
+    policy = HandBuiltPolicy()
+
+    d = policy.decide(features)  # cold-start fallback → mobile col0, fc ("mobile",3)
+    assert (d.x, d.y) == (0, 0)
+
+    policy.observe(6, frame_changed=True, score_delta=3)
+    last = policy.history[-1]
+    assert last.action == 6 and last.score_delta == 3
+    assert last.cell_role == "mobile" and last.cell_churn_bucket == 3
+    assert policy.cell_feature_visits == {("mobile", 3): 1}
+
+
+def test_observe_non_action6_leaves_cell_feature_none() -> None:
+    """g-315-124 back-compat: a non-ACTION6 observe() records no cell feature
+    and never touches cell_feature_visits, even after a choose() set
+    _last_palette_sig. The coordinate-learning fields stay None on the
+    action-id path (mirrors the score_delta back-compat invariant)."""
+    features = _ls20_features_with([1, 3])
+    policy = HandBuiltPolicy()
+    assert policy.choose(features) == 3  # sets _last_palette_sig
+    policy.observe(3, frame_changed=True, score_delta=1)
+    last = policy.history[-1]
+    assert last.cell_role is None and last.cell_churn_bucket is None
+    assert policy.cell_feature_visits == {}
