@@ -43,6 +43,35 @@ def _ls20_features_with(available: list[int]):
     return extract(frame, available_actions=available)
 
 
+def test_policy_threads_game_class_to_signature_filter() -> None:
+    """g-315-120: HandBuiltPolicy.game_class must be threaded into
+    signatures.filter_actions so the ls20-declared sig-13 (drop ACTION6) is
+    scope-gated. With ACTION6 the only available action on a frame whose palette
+    genuinely fires sig-13 (pct(4) >= 0.40 AND pct(3) >= 0.30): a None/"ls20"
+    policy drops it (sig-13 fires) and falls to RESET; an "as66" policy keeps it
+    (sig-13 excluded by game_class enforcement). This is the policy-layer half of
+    the g-315-119 generalization-drift fix — the signature-layer half is covered
+    in test_solver_v0_signatures.py.
+
+    Builds its own 4x4 frame rather than using _ls20_features_with: that helper's
+    2x4 frame has palette {4:5,3:2,8:1} (pct(3)=0.25 < 0.30) and therefore does
+    NOT fire sig-13. Its name predates the sig-13 pct(3)>=0.30 threshold; its
+    existing callers exercise the sig-12 / noop-skip / rate-limit / score-delta
+    paths, none of which need sig-13 to fire — so the stale palette never
+    mattered until a test (this one) actually depended on sig-13 dropping ACTION6.
+    """
+    # 4x4 ls20-like palette {4:9, 3:5, 8:2}: pct(4)=0.56 >= 0.40 AND
+    # pct(3)=0.31 >= 0.30 → sig-13 predicate fires. ACTION6 the only legal action.
+    frame = [[[4, 4, 3, 8], [4, 4, 3, 8], [4, 4, 3, 4], [4, 3, 4, 3]]]
+    features = extract(frame, available_actions=[6])
+
+    # None (back-compat) and own class: sig-13 fires, ACTION6 dropped → RESET.
+    assert HandBuiltPolicy(game_class=None).choose(features) == 0
+    assert HandBuiltPolicy(game_class="ls20").choose(features) == 0
+    # Different class: sig-13 excluded → ACTION6 survives and is chosen.
+    assert HandBuiltPolicy(game_class="as66").choose(features) == 6
+
+
 def test_policy_drops_unavailable_actions() -> None:
     """sig-12 gate (cross-class, conf=0.95) - HandBuiltPolicy.choose
     must never return an action not in features.available_actions, even

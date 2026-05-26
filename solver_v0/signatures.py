@@ -54,6 +54,20 @@ class PatternSignature:
     action_filter: ActionFilter
 
 
+def _class_in_scope(sig: PatternSignature, current_class: Optional[str]) -> bool:
+    """True iff ``sig`` is in scope for ``current_class`` (g-315-120 game_class
+    enforcement). A "cross-class" signature is always in scope. When
+    current_class is None the environment class is unknown / not threaded, so
+    scoping is permissive (back-compat — every predicate-matching sig applies,
+    preserving pre-g-315-120 behavior). Otherwise a class-specific signature is
+    in scope only on its own class — this is what prevents the ls20-declared
+    sig-13/14/15 from firing on a different environment class whose frames
+    merely match their (palette-fingerprint / multi_layer) predicate."""
+    if current_class is None:
+        return True
+    return sig.game_class == "cross-class" or sig.game_class == current_class
+
+
 @dataclass
 class _Registry:
     """Ordered registry of PatternSignature. Order = registration order."""
@@ -69,8 +83,25 @@ class _Registry:
                 return
         self.entries.append(sig)
 
-    def applicable(self, features: FrameFeatures) -> list[PatternSignature]:
-        return [s for s in self.entries if s.predicate(features)]
+    def applicable(
+        self, features: FrameFeatures, current_class: Optional[str] = None
+    ) -> list[PatternSignature]:
+        # game_class enforcement (g-315-120): a signature applies only when its
+        # predicate matches AND its declared game_class is in scope for the
+        # current environment class. Before this gate, applicable() filtered on
+        # predicate ALONE — game_class was declared metadata that no consumer
+        # read, so the ls20 palette-fingerprint sigs (sig-13/14/15) fired on ANY
+        # class whose frames matched their predicate (the g-315-119 audit
+        # finding, solver-strategy-primer 7.6). When current_class is None
+        # (class not threaded — back-compat default) scoping is permissive:
+        # every predicate-matching sig applies, so pre-g-315-120 behavior and
+        # all existing tests are preserved. When current_class is set, a
+        # class-specific sig fires ONLY on its own class.
+        return [
+            s
+            for s in self.entries
+            if s.predicate(features) and _class_in_scope(s, current_class)
+        ]
 
 
 REGISTRY = _Registry()
@@ -81,15 +112,20 @@ def register(sig: PatternSignature) -> None:
     REGISTRY.register(sig)
 
 
-def applicable_signatures(features: FrameFeatures) -> list[PatternSignature]:
-    """Return signatures whose predicate matches the given features."""
-    return REGISTRY.applicable(features)
+def applicable_signatures(
+    features: FrameFeatures, current_class: Optional[str] = None
+) -> list[PatternSignature]:
+    """Return signatures whose predicate matches the given features AND are in
+    scope for current_class (g-315-120 game_class enforcement). current_class
+    None is permissive (back-compat)."""
+    return REGISTRY.applicable(features, current_class)
 
 
 def filter_actions(
     candidate_actions: list[int],
     features: FrameFeatures,
     registry: Optional[_Registry] = None,
+    current_class: Optional[str] = None,
 ) -> list[int]:
     """Apply every applicable signature's filter sequentially.
 
@@ -97,6 +133,11 @@ def filter_actions(
         candidate_actions: ids to consider this frame.
         features: current FrameFeatures (used by predicates + filters).
         registry: override registry (testing); defaults to module REGISTRY.
+        current_class: the current environment class slug (e.g. "ls20"), or
+            None when not threaded. Passed to applicable() for game_class
+            enforcement (g-315-120): when set, class-specific signatures fire
+            only on their own class; when None, scoping is permissive so
+            pre-g-315-120 behavior is preserved.
 
     Returns:
         Filtered list of action ids. Order is preserved relative to the
@@ -104,7 +145,7 @@ def filter_actions(
     """
     reg = registry if registry is not None else REGISTRY
     result = list(candidate_actions)
-    for sig in reg.applicable(features):
+    for sig in reg.applicable(features, current_class):
         result = sig.action_filter(result, features)
     return result
 

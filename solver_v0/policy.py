@@ -112,6 +112,13 @@ class HandBuiltPolicy:
     Fields:
         history: list of ActionOutcome - past actions + frame-change
                  flag. New entries appended via observe().
+        game_class: the current environment class slug (e.g. "ls20"), or None
+                 when not threaded. Passed to signatures.filter_actions for
+                 game_class enforcement (g-315-120) so class-specific signatures
+                 (sig-13/14/15) fire only on their own class. None is permissive
+                 (back-compat, pre-g-315-120 behavior); a caller that knows the
+                 class (e.g. the streaming adapter, from the game_id prefix)
+                 sets it so ls20-fit sigs do not mis-fire on another class.
         visit_counts: per-palette-signature visit counts for the rule-4.5
                  curiosity-boost (g-315-112). Outer key is the palette
                  signature ``tuple(sorted(features.palette.items()))``;
@@ -130,6 +137,7 @@ class HandBuiltPolicy:
     """
 
     history: List[ActionOutcome] = field(default_factory=list)
+    game_class: Optional[str] = None
     visit_counts: dict[tuple, dict[int, int]] = field(default_factory=dict)
     _last_palette_sig: Optional[tuple] = field(default=None, repr=False)
 
@@ -171,8 +179,13 @@ class HandBuiltPolicy:
         self._last_palette_sig = palette_sig
 
         # 1. sig-12 + sig-13/14/15 gate (signatures.filter_actions composes
-        #    every applicable signature's filter sequentially).
-        candidates = filter_actions(list(range(1, 8)), features)
+        #    every applicable signature's filter sequentially). self.game_class
+        #    is threaded for game_class enforcement (g-315-120): when set (e.g.
+        #    "ls20") class-specific sigs fire only on their own class; when None
+        #    (not threaded) scoping is permissive (pre-g-315-120 behavior).
+        candidates = filter_actions(
+            list(range(1, 8)), features, current_class=self.game_class
+        )
         if not candidates:
             return ACTION_RESET
 

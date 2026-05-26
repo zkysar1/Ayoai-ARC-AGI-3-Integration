@@ -150,3 +150,69 @@ def test_sig15_multi_layer_forces_reset_only() -> None:
         )
     )
     assert len(REGISTRY.entries) == seed_count_before
+
+
+def test_game_class_enforcement_scopes_ls20_signatures() -> None:
+    """g-315-120: game_class enforcement. The ls20-declared sigs (sig-13/14)
+    must fire ONLY when current_class is "ls20" or None (back-compat). On a
+    DIFFERENT class slug they must be excluded even when their predicate matches
+    the frame — closing the g-315-119 generalization-drift finding (game_class
+    was declared on the signature but never enforced in applicable(), so the
+    ls20 palette-fingerprint sigs fired cross-class)."""
+    ls20 = _ls20_like_features()  # palette fires sig-13/14 predicate; ACTION6 available
+
+    def sig_ids(current_class):
+        return {s.sig_id for s in applicable_signatures(ls20, current_class)}
+
+    # Back-compat (None): every predicate-matching sig applies (pre-g-315-120).
+    assert {"sig-13", "sig-14"}.issubset(sig_ids(None))
+    # Same class ("ls20"): the ls20 sigs still apply.
+    assert {"sig-13", "sig-14"}.issubset(sig_ids("ls20"))
+    # Different class ("as66"): ls20 sigs EXCLUDED; only cross-class sig-12 remains.
+    other = sig_ids("as66")
+    assert "sig-12" in other  # cross-class is always in scope
+    assert not ({"sig-13", "sig-14", "sig-15"} & other)
+
+    # Behavioral proof via filter_actions: ACTION6 is available in the frame.
+    # On ls20 / None, sig-13 drops it; on "as66" it survives (sig-13 excluded).
+    cands = [0, 1, 2, 3, 4, 5, 6, 7]
+    assert 6 not in filter_actions(cands, ls20, current_class=None)  # back-compat: dropped
+    assert 6 not in filter_actions(cands, ls20, current_class="ls20")  # own class: dropped
+    assert 6 in filter_actions(cands, ls20, current_class="as66")  # other class: kept
+
+
+def test_game_class_enforcement_scopes_multi_layer_sig() -> None:
+    """g-315-120: sig-15 (multi_layer -> RESET-only, ls20-specific) must also be
+    scope-gated. Its predicate keys on a runtime feature (multi_layer) that any
+    class can exhibit, but the prescribed RESET-only collapse is an ls20-derived
+    interpretation — so on a non-ls20 class the overlay frame must NOT pull sig-15
+    into scope.
+
+    Scoping is asserted via applicable_signatures (registry MEMBERSHIP) rather
+    than filter_actions behavioral collapse: the sibling
+    test_sig15_multi_layer_forces_reset_only deliberately re-registers sig-15 with
+    a no-op action_filter to prove register() idempotency, mutating the shared
+    module REGISTRY. Asserting on the *effect* of sig-15's filter would couple this
+    test to sibling execution order; membership in applicable() is exactly what
+    g-315-120 changed (the _class_in_scope gate) and is action_filter-content-
+    independent. The behavioral RESET-only collapse is covered, on a clean
+    registry, by test_sig15_multi_layer_forces_reset_only itself."""
+    multi_layer_frame = [
+        [[4, 4], [3, 4]],  # primary
+        [[8, 8], [8, 8]],  # secondary overlay
+    ]
+    features = extract(multi_layer_frame, available_actions=[0, 1, 2, 3])
+    assert features.multi_layer is True  # sig-15 predicate precondition
+
+    def sig_ids(current_class):
+        return {s.sig_id for s in applicable_signatures(features, current_class)}
+
+    # Back-compat (None) and own class ("ls20"): sig-15 IS in scope.
+    assert "sig-15" in sig_ids(None)
+    assert "sig-15" in sig_ids("ls20")
+    # Different class ("as66"): sig-15 EXCLUDED; only cross-class sig-12 remains
+    # (sig-13/14 predicates are also false here — palette {4:3,3:1,8:4},
+    # pct(4)=0.375 < 0.40).
+    other = sig_ids("as66")
+    assert "sig-15" not in other
+    assert other == {"sig-12"}
