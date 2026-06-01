@@ -64,6 +64,15 @@ ACTION_NOOP_SKIP_WINDOW = 5
 ACTION_NOOP_SKIP_THRESHOLD = 2
 ACTION_RATE_LIMIT_WINDOW = 6
 ACTION_RATE_LIMIT_MAX = 1
+# g-315-131: stagnation-triggered systematic coverage. When the env score has
+# been flat for >= STAGNATION_WINDOW consecutive SCORED ticks, the reward layer
+# (choose() rules 4/4.5) has no gradient to act on — the bootstrap-gap state
+# g-315-130 measured (0 score across 6 games / ~600 ticks WITH reward+curiosity
+# machinery live). The policy then systematically covers the action space to
+# maximize P(crossing a FIRST scoring transition). 8 is long enough to confirm
+# the reward layer is dormant, short enough to switch to coverage early on an
+# ~81-tick episode (coverage begins ~tick 9, leaving ~70 ticks to explore).
+STAGNATION_WINDOW = 8
 # g-315-124: coordinate-level reward/curiosity feature bucketing. Churn is
 # already a normalized [0,1] ratio (fraction of observed ticks a cell changed),
 # so a fixed-band bucket is GENERALIZING without any environment-specific
@@ -272,9 +281,18 @@ class HandBuiltPolicy:
         #    ACTION2-only rule so a stuck no-op loop on any action (notably the
         #    ACTION3 default that rule 5 re-issues whenever present) self-
         #    suppresses after THRESHOLD no-ops instead of repeating unbounded.
-        candidates = [c for c in candidates if not self._action_noop_recently(c)]
-        if not candidates:
-            return ACTION_RESET
+        #    LAST-CANDIDATE GUARD (g-315-131 / Finding 3f): suppression is an
+        #    efficiency HINT, never a hard ban — it MUST NOT empty the candidate
+        #    set. On a single-action game (ft09 [6]-only) dropping the only
+        #    candidate returns RESET, producing a RESET/ACTION oscillation that
+        #    burns the bootstrap budget (ft09: 45 RESETs / 81 ticks, score 0).
+        #    Keep the full set when suppression would empty it; rule 4.7 below
+        #    then systematically covers the survivors instead of RESETing.
+        suppressed = [c for c in candidates if not self._action_noop_recently(c)]
+        if suppressed:
+            candidates = suppressed
+        # else: every surviving candidate recently no-op'd — keep `candidates`
+        # intact (do NOT return RESET; pre-g-315-131 emptied here).
 
         # 3. ACTION4 rate-limit: drop ACTION4 when at-or-above quota.
         if self._action4_at_quota():
@@ -302,6 +320,21 @@ class HandBuiltPolicy:
         novel = self._least_visited_action(palette_sig, candidates)
         if novel is not None:
             return novel
+
+        # 4.7. Stagnation-triggered systematic coverage (g-315-131): when the
+        #      env score has been flat for >= STAGNATION_WINDOW scored ticks,
+        #      rules 4/4.5 have no signal AND rule 4.5 went dormant on live ls20
+        #      (38 distinct palettes, rare repeats → _least_visited_action
+        #      returns None → rule 5 ACTION3-default dominated: live ls20
+        #      collapsed to ACTION3 73/81, score 0 — g-315-130). Abandon the
+        #      frame-change default and pick the GLOBALLY least-issued candidate
+        #      (palette-independent) to cover the action space and maximize
+        #      P(crossing a first scoring transition). Returns None (falls
+        #      through to rule 5) when score was never threaded (score_delta all
+        #      None — back-compat) or history < window (cold start).
+        covered = self._stagnation_coverage_action(candidates)
+        if covered is not None:
+            return covered
 
         # 5. ACTION3 default: 92% frame-change rate (the most reliable).
         if 3 in candidates:
@@ -572,6 +605,47 @@ class HandBuiltPolicy:
             return None
         counts.sort()  # ascending by (count, action_id)
         return counts[0][1]
+
+    def _score_stagnant(self) -> bool:
+        """True iff the last STAGNATION_WINDOW history entries carrying a
+        score_delta all show ZERO score movement — the signal that the reward
+        layer (rules 4/4.5) has nothing to act on (g-315-131).
+
+        Requires at least STAGNATION_WINDOW scored entries: cold start, or an
+        unthreaded-score caller whose score_delta is always None (pre-g-315-108
+        callers, signature-gate unit tests), returns False — so rule 4.7 stays
+        inert and pre-g-315-131 behavior is preserved on those paths. In the
+        live path the SolverV0StreamingAdapter threads a real per-tick delta
+        (deferred-observe, g-315-108), so a long run of zero-delta ticks is
+        exactly the bootstrap-gap state g-315-130 measured (0 score / ~600
+        ticks)."""
+        scored = [o for o in self.history if o.score_delta is not None]
+        if len(scored) < STAGNATION_WINDOW:
+            return False
+        return all(o.score_delta == 0 for o in scored[-STAGNATION_WINDOW:])
+
+    def _stagnation_coverage_action(
+        self, candidates: List[int]
+    ) -> Optional[int]:
+        """Rule 4.7: when score is stagnant, return the candidate issued LEAST
+        often across ALL history (lowest-id tiebreak) for systematic action-
+        space coverage. None when not stagnant (fall through to rule 5).
+
+        Distinct from _least_visited_action (rule 4.5): that keys on the current
+        PALETTE signature and returns None when the palette is unseen or its
+        counts are uniform — which is why it went dormant on live ls20 (rare
+        palette repeats). This helper keys on GLOBAL per-action history counts,
+        so once stagnation is detected it always discriminates, rotating the
+        policy through every available action instead of re-issuing the ACTION3
+        frame-change default. Generalizing: keys only on runtime action-issue
+        counts, no game-specific constant (class-agnostic, Self constraint
+        gate 3)."""
+        if not self._score_stagnant():
+            return None
+        counts = sorted(
+            (sum(1 for o in self.history if o.action == c), c) for c in candidates
+        )
+        return counts[0][1] if counts else None
 
     def _action4_at_quota(self) -> bool:
         """True iff ACTION4 was used at-or-above ACTION_RATE_LIMIT_MAX

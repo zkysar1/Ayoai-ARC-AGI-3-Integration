@@ -27,6 +27,7 @@ import random
 
 from solver_v0.perception import extract
 from solver_v0.policy import (
+    STAGNATION_WINDOW,
     ActionOutcome,
     HandBuiltPolicy,
     PolicyDecision,
@@ -652,3 +653,73 @@ def test_observe_non_action6_leaves_cell_feature_none() -> None:
     last = policy.history[-1]
     assert last.cell_role is None and last.cell_churn_bucket is None
     assert policy.cell_feature_visits == {}
+
+
+def test_stagnation_coverage_picks_globally_least_issued() -> None:
+    """g-315-131 rule 4.7: when the score has been flat for >= STAGNATION_WINDOW
+    scored ticks (the g-315-130 bootstrap-gap state), choose() abandons the
+    ACTION3 frame-change default and returns the GLOBALLY least-issued candidate
+    to systematically cover the action space. Here action 4 has been issued zero
+    times while 1/2/3 dominate -> coverage must pick 4, not ACTION3."""
+    features = _ls20_features_with([1, 2, 3, 4])
+    # STAGNATION_WINDOW scored zero-delta ticks (frame_changed=True so no-op
+    # suppression never fires; constructor-seeded history leaves visit_counts
+    # empty so rule 4.5 returns None). Global counts: 3x5, 1x2, 2x1, 4x0.
+    actions = [3, 3, 3, 3, 3, 1, 1, 2]
+    assert len(actions) >= STAGNATION_WINDOW
+    history = [
+        ActionOutcome(action=a, frame_changed=True, score_delta=0) for a in actions
+    ]
+    policy = HandBuiltPolicy(history=list(history))
+    assert policy.choose(features) == 4  # rule 4.7 coverage, not rule-5 ACTION3
+
+
+def test_stagnation_coverage_inert_without_score_signal() -> None:
+    """g-315-131 back-compat: rule 4.7 requires a threaded score signal. With
+    score_delta unthreaded (all None) the policy is NOT stagnant, so coverage
+    stays inert and choose() falls through to the rule-5 ACTION3 default. The
+    history is STAGNATION_WINDOW action-3 ticks: if coverage had fired it would
+    pick action 1 (globally least-issued, lowest id); returning 3 proves it did
+    not (preserves pre-g-315-131 behavior on unthreaded-score callers)."""
+    features = _ls20_features_with([1, 2, 3, 4])
+    history = [
+        ActionOutcome(action=3, frame_changed=True)  # score_delta defaults None
+        for _ in range(STAGNATION_WINDOW)
+    ]
+    policy = HandBuiltPolicy(history=list(history))
+    assert policy.choose(features) == 3  # rule-5 default, NOT coverage (would be 1)
+
+
+def test_noop_suppression_keeps_last_candidate() -> None:
+    """g-315-131 Finding 3f: no-op suppression must NOT empty the candidate set.
+    On a single-action game (available=[6], like ft09) where ACTION6 has no-op'd
+    twice, the pre-g-315-131 code dropped the only candidate and returned RESET,
+    producing a RESET/ACTION6 oscillation (ft09: 45 RESETs / 81 ticks, score 0).
+    The last-candidate guard keeps ACTION6 -> choose() returns 6, not RESET.
+    game_class='as66' so the ls20 sig-13 ACTION6-drop is scope-excluded
+    (g-315-120)."""
+    frame = [[[1, 2], [3, 4]]]  # single-layer, non-ls20 palette
+    features = extract(frame, available_actions=[6])
+    history = [
+        ActionOutcome(action=6, frame_changed=False),
+        ActionOutcome(action=6, frame_changed=False),
+    ]
+    policy = HandBuiltPolicy(history=list(history), game_class="as66")
+    assert policy.choose(features) == 6  # guard kept ACTION6; pre-fix returned 0
+
+
+def test_stagnation_coverage_yields_to_reward_signal() -> None:
+    """g-315-131: rule 4.7 is the cold-start bootstrap, not a replacement for
+    reward exploitation. Once a positive score-delta exists, _score_stagnant is
+    False (the most recent scored tick moved), so rule 4 (score-delta
+    preference) fires BEFORE rule 4.7 and exploits the signal. Here action 1
+    earned +2 on the latest tick -> choose() returns 1 via rule 4, not a
+    coverage pick."""
+    features = _ls20_features_with([1, 2, 3, 4])
+    history = [
+        ActionOutcome(action=3, frame_changed=True, score_delta=0)
+        for _ in range(STAGNATION_WINDOW - 1)
+    ]
+    history.append(ActionOutcome(action=1, frame_changed=True, score_delta=2))
+    policy = HandBuiltPolicy(history=list(history))
+    assert policy.choose(features) == 1  # rule 4 (positive score-delta) wins
