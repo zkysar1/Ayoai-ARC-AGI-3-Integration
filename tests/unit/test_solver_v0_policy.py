@@ -24,8 +24,9 @@ All tests are offline - no Lambda, no HTTP, no recording fixtures.
 from __future__ import annotations
 
 import random
+from collections import Counter
 
-from solver_v0.perception import extract
+from solver_v0.perception import FrameFeatures, extract
 from solver_v0.policy import (
     STAGNATION_WINDOW,
     ActionOutcome,
@@ -723,3 +724,168 @@ def test_stagnation_coverage_yields_to_reward_signal() -> None:
     history.append(ActionOutcome(action=1, frame_changed=True, score_delta=2))
     policy = HandBuiltPolicy(history=list(history))
     assert policy.choose(features) == 1  # rule 4 (positive score-delta) wins
+
+
+# ── g-315-132: deterministic directed target-seeking (rule 4.6) ──────────────
+# Design: solver-v0-audits.md section 7.10. Tests construct FrameFeatures
+# directly (not via extract) so churn — which extract derives from history —
+# can be set per-cell to model a moving CURSOR (high churn) vs stable TARGET
+# markers (low churn). Cursor/target VALUES are deliberately NOT ls20's 12/15:
+# the detector keys on relative rarity + normalized churn + compactness, never a
+# palette int, so it must work on any labels (the generalization guard).
+
+
+def _nav_features(
+    cursor_v: int = 7,
+    target_v: int = 9,
+    decoy_v: int = 5,
+    t1: int = 4,
+    t2: int = 3,
+    cursor_churn: float = 0.6,
+) -> FrameFeatures:
+    """8x8 grid: terrain {t1,t2}; a COMPACT 2x2 cursor (cursor_v, high churn) at
+    top-left; 4 SCATTERED stable target markers (target_v, churn 0); a SCATTERED
+    high-churn decoy actor (decoy_v) that must be excluded as cursor (not
+    compact) and as target (not stable). Counts give terrain={t1,t2},
+    rare={cursor_v,target_v}, decoy too frequent to be rare."""
+    values = [t1] * 64
+    churns = [0.0] * 64
+    for i in (2, 3, 4, 5, 6, 10, 11, 12, 13, 14, 15, 17, 18, 19):
+        values[i] = t2
+    for i in (0, 1, 8, 9):  # cursor: compact 2x2 block, rows 0-1 cols 0-1
+        values[i] = cursor_v
+        churns[i] = cursor_churn
+    for i in (7, 56, 60, 63):  # target: scattered stable markers (churn 0)
+        values[i] = target_v
+    for i in (27, 29, 34, 36, 43, 45):  # decoy: scattered high-churn actor
+        values[i] = decoy_v
+        churns[i] = 0.7
+    return FrameFeatures(
+        palette=Counter(values),
+        available_actions=[1, 2, 3, 4],
+        n_layers=1,
+        height=8,
+        width=8,
+        values=values,
+        roles=["unknown"] * 64,
+        churns=churns,
+        multi_layer=False,
+    )
+
+
+def test_detect_cursor_and_targets_basic() -> None:
+    """The cursor is the rarest COMPACT high-churn value (the 2x2 v7 block);
+    its centroid is the block's geometric mean (0.5, 0.5). Targets are the
+    stable scattered v9 markers. The scattered high-churn decoy v5 is excluded
+    from BOTH (not compact -> not cursor; too frequent -> not rare)."""
+    policy = HandBuiltPolicy()
+    cursor, targets = policy._detect_cursor_and_targets(_nav_features())
+    assert cursor == (0.5, 0.5)
+    assert set(targets) == {(0, 7), (7, 0), (7, 4), (7, 7)}
+    # decoy v5 cells (mid-grid) are NOT in the target set
+    assert (3, 3) not in targets  # index 27 region (decoy) excluded
+
+
+def test_detect_generalizes_across_palette_values() -> None:
+    """No hardcoded palette int: relabel cursor/target/decoy to 2/11/14 and the
+    detector still picks the compact high-churn block as cursor and the stable
+    scattered markers as targets — identical geometry, different values."""
+    policy = HandBuiltPolicy()
+    feats = _nav_features(cursor_v=2, target_v=11, decoy_v=14)
+    cursor, targets = policy._detect_cursor_and_targets(feats)
+    assert cursor == (0.5, 0.5)
+    assert set(targets) == {(0, 7), (7, 0), (7, 4), (7, 7)}
+
+
+def test_detect_returns_none_on_degenerate_palette() -> None:
+    """A frame with < 3 distinct palette values is degenerate (no terrain +
+    non-terrain split) — returns (None, []) so cold-start / synthetic grids
+    stay on the baseline fast path (envelope microbench)."""
+    feats = FrameFeatures(
+        palette=Counter([4] * 64),
+        available_actions=[1, 2, 3, 4],
+        n_layers=1,
+        height=8,
+        width=8,
+        values=[4] * 64,
+        roles=["unknown"] * 64,
+        churns=[0.0] * 64,
+        multi_layer=False,
+    )
+    assert HandBuiltPolicy()._detect_cursor_and_targets(feats) == (None, [])
+
+
+def test_directed_action_cold_start_returns_none() -> None:
+    """With no learned action->displacement model, rule 4.6 has nothing to act
+    on and returns None (falls through to 4.5/4.7). It still records the current
+    cursor centroid so the NEXT tick can attribute a move."""
+    policy = HandBuiltPolicy()
+    result = policy._directed_target_action(_nav_features(), [1, 2, 3, 4])
+    assert result is None
+    assert policy._prev_cursor_centroid == (0.5, 0.5)
+
+
+def test_directed_action_prefers_distance_reducer() -> None:
+    """Given a learned model where action 4 moves the cursor RIGHT (toward the
+    (0,7) target) and action 1 moves it UP (away), rule 4.6 returns action 4 —
+    the candidate whose displacement most reduces cursor->target distance."""
+    policy = HandBuiltPolicy(
+        action_displacement={4: [0.0, 5.0, 1], 1: [-5.0, 0.0, 1]}
+    )
+    result = policy._directed_target_action(_nav_features(), [1, 2, 3, 4])
+    assert result == 4
+
+
+def test_directed_zero_move_treated_as_blocked() -> None:
+    """A zero cursor move (cursor centroid unchanged from the prior tick) is a
+    BLOCKED attempt (e.g. ACTION2 into a wall), NOT a learned direction — it must
+    not be recorded in the displacement model, or it would poison the action's
+    learned vector with a spurious (0,0)."""
+    policy = HandBuiltPolicy(
+        history=[ActionOutcome(action=2, frame_changed=False)],
+        _prev_cursor_centroid=(0.5, 0.5),  # same as _nav_features cursor
+    )
+    policy._directed_target_action(_nav_features(), [1, 2, 3, 4])
+    assert 2 not in policy.action_displacement
+
+
+def test_choose_rule46_fires_when_model_learned() -> None:
+    """Integration: under STAGNATION (score threaded + flat >= STAGNATION_WINDOW
+    — the bootstrap gate rule 4.6 shares with 4.7) and a learned model (action 4
+    -> RIGHT), choose() reaches rule 4.6 and returns the directed action 4
+    instead of the rule-5 ACTION3 default or the rule-4.7 coverage pick."""
+    policy = HandBuiltPolicy(
+        action_displacement={4: [0.0, 5.0, 1]},
+        history=[
+            ActionOutcome(action=3, frame_changed=True, score_delta=0)
+            for _ in range(STAGNATION_WINDOW)
+        ],
+    )
+    assert policy.choose(_nav_features()) == 4
+
+
+def test_choose_rule46_inert_when_score_not_stagnant() -> None:
+    """Rule 4.6 is bootstrap-gated: with a learned model but score NOT yet
+    confirmed stagnant (no scored history), the directed detection does not run
+    and choose() falls to the rule-5 default. This is the gate that keeps the
+    per-tick detection off the cold-start / unthreaded-score path (envelope)."""
+    policy = HandBuiltPolicy(action_displacement={4: [0.0, 5.0, 1]})
+    assert policy.choose(_nav_features()) == 3  # not stagnant -> 4.6 skipped
+
+
+def test_choose_rule4_preempts_rule46() -> None:
+    """Ladder order: rule 4 (positive score-delta) wins over rule 4.6. Action 1
+    earned +3; even though the model would steer to action 4, choose() returns 1
+    because the scored objective beats the surrogate proximity reward."""
+    policy = HandBuiltPolicy(
+        action_displacement={4: [0.0, 5.0, 1]},
+        history=[ActionOutcome(action=1, frame_changed=True, score_delta=3)],
+    )
+    assert policy.choose(_nav_features()) == 1
+
+
+def test_choose_cold_falls_through_to_default() -> None:
+    """No regression: with no model, no score, and a cold palette, rule 4.6 is
+    inert and choose() returns the rule-5 ACTION3 default — identical to
+    pre-g-315-132 behavior."""
+    assert HandBuiltPolicy().choose(_nav_features()) == 3

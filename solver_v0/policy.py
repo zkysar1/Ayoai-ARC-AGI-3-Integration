@@ -33,6 +33,20 @@ into a deterministic policy that the solver consumes for action selection:
    adaptation-iaus-framework (Dave Mark IAUS curiosity boost). Cold start
    (palette never seen) and uniform-count plateau both return None and
    fall through to rule 5, preserving pre-g-315-112 behavior.
+4.6. Directed target-seeking (g-315-132, design solver-v0-audits.md 7.10):
+   SIMPLE-action analog of decide()'s ACTION6 _target_cell. On classes with no
+   coordinate action (ls20: actions 1-4 are directional cursor moves), detect
+   the CURSOR (rarest compact high-churn palette value) + stable rare TARGET
+   candidates, learn each action's cursor displacement online, and prefer the
+   candidate that most reduces cursor->target distance — a surrogate reward
+   when score is absent. Returns None on cold start / no signal, falling
+   through to 4.5/4.7 (which train the model by issuing unknown actions).
+   Value-agnostic: no palette int or coordinate hardcoded (rb-1259 analog).
+4.7. Stagnation-triggered systematic coverage (g-315-131): when score has been
+   flat >= STAGNATION_WINDOW scored ticks, pick the GLOBALLY least-issued
+   candidate to cover the action space. The SUBSTRATE rule 4.6 falls back to —
+   fires before the model is learned and when no candidate reduces distance,
+   preventing action-collapse on a zero-score trace.
 5. ACTION3 default: when no other rule fires, prefer ACTION3 (92% effect
    rate, the most reliable default per ls20-class.md).
 6. ACTION1 tiebreaker: when ACTION3 is unavailable, prefer ACTION1
@@ -80,6 +94,35 @@ STAGNATION_WINDOW = 8
 # Four bands give within-role resolution (rare cells land in buckets 0-1,
 # mobile in 2-3, around the _MOBILE_THRESHOLD=0.5 split in perception).
 CHURN_BUCKET_COUNT = 4
+# g-315-132: deterministic directed target-seeking for SIMPLE-action classes
+# (ls20). Design: solver-v0-audits.md section 7.10. On ls20 there is NO
+# coordinate action (ACTION6 illegal), so _target_cell does not apply; instead
+# the CURSOR (the rarest COMPACT high-churn palette value — a sprite that moves
+# as a unit) is steered toward stable rare TARGET candidates via a learned
+# action->displacement model + a directed proximity-reduction surrogate reward.
+# All value-agnostic (no palette int / coordinate / env-magnitude constant
+# hardcoded) — grid-navigation METHODOLOGY that transfers across directional-
+# movement classes (Self constraint gate 3; rb-1259 simple-action analog).
+# COMPACT_DENSITY_MIN: a value's cells fill >= this fraction of their bounding
+#   box => a coherent blob (cursor/wall), not a scattered marker set (the
+#   dual-role actor value-8 on ls20 is scattered => excluded as cursor).
+#   Normalized ratio — no env magnitude leaks.
+COMPACT_DENSITY_MIN = 0.25
+# TARGET_STABLE_CHURN_RATIO: a rare non-cursor value whose mean churn is below
+#   this fraction of the cursor's churn is "stable" enough to be a destination
+#   candidate (a target does not move; the cursor does). RELATIVE to the
+#   detected cursor, so no absolute churn constant leaks.
+TARGET_STABLE_CHURN_RATIO = 0.5
+# DIRECTED_MIN_IMPROVEMENT: a candidate's learned displacement must reduce the
+#   cursor->target Manhattan distance by at least this many cells to be
+#   preferred. > 0 so a no-op / orthogonal move never wins the directed rule.
+DIRECTED_MIN_IMPROVEMENT = 1.0
+# TARGET_REACHED_DIST: cursor within this Manhattan distance of a target cell
+#   counts as "reached" — that cell is retired from the live candidate set so
+#   the cursor cycles to the next stable-rare candidate (resolves the goal-vs-
+#   wall ambiguity 7.10 documents: the true goal is whichever reached candidate
+#   makes score move). Per-episode bookkeeping, reset when all are reached.
+TARGET_REACHED_DIST = 1.0
 
 
 def _churn_bucket(churn: float, k: int = CHURN_BUCKET_COUNT) -> int:
@@ -193,6 +236,19 @@ class HandBuiltPolicy:
     # score_delta to a feature-class, the coordinate-level twin of how
     # _last_palette_sig attributes an action to a palette.
     _last_cell_feature: Optional[tuple] = field(default=None, repr=False)
+    # g-315-132: directed target-seeking state (per-episode; a fresh policy per
+    # episode resets all three, like visit_counts/cell_feature_visits).
+    #   action_displacement: action_id -> [sum_dr, sum_dc, n] running cursor-
+    #     centroid move per action; the online action->direction model.
+    #   _prev_cursor_centroid: prior tick's cursor centroid (row, col), so the
+    #     NEXT choose() attributes the observed move to the last-issued action
+    #     (history[-1]) — no adapter wire needed (mirrors _last_palette_sig).
+    #   reached_targets: target cells the cursor has arrived at this episode
+    #     (candidate cycling). Per-episode runtime bookkeeping — NOT a cross-
+    #     episode learned coordinate, so the generalization guard holds.
+    action_displacement: dict[int, list] = field(default_factory=dict)
+    _prev_cursor_centroid: Optional[tuple] = field(default=None, repr=False)
+    reached_targets: set = field(default_factory=set)
 
     def observe(
         self,
@@ -312,6 +368,38 @@ class HandBuiltPolicy:
         if best is not None:
             return best
 
+        # 4.6. Directed target-seeking (g-315-132, design solver-v0-audits.md
+        #      7.10): on SIMPLE-action classes (no coordinate action) steer the
+        #      cursor toward stable rare target candidates. Refreshes the
+        #      action->displacement model from the last move, then prefers the
+        #      candidate whose learned displacement most reduces the
+        #      cursor->nearest-target Manhattan distance — a surrogate reward
+        #      standing in for the absent score gradient (ls20 scores 0 under
+        #      random play, so rule 4 never fires). Returns None on cold start
+        #      (no displacement learned for any candidate yet) OR when no
+        #      candidate reduces distance, falling through to rule 4.5/4.7 —
+        #      which both ALSO train the model by issuing as-yet-unknown
+        #      actions. Rule 4.7 stagnation-coverage remains the SUBSTRATE.
+        #
+        #      GATED on _score_stagnant() — the SAME bootstrap condition as rule
+        #      4.7 (sibling rules: 4.6 directed, 4.7 coverage). Directed seeking
+        #      is only warranted once the reward layer is confirmed dormant
+        #      (score threaded + flat >= STAGNATION_WINDOW). This gate ALSO keeps
+        #      the per-tick detection (a flat-array palette scan) OFF the
+        #      cold-start / unthreaded-score path — _score_stagnant is False when
+        #      score_delta is never threaded (the envelope microbench), so
+        #      choose() stays at its pre-g-315-132 baseline there (the same
+        #      tiny-compute discipline as the g-315-124 _target_cell learning
+        #      gate). The model still builds DURING stagnation from rule 4.7's
+        #      coverage moves, which _directed_target_action tracks each tick.
+        # Computed ONCE and reused by rule 4.7 below (avoids a second
+        # O(history) scan in the hot path — keeps choose() inside the envelope).
+        stagnant = self._score_stagnant()
+        if stagnant:
+            directed = self._directed_target_action(features, candidates)
+            if directed is not None:
+                return directed
+
         # 4.5. Palette-novelty curiosity boost (g-315-112): when score-delta
         #      has no signal, prefer the candidate least-tried on the current
         #      palette signature. Returns None on cold start (palette never
@@ -332,7 +420,7 @@ class HandBuiltPolicy:
         #      P(crossing a first scoring transition). Returns None (falls
         #      through to rule 5) when score was never threaded (score_delta all
         #      None — back-compat) or history < window (cold start).
-        covered = self._stagnation_coverage_action(candidates)
+        covered = self._stagnation_coverage_action(candidates, stagnant=stagnant)
         if covered is not None:
             return covered
 
@@ -625,11 +713,15 @@ class HandBuiltPolicy:
         return all(o.score_delta == 0 for o in scored[-STAGNATION_WINDOW:])
 
     def _stagnation_coverage_action(
-        self, candidates: List[int]
+        self, candidates: List[int], stagnant: Optional[bool] = None
     ) -> Optional[int]:
         """Rule 4.7: when score is stagnant, return the candidate issued LEAST
         often across ALL history (lowest-id tiebreak) for systematic action-
         space coverage. None when not stagnant (fall through to rule 5).
+
+        ``stagnant`` may be passed precomputed by choose() (which also needs the
+        flag for rule 4.6) to avoid a redundant _score_stagnant() history scan on
+        the hot path; when None it is computed here (direct callers / tests).
 
         Distinct from _least_visited_action (rule 4.5): that keys on the current
         PALETTE signature and returns None when the palette is unseen or its
@@ -640,12 +732,185 @@ class HandBuiltPolicy:
         frame-change default. Generalizing: keys only on runtime action-issue
         counts, no game-specific constant (class-agnostic, Self constraint
         gate 3)."""
-        if not self._score_stagnant():
+        if stagnant is None:
+            stagnant = self._score_stagnant()
+        if not stagnant:
             return None
         counts = sorted(
             (sum(1 for o in self.history if o.action == c), c) for c in candidates
         )
         return counts[0][1] if counts else None
+
+    def _detect_cursor_and_targets(
+        self, features: FrameFeatures
+    ) -> tuple[Optional[tuple], list]:
+        """Value-agnostic detection for directed navigation (g-315-132, design
+        solver-v0-audits.md 7.10). Returns ``(cursor_centroid, target_cells)``:
+
+          cursor_centroid : (row, col) float mean of the CURSOR cells, or None.
+            Cursor = the rarest non-terrain palette value whose cells form a
+            COMPACT blob (bounding-box density >= COMPACT_DENSITY_MIN) AND have
+            the highest mean churn among compact-rare values (it moves as a
+            unit). Compactness is what separates the cursor from a SCATTERED
+            high-churn actor (ls20 value-8: ~60 cells, multi-component, churn
+            0.82 — excluded because it is not compact).
+          target_cells    : list of (row, col) of stable rare TARGET candidates
+            — rare non-cursor values whose mean churn is below ``cursor_churn *
+            TARGET_STABLE_CHURN_RATIO`` (a destination does not move). [] when
+            none qualify.
+
+        Terrain (the 2 most frequent values) is excluded as backdrop. No palette
+        int, coordinate, or env-magnitude constant is hardcoded — only
+        normalized churn ratios and relative comparisons — so detection
+        transfers across directional-movement env-classes. Two flat passes over
+        features.values / .churns (guard-629: no CellAttribute). Returns
+        (None, []) on a degenerate palette (< 3 distinct values — e.g. the
+        cold-start envelope microbench), holding that path at baseline cost."""
+        values = features.values
+        w = features.width
+        if w <= 0 or not values:
+            return None, []
+        churns = features.churns
+        counts: dict[int, int] = {}
+        churn_sum: dict[int, float] = {}
+        for i, v in enumerate(values):
+            counts[v] = counts.get(v, 0) + 1
+            churn_sum[v] = churn_sum.get(v, 0.0) + churns[i]
+        if len(counts) < 3:
+            return None, []  # need terrain + >=1 non-terrain; degenerate else
+        by_freq = sorted(counts, key=lambda v: counts[v], reverse=True)
+        terrain = set(by_freq[:2])
+        non_terrain = [v for v in by_freq if v not in terrain]
+        if not non_terrain:
+            return None, []
+        nt_counts = sorted(counts[v] for v in non_terrain)
+        median = nt_counts[len(nt_counts) // 2]
+        rare = [v for v in non_terrain if counts[v] <= median]
+        if not rare:
+            return None, []
+        # Bounding-box extents per rare value (one pass; cheap min/max, no BFS).
+        rare_set = set(rare)
+        minr: dict[int, int] = {}
+        maxr: dict[int, int] = {}
+        minc: dict[int, int] = {}
+        maxc: dict[int, int] = {}
+        for i, v in enumerate(values):
+            if v not in rare_set:
+                continue
+            r, c = i // w, i % w
+            if v not in minr:
+                minr[v] = maxr[v] = r
+                minc[v] = maxc[v] = c
+            else:
+                if r < minr[v]:
+                    minr[v] = r
+                elif r > maxr[v]:
+                    maxr[v] = r
+                if c < minc[v]:
+                    minc[v] = c
+                elif c > maxc[v]:
+                    maxc[v] = c
+
+        def _density(v: int) -> float:
+            area = (maxr[v] - minr[v] + 1) * (maxc[v] - minc[v] + 1)
+            return counts[v] / area if area > 0 else 0.0
+
+        mean_churn = {v: churn_sum[v] / counts[v] for v in rare}
+        compact = [v for v in rare if _density(v) >= COMPACT_DENSITY_MIN]
+        if not compact:
+            return None, []
+        cursor_value = max(compact, key=lambda v: mean_churn[v])
+        stable_cut = mean_churn[cursor_value] * TARGET_STABLE_CHURN_RATIO
+        target_values = {
+            v for v in rare if v != cursor_value and mean_churn[v] < stable_cut
+        }
+        # Second pass: cursor centroid + target cells.
+        sum_r = sum_c = 0.0
+        n_cur = 0
+        target_cells: list = []
+        for i, v in enumerate(values):
+            if v == cursor_value:
+                sum_r += i // w
+                sum_c += i % w
+                n_cur += 1
+            elif v in target_values:
+                target_cells.append((i // w, i % w))
+        if n_cur == 0:
+            return None, target_cells
+        return (sum_r / n_cur, sum_c / n_cur), target_cells
+
+    def _directed_target_action(
+        self, features: FrameFeatures, candidates: List[int]
+    ) -> Optional[int]:
+        """Rule 4.6 (g-315-132): refresh the action->displacement model from the
+        last cursor move, then return the candidate whose learned displacement
+        most reduces the cursor->nearest-live-target Manhattan distance, or None
+        when there is no usable signal (cold start / no targets / no candidate
+        reduces distance). See solver-v0-audits.md 7.10.
+
+        Model-update timing: ``observe()`` appends the issued action to
+        ``history`` BETWEEN consecutive ``choose()`` calls, so at entry
+        ``history[-1].action`` is the action that produced THIS frame. The move
+        ``current_cursor - _prev_cursor_centroid`` is attributed to it. A ZERO
+        move is treated as BLOCKED (e.g. ACTION2 hitting a wall) and NOT
+        recorded — a blocked attempt must never poison the action's learned
+        direction (the displacement is real, just obstructed this tick).
+
+        Generalization guard: the model keys on action_id -> mean (dr, dc); the
+        cursor/target detection keys on relative palette rarity + normalized
+        churn. No absolute coordinate or palette int is ever stored as a learned
+        signal — only per-episode runtime bookkeeping (reached_targets), reset
+        per episode."""
+        cursor, targets = self._detect_cursor_and_targets(features)
+        if cursor is None:
+            self._prev_cursor_centroid = None
+            return None
+        # Online action->displacement update from the previous tick's move.
+        if self._prev_cursor_centroid is not None and self.history:
+            last_a = self.history[-1].action
+            dr = cursor[0] - self._prev_cursor_centroid[0]
+            dc = cursor[1] - self._prev_cursor_centroid[1]
+            if dr != 0.0 or dc != 0.0:  # zero == blocked, not a wrong direction
+                acc = self.action_displacement.get(last_a)
+                if acc is None:
+                    self.action_displacement[last_a] = [dr, dc, 1]
+                else:
+                    acc[0] += dr
+                    acc[1] += dc
+                    acc[2] += 1
+        self._prev_cursor_centroid = cursor
+        if not targets:
+            return None
+        # Candidate cycling: retire reached target cells so the cursor advances
+        # to the next stable-rare candidate; reset the set when all are reached.
+        for t in targets:
+            if abs(cursor[0] - t[0]) + abs(cursor[1] - t[1]) <= TARGET_REACHED_DIST:
+                self.reached_targets.add(t)
+        live = [t for t in targets if t not in self.reached_targets]
+        if not live:
+            self.reached_targets.clear()
+            live = targets
+        cur_dist = min(abs(cursor[0] - t[0]) + abs(cursor[1] - t[1]) for t in live)
+        # Prefer the candidate whose mean learned displacement most reduces the
+        # predicted distance. Unknown-displacement candidates are skipped here
+        # (rule 4.5/4.7 issue them, training the model). Lowest-id tiebreak via
+        # sorted iteration + strict-greater test.
+        best_a: Optional[int] = None
+        best_improve = DIRECTED_MIN_IMPROVEMENT
+        for a in sorted(set(candidates)):
+            acc = self.action_displacement.get(a)
+            if acc is None or acc[2] == 0:
+                continue
+            mdr = acc[0] / acc[2]
+            mdc = acc[1] / acc[2]
+            pr = cursor[0] + mdr
+            pc = cursor[1] + mdc
+            pred = min(abs(pr - t[0]) + abs(pc - t[1]) for t in live)
+            improve = cur_dist - pred
+            if improve > best_improve:
+                best_improve = improve
+                best_a = a
+        return best_a
 
     def _action4_at_quota(self) -> bool:
         """True iff ACTION4 was used at-or-above ACTION_RATE_LIMIT_MAX
