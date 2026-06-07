@@ -12,11 +12,20 @@ import dataclasses
 import pytest
 
 from solver_v2.episode import (
+    OBJECTIVE_ALIGN_TO_CELL,
+    OBJECTIVE_AVOID,
+    OBJECTIVE_REACH_CELL,
+    OBJECTIVE_TOGGLE_AT_CELL,
+    OBJECTIVE_UNKNOWN,
+    OBJECTIVES,
+    SEED_TRUST_MIN,
     BoundaryResult,
     EpisodeBoundaryDetector,
+    EpisodeContext,
     EpisodePrior,
     class_slug_from_game_id,
 )
+from solver_v2.seed_provider import DeterministicOracleSeedProvider
 from structs import FrameData, GameState
 
 # ---------- class_slug_from_game_id ---------- #
@@ -147,3 +156,123 @@ def test_guid_rotation_takes_priority_over_score_reset() -> None:
     cur = _frame(state=GameState.NOT_FINISHED, guid="play-B", score=0)
     result = det.detect(prev, cur, episode_active=True)
     assert result == BoundaryResult(True, "guid-rotation")
+
+
+# ---------- EpisodePrior seed fields + trust gate (g-315-134-b) ---------- #
+
+
+def test_episode_prior_seed_field_defaults() -> None:
+    """The g-315-134-b additive fields default to degrade-safe values, so a
+    spine prior that sets none of them is automatically untrusted."""
+    prior = EpisodePrior(episode_id=1, seed_source="x", action_plan=())
+    assert prior.goal_cell is None
+    assert prior.goal_value is None
+    assert prior.objective == OBJECTIVE_UNKNOWN
+    assert prior.cursor_hint is None
+    assert prior.confidence == 0.0
+
+
+def test_episode_prior_untrusted_by_default() -> None:
+    """A default prior (objective unknown, confidence 0) is NOT trusted —
+    the consumer degrades to v1 steering."""
+    prior = EpisodePrior(episode_id=1, seed_source="x", action_plan=())
+    assert prior.is_trusted() is False
+
+
+def test_episode_prior_trusted_with_goal_objective_confidence() -> None:
+    """A prior with a labelled goal_cell, a known objective, and confidence
+    >= SEED_TRUST_MIN is trusted (drives directed steering)."""
+    prior = EpisodePrior(
+        episode_id=1,
+        seed_source="bitnet",
+        action_plan=(1, 2),
+        goal_cell=(3, 4),
+        objective=OBJECTIVE_REACH_CELL,
+        confidence=0.7,
+    )
+    assert prior.is_trusted() is True
+
+
+def test_episode_prior_low_confidence_not_trusted() -> None:
+    """Below SEED_TRUST_MIN the seed is not trusted; a lower per-call threshold
+    can opt in."""
+    prior = EpisodePrior(
+        episode_id=1,
+        seed_source="bitnet",
+        action_plan=(),
+        goal_cell=(3, 4),
+        objective=OBJECTIVE_REACH_CELL,
+        confidence=0.3,
+    )
+    assert prior.is_trusted() is False
+    assert prior.is_trusted(min_confidence=0.25) is True
+
+
+def test_episode_prior_confidence_at_threshold_is_trusted() -> None:
+    """The confidence gate is inclusive (>= SEED_TRUST_MIN)."""
+    prior = EpisodePrior(
+        episode_id=1,
+        seed_source="bitnet",
+        action_plan=(),
+        goal_cell=(0, 0),
+        objective=OBJECTIVE_TOGGLE_AT_CELL,
+        confidence=SEED_TRUST_MIN,
+    )
+    assert prior.is_trusted() is True
+
+
+def test_episode_prior_unknown_objective_never_trusted() -> None:
+    """objective=='unknown' is never trusted, even at maximum confidence with a
+    goal_cell — there is no labelled relation to steer on."""
+    prior = EpisodePrior(
+        episode_id=1,
+        seed_source="bitnet",
+        action_plan=(),
+        goal_cell=(3, 4),
+        objective=OBJECTIVE_UNKNOWN,
+        confidence=0.99,
+    )
+    assert prior.is_trusted() is False
+
+
+def test_episode_prior_no_goal_cell_not_trusted() -> None:
+    """A known objective and high confidence but no goal_cell is not trusted —
+    nothing to steer toward."""
+    prior = EpisodePrior(
+        episode_id=1,
+        seed_source="bitnet",
+        action_plan=(),
+        goal_cell=None,
+        objective=OBJECTIVE_AVOID,
+        confidence=0.9,
+    )
+    assert prior.is_trusted() is False
+
+
+def test_objectives_vocabulary_is_closed_and_game_neutral() -> None:
+    """The objective vocabulary is a closed set of game-neutral cursor<->grid
+    relations (Self constraint gate 3: no game-specific verb)."""
+    assert OBJECTIVE_UNKNOWN in OBJECTIVES
+    assert {
+        OBJECTIVE_REACH_CELL,
+        OBJECTIVE_ALIGN_TO_CELL,
+        OBJECTIVE_TOGGLE_AT_CELL,
+        OBJECTIVE_AVOID,
+    } <= OBJECTIVES
+
+
+def test_oracle_seed_prior_degrades_to_v1() -> None:
+    """The spine oracle stub sets none of the seed fields, so its prior is NOT
+    trusted -> the executor degrades to v1 steering. This preserves the
+    strict-superset guarantee with no change to the oracle (g-315-134-b)."""
+    context = EpisodeContext(
+        episode_id=1,
+        game_class="ls20",
+        available_actions=(1, 2, 3, 4),
+        boundary_reason="initial-episode",
+        frame=_frame(),
+    )
+    prior = DeterministicOracleSeedProvider().seed(context)
+    assert prior.objective == OBJECTIVE_UNKNOWN
+    assert prior.goal_cell is None
+    assert prior.is_trusted() is False

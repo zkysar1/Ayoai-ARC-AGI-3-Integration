@@ -889,3 +889,138 @@ def test_choose_cold_falls_through_to_default() -> None:
     inert and choose() returns the rule-5 ACTION3 default — identical to
     pre-g-315-132 behavior."""
     assert HandBuiltPolicy().choose(_nav_features()) == 3
+
+
+# ── g-315-134-b: v2 episode-seed wiring of rule 4.6 ─────────────────────────
+# A TRUSTED seed supplies the ONE goal_cell (seed_target) + a calibrated axis_map
+# (reliable actions only). Both default None -> byte-identical v1 (strict
+# superset). These tests exercise the seeded path AND the graceful-degrade path,
+# reusing _nav_features() (cursor centroid (0.5, 0.5); detected targets
+# {(0,7),(7,0),(7,4),(7,7)}; available [1,2,3,4]).
+
+
+def test_directed_seed_target_replaces_detected_targets() -> None:
+    """seed_target replaces the per-tick detected target set with the seed's ONE
+    goal_cell. With an online model that can move right (4) or down (1), steering
+    toward the SEED at (0,7) picks RIGHT (4); the SAME policy with no seed steers
+    to a detected target and picks DOWN (1) by lowest-id tiebreak — proving the
+    destination is seed-driven, not detection-driven."""
+    model = {4: [0.0, 5.0, 1], 1: [5.0, 0.0, 1]}
+    seeded = HandBuiltPolicy(action_displacement=dict(model))
+    assert (
+        seeded._directed_target_action(
+            _nav_features(), [1, 2, 3, 4], seed_target=(0, 7)
+        )
+        == 4
+    )
+    unseeded = HandBuiltPolicy(action_displacement=dict(model))
+    assert unseeded._directed_target_action(_nav_features(), [1, 2, 3, 4]) == 1
+
+
+def test_directed_axis_map_steers_with_calibrated_displacement() -> None:
+    """With axis_map provided, steering uses the CALIBRATED mean rather than the
+    online action_displacement model — here the policy has NO online model at all,
+    yet the reliable rightward calibration for action 4 steers toward seed (0,7)."""
+    axis_map = {4: (0.0, 5.0, 2, True), 1: (5.0, 0.0, 2, True)}
+    policy = HandBuiltPolicy()
+    result = policy._directed_target_action(
+        _nav_features(), [1, 2, 3, 4], seed_target=(0, 7), axis_map=axis_map
+    )
+    assert result == 4
+
+
+def test_directed_axis_map_skips_unreliable_entry() -> None:
+    """An UNRELIABLE calibrated entry is skipped (graceful degrade per candidate):
+    with only an unreliable vector for action 4 and no other usable steering
+    vector, rule 4.6 returns None (falls through to the v1 ladder)."""
+    axis_map = {4: (0.0, 5.0, 2, False)}  # calibrated but not reliable
+    policy = HandBuiltPolicy()
+    result = policy._directed_target_action(
+        _nav_features(), [1, 2, 3, 4], seed_target=(0, 7), axis_map=axis_map
+    )
+    assert result is None
+
+
+def test_directed_axis_map_absent_action_skipped() -> None:
+    """An action absent from axis_map is skipped (uncalibrated -> no steering
+    vector). Only action 2 is calibrated (reliable, downward); steering toward
+    seed (7,0) picks it while the uncalibrated 1/3/4 are skipped."""
+    axis_map = {2: (5.0, 0.0, 2, True)}
+    policy = HandBuiltPolicy()
+    result = policy._directed_target_action(
+        _nav_features(), [1, 2, 3, 4], seed_target=(7, 0), axis_map=axis_map
+    )
+    assert result == 2
+
+
+def test_choose_seeded_steering_fires_without_stagnation() -> None:
+    """Integration: a trusted seed wired onto the policy (seed_target + reliable
+    axis_map) makes choose() fire rule 4.6 from tick 0 — no stagnation/bootstrap
+    wait — returning the calibrated distance-reducer (4), not the rule-5 ACTION3
+    default. This is the v2 ADDITION to the choose() gate."""
+    policy = HandBuiltPolicy(
+        seed_target=(0, 7),
+        axis_map={4: (0.0, 5.0, 2, True), 1: (5.0, 0.0, 2, True)},
+    )
+    assert policy.choose(_nav_features()) == 4
+
+
+def test_choose_seeded_unreliable_axis_map_degrades_to_default() -> None:
+    """Graceful degrade: a seed whose axis_map cannot steer (only an unreliable
+    vector) makes rule 4.6 return None, so choose() falls through to the rule-5
+    ACTION3 default — exactly v1 behavior."""
+    policy = HandBuiltPolicy(
+        seed_target=(0, 7),
+        axis_map={4: (0.0, 5.0, 2, False)},
+    )
+    assert policy.choose(_nav_features()) == 3
+
+
+def test_choose_no_seed_is_identical_v1_behavior() -> None:
+    """Strict-superset guard: a policy with NO seed (seed_target/axis_map unset)
+    behaves byte-identically to v1 — even with a learned online model, rule 4.6
+    stays bootstrap-gated on stagnation, so a not-stagnant policy returns the
+    rule-5 ACTION3 default."""
+    policy = HandBuiltPolicy(action_displacement={4: [0.0, 5.0, 1]})
+    assert policy.seed_target is None and policy.axis_map is None
+    assert policy.choose(_nav_features()) == 3
+
+
+def test_trusted_prior_drives_rule46_untrusted_degrades() -> None:
+    """End-to-end (g-315-134-b outcome 2): the canonical v2 consumer pattern —
+    a TRUSTED EpisodePrior's goal_cell + a calibrated axis_map are wired onto the
+    policy and steer rule 4.6; an UNTRUSTED prior wires nothing and the policy
+    runs v1. Proves EpisodePrior.goal_cell genuinely flows INTO rule 4.6 (the two
+    halves are connected), with EpisodePrior.is_trusted() as the single gate."""
+    from solver_v2.calibration import build_axis_map
+    from solver_v2.episode import OBJECTIVE_REACH_CELL, EpisodePrior
+
+    axis_map = build_axis_map(
+        {4: [(0.0, 5.0), (0.0, 5.0)], 1: [(5.0, 0.0), (5.0, 0.0)]}
+    ).policy_axis_map()
+
+    # Trusted seed (goal at (0,7), reach_cell, confidence above threshold):
+    # the consumer wires goal_cell + axis_map onto the policy -> calibrated steer.
+    trusted = EpisodePrior(
+        episode_id=1,
+        seed_source="bitnet",
+        action_plan=(1, 4),
+        goal_cell=(0, 7),
+        objective=OBJECTIVE_REACH_CELL,
+        confidence=0.8,
+    )
+    assert trusted.is_trusted()
+    seeded = HandBuiltPolicy(seed_target=trusted.goal_cell, axis_map=axis_map)
+    assert seeded.choose(_nav_features()) == 4  # steers right toward (0,7)
+
+    # Untrusted seed (objective defaults to unknown): the gate refuses, the
+    # consumer wires nothing, and the policy runs the v1 ACTION3 default.
+    untrusted = EpisodePrior(
+        episode_id=1,
+        seed_source="bitnet",
+        action_plan=(1, 4),
+        goal_cell=(0, 7),
+        confidence=0.8,
+    )
+    assert not untrusted.is_trusted()
+    assert HandBuiltPolicy().choose(_nav_features()) == 3  # v1 default

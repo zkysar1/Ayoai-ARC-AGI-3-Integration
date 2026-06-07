@@ -85,8 +85,10 @@ def main():
     orig_directed = pol._directed_target_action
     dlog = {"calls": 0, "fired": 0, "none": 0}
 
-    def wrapped(features, candidates):
-        r = orig_directed(features, candidates)
+    def wrapped(features, candidates, **kwargs):
+        # **kwargs forwards the g-315-134-b seed_target/axis_map keyword params
+        # choose() now threads into rule 4.6 (None on this v1 replay path).
+        r = orig_directed(features, candidates, **kwargs)
         dlog["calls"] += 1
         if r is None:
             dlog["none"] += 1

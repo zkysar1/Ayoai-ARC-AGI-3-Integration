@@ -249,6 +249,23 @@ class HandBuiltPolicy:
     action_displacement: dict[int, list] = field(default_factory=dict)
     _prev_cursor_centroid: Optional[tuple] = field(default=None, repr=False)
     reached_targets: set = field(default_factory=set)
+    # g-315-134-b: v2 episode-seed inputs to rule 4.6 directed steering. BOTH
+    # default None -> byte-identical v1 behavior (the strict-superset guarantee:
+    # a v2 seed can never make the policy score worse than v1). A v2 caller sets
+    # them per-episode ONLY from a TRUSTED EpisodePrior (EpisodePrior.is_trusted)
+    # plus the calibrated axis_map:
+    #   seed_target: the seed's ONE goal_cell (row, col). Replaces rule 4.6's
+    #     per-tick DETECTED target set with a single-element candidate set,
+    #     eliminating the value-agnostic over-identification (the live ls20 run
+    #     averaged 16.7 candidates/tick, g-315-132-c) that geometry alone cannot
+    #     disambiguate. The seed labels the ONE goal; deterministic math steers.
+    #   axis_map: calibrated action_id -> (mean_dr, mean_dc, n, reliable) from
+    #     the episode-start micro-probe (solver_v2/calibration.py). Replaces the
+    #     online action_displacement model as the steering basis (reliable
+    #     actions only). Plain tuples, NOT solver_v2 types, so solver_v0 stays
+    #     decoupled from the calibration module.
+    seed_target: Optional[tuple[int, int]] = None
+    axis_map: Optional[dict[int, tuple[float, float, int, bool]]] = None
 
     def observe(
         self,
@@ -395,8 +412,21 @@ class HandBuiltPolicy:
         # Computed ONCE and reused by rule 4.7 below (avoids a second
         # O(history) scan in the hot path — keeps choose() inside the envelope).
         stagnant = self._score_stagnant()
-        if stagnant:
-            directed = self._directed_target_action(features, candidates)
+        # v1 gate: directed seeking only once the reward layer is confirmed
+        # dormant (stagnant). v2 ADDITION (g-315-134-b): when a TRUSTED seed has
+        # set self.seed_target, fire rule 4.6 from tick 0 — the seed already
+        # named the goal_cell + supplied a calibrated axis_map, so there is no
+        # bootstrap gap to wait out. When seed_target is None (v1), this is
+        # byte-identical to the pre-g-315-134-b `if stagnant` gate (strict
+        # superset). `stagnant` itself is unchanged, so rule 4.7 below is
+        # unaffected.
+        if stagnant or self.seed_target is not None:
+            directed = self._directed_target_action(
+                features,
+                candidates,
+                seed_target=self.seed_target,
+                axis_map=self.axis_map,
+            )
             if directed is not None:
                 return directed
 
@@ -741,8 +771,9 @@ class HandBuiltPolicy:
         )
         return counts[0][1] if counts else None
 
+    @staticmethod
     def _detect_cursor_and_targets(
-        self, features: FrameFeatures
+        features: FrameFeatures,
     ) -> tuple[Optional[tuple], list]:
         """Value-agnostic detection for directed navigation (g-315-132, design
         solver-v0-audits.md 7.10). Returns ``(cursor_centroid, target_cells)``:
@@ -839,14 +870,59 @@ class HandBuiltPolicy:
             return None, target_cells
         return (sum_r / n_cur, sum_c / n_cur), target_cells
 
+    def _action_mean_displacement(
+        self,
+        action_id: int,
+        axis_map: Optional[dict[int, tuple[float, float, int, bool]]],
+    ) -> Optional[tuple[float, float]]:
+        """Mean (dr, dc) cursor displacement for ``action_id``, or None when it
+        is unknown / not usable as a steering vector.
+
+        v2 (``axis_map`` provided, g-315-134-b): read the CALIBRATED mean from
+        the episode-start micro-probe. An action that is absent, has zero
+        samples, or was gated UNRELIABLE (mean displacement below the noise floor
+        OR high variance) returns None — it is skipped exactly as an
+        uncalibrated online action would be, which is the graceful-degrade
+        primitive. axis_map schema: action_id -> (mean_dr, mean_dc, n, reliable).
+
+        v1 (``axis_map`` is None): read the ONLINE action_displacement model
+        (action_id -> [sum_dr, sum_dc, n]) and return its running mean. Byte-
+        identical to the pre-g-315-134-b inline computation (strict superset)."""
+        if axis_map is not None:
+            entry = axis_map.get(action_id)
+            if entry is None:
+                return None
+            mean_dr, mean_dc, n, reliable = entry
+            if not reliable or n == 0:
+                return None
+            return (mean_dr, mean_dc)
+        acc = self.action_displacement.get(action_id)
+        if acc is None or acc[2] == 0:
+            return None
+        return (acc[0] / acc[2], acc[1] / acc[2])
+
     def _directed_target_action(
-        self, features: FrameFeatures, candidates: List[int]
+        self,
+        features: FrameFeatures,
+        candidates: List[int],
+        *,
+        seed_target: Optional[tuple[int, int]] = None,
+        axis_map: Optional[dict[int, tuple[float, float, int, bool]]] = None,
     ) -> Optional[int]:
         """Rule 4.6 (g-315-132): refresh the action->displacement model from the
         last cursor move, then return the candidate whose learned displacement
         most reduces the cursor->nearest-live-target Manhattan distance, or None
         when there is no usable signal (cold start / no targets / no candidate
         reduces distance). See solver-v0-audits.md 7.10.
+
+        v2 episode-seed params (g-315-134-b, BOTH None in v1 -> byte-identical
+        behavior, the strict-superset guarantee): ``seed_target`` replaces the
+        detected (often over-identified) target set with the seed's ONE
+        goal_cell; ``axis_map`` (calibrated action -> (mean_dr, mean_dc, n,
+        reliable) from the episode-start micro-probe) replaces the online
+        action_displacement model as the steering basis. An unreliable/absent
+        axis_map entry is skipped exactly as an uncalibrated online action would
+        be — graceful degrade per candidate.
 
         Model-update timing: ``observe()`` appends the issued action to
         ``history`` BETWEEN consecutive ``choose()`` calls, so at entry
@@ -879,6 +955,13 @@ class HandBuiltPolicy:
                     acc[1] += dc
                     acc[2] += 1
         self._prev_cursor_centroid = cursor
+        # v2 seeded path (g-315-134-b): a TRUSTED seed labels the ONE goal cell,
+        # so the detected (often over-identified) target set is replaced with a
+        # single-element candidate set. The cursor is still re-detected each tick
+        # above (it moves); only the DESTINATION is seed-supplied. seed_target is
+        # None in v1 -> detected `targets` stand unchanged (strict superset).
+        if seed_target is not None:
+            targets = [seed_target]
         if not targets:
             return None
         # Candidate cycling: retire reached target cells so the cursor advances
@@ -898,11 +981,10 @@ class HandBuiltPolicy:
         best_a: Optional[int] = None
         best_improve = DIRECTED_MIN_IMPROVEMENT
         for a in sorted(set(candidates)):
-            acc = self.action_displacement.get(a)
-            if acc is None or acc[2] == 0:
+            disp = self._action_mean_displacement(a, axis_map)
+            if disp is None:
                 continue
-            mdr = acc[0] / acc[2]
-            mdc = acc[1] / acc[2]
+            mdr, mdc = disp
             pr = cursor[0] + mdr
             pc = cursor[1] + mdc
             pred = min(abs(pr - t[0]) + abs(pc - t[1]) for t in live)
@@ -918,6 +1000,21 @@ class HandBuiltPolicy:
         window = self.history[-ACTION_RATE_LIMIT_WINDOW:]
         count = sum(1 for o in window if o.action == 4)
         return count >= ACTION_RATE_LIMIT_MAX
+
+
+def detect_cursor_centroid(features: FrameFeatures) -> Optional[tuple[float, float]]:
+    """Public cursor-centroid detector for the v2 calibration micro-probe
+    (g-315-134-b). Returns the (row, col) float centroid of the CURSOR, or None
+    when no cursor is detectable (degenerate palette / no compact high-churn
+    blob).
+
+    Delegates to the SAME value-agnostic detection rule 4.6 uses
+    (``HandBuiltPolicy._detect_cursor_and_targets``, a stateless staticmethod),
+    so the calibrated axis_map measures displacement of EXACTLY the cursor the
+    directed steering later tracks — single source of truth, no second cursor
+    definition to drift (communication-clarity rule 5)."""
+    cursor, _targets = HandBuiltPolicy._detect_cursor_and_targets(features)
+    return cursor
 
 
 def invalid_action_rate(actions: List[int], available: List[int]) -> float:

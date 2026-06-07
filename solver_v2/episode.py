@@ -32,6 +32,38 @@ from typing import Any, Optional
 
 from structs import FrameData, GameState
 
+# ── Objective vocabulary (g-315-134-b) ──────────────────────────────────────
+# The seed labels the episode goal with ONE game-neutral objective describing a
+# cursor<->grid RELATION, never a game-specific verb ("open the lock"). Keeping
+# the vocabulary about cursor/grid relations preserves Self constraint gate 3
+# (skill acquisition, not memorization): the same objective set applies across
+# unseen environment classes. Stored as plain strings (not an Enum) to match the
+# codebase's role/seed_source string convention and to serialize cleanly into
+# recording provenance and the BitNet seed's JSON (g-315-134-d).
+OBJECTIVE_REACH_CELL = "reach_cell"  # move the cursor onto goal_cell
+OBJECTIVE_ALIGN_TO_CELL = "align_to_cell"  # share a row or column with goal_cell
+OBJECTIVE_TOGGLE_AT_CELL = "toggle_at_cell"  # act on goal_cell (e.g. ACTION6 click)
+OBJECTIVE_AVOID = "avoid"  # keep the cursor away from goal_cell
+OBJECTIVE_UNKNOWN = "unknown"  # seed could not label a goal — degrade to v1
+OBJECTIVES: frozenset[str] = frozenset(
+    {
+        OBJECTIVE_REACH_CELL,
+        OBJECTIVE_ALIGN_TO_CELL,
+        OBJECTIVE_TOGGLE_AT_CELL,
+        OBJECTIVE_AVOID,
+        OBJECTIVE_UNKNOWN,
+    }
+)
+
+# Minimum seed confidence for the goal_cell to DRIVE the deterministic directed
+# steering (rule 4.6). Below it, OR objective==unknown, OR goal_cell absent, the
+# seed is NOT trusted and the executor degrades to v1 candidate-cycling — the
+# strict-superset guarantee (v1 can never score worse). The trust gate lives
+# HERE (solver_v2, next to the seed schema), NOT in solver_v0/policy.py: the
+# policy stays decoupled from the EpisodePrior shape and consumes only a plain
+# (row, col) seed_target + a plain-tuple axis_map (see is_trusted()).
+SEED_TRUST_MIN = 0.5
+
 
 def class_slug_from_game_id(game_id: str) -> Optional[str]:
     """Extract the class slug (prefix before the first '-') from an ARC
@@ -70,6 +102,21 @@ class EpisodePrior:
         rationale: short human-readable note (provenance/debug). Not parsed.
         meta: open extension bag for future seed fields (kept empty in the
             spine; BitNet seeds may carry hypotheses, confidences, etc.).
+        goal_cell: (row, col) the seed labels as THE goal — the single target
+            rule 4.6 directed steering aims for, replacing the per-tick
+            over-identified target set. None when the seed found no goal.
+        goal_value: palette value AT goal_cell when the seed reports it (debug /
+            live cross-check that detected goal matches the seed). Not steered on.
+        objective: one of OBJECTIVES — the game-neutral cursor<->grid relation
+            the seed inferred. "unknown" (default) means degrade to v1.
+        cursor_hint: (row, col) the seed believes the cursor occupies at episode
+            start. A HINT only — directed steering re-detects the cursor each
+            tick (it moves); the hint feeds the calibration probe / live
+            cross-check, not per-tick steering. None when the seed has no hint.
+        confidence: 0.0..1.0 seed self-confidence. Below SEED_TRUST_MIN the seed
+            does NOT drive steering (degrade to v1). Default 0.0 (the spine
+            oracle stub leaves it unset → automatically degrades, preserving the
+            strict-superset guarantee without a code change in the oracle).
     """
 
     episode_id: int
@@ -78,6 +125,31 @@ class EpisodePrior:
     action6_target: Optional[tuple[int, int]] = None
     rationale: str = ""
     meta: dict[str, Any] = field(default_factory=dict)
+    # g-315-134-b additive seed fields. All optional with degrade-safe defaults
+    # so the spine's DeterministicOracleSeedProvider (which sets none of them)
+    # keeps producing valid priors that automatically degrade to v1 steering.
+    goal_cell: Optional[tuple[int, int]] = None
+    goal_value: Optional[int] = None
+    objective: str = OBJECTIVE_UNKNOWN
+    cursor_hint: Optional[tuple[int, int]] = None
+    confidence: float = 0.0
+
+    def is_trusted(self, *, min_confidence: float = SEED_TRUST_MIN) -> bool:
+        """True when this seed is reliable enough to DRIVE rule 4.6 directed
+        steering toward goal_cell. Requires a labelled goal_cell, a known
+        objective (not "unknown"), AND confidence >= min_confidence. When False,
+        the consumer passes no seed_target/axis_map to the policy, which then
+        runs identical v1 candidate-cycling — the strict-superset guarantee.
+
+        This is the SINGLE place the trust decision lives; the policy never sees
+        objective/confidence (it consumes only the resolved seed_target +
+        axis_map), keeping solver_v0 decoupled from the EpisodePrior schema.
+        """
+        return (
+            self.goal_cell is not None
+            and self.objective != OBJECTIVE_UNKNOWN
+            and self.confidence >= min_confidence
+        )
 
 
 @dataclass(frozen=True)
