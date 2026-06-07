@@ -24,6 +24,7 @@ from ayoai_streaming_client import (
 )
 from recorder import Recorder
 from solver_v0.streaming_adapter import SolverV0StreamingAdapter
+from solver_v2.streaming_adapter import SolverV2StreamingAdapter
 from structs import FrameData, GameAction, GameState, Scorecard
 
 logger = logging.getLogger()
@@ -338,8 +339,32 @@ def main() -> None:
             "segment defaults to 'solver-v0'. g-315-115."
         ),
     )
+    parser.add_argument(
+        "--use-solver-v2",
+        action="store_true",
+        help=(
+            "Route per-tick decisions through the solver_v2 episode-seeded "
+            "pipeline locally (in-process, no AyoAI Lambda or mock-server "
+            "HTTP). A SeedProvider produces an EpisodePrior once per episode "
+            "(deterministic oracle stub in this spine; BitNet in g-315-134-d); "
+            "a deterministic executor reads it each tick -- no LLM in the "
+            "per-tick path. Preserves framework-routing per echo/self.md "
+            "Constraint 2 (decisions still flow through the streaming-contract "
+            "surface, just with a local decision source). When set, --mock-url "
+            "and the live AyoAI session-open are bypassed; "
+            "SolverV2StreamingAdapter is wired as the streaming_client. "
+            "Recording prefix's solver segment defaults to 'solver-v2'. "
+            "Mutually exclusive with --use-solver-v0. g-315-134-a."
+        ),
+    )
 
     args = parser.parse_args()
+
+    # --use-solver-v0 and --use-solver-v2 are mutually exclusive decision
+    # sources (each fully replaces the streaming_client). Reject both so the
+    # if/elif precedence below never silently picks one (g-315-134-a).
+    if args.use_solver_v0 and args.use_solver_v2:
+        parser.error("--use-solver-v0 and --use-solver-v2 are mutually exclusive")
 
     logger.info(f"Connecting to API at: {ROOT_URL}")
 
@@ -430,6 +455,20 @@ def main() -> None:
             "SolverV0StreamingAdapter (--use-solver-v0 set; no live "
             "AyoAI session-open, no --mock-url required)"
         )
+    elif args.use_solver_v2:
+        # g-315-134-a: --use-solver-v2 routes decisions through
+        # SolverV2StreamingAdapter (episode-seeded local pipeline), bypassing
+        # both the live AyoAI session-open and the mock-server HTTP loopback.
+        # The adapter preserves the AyoaiStreamingClient public surface
+        # (ADD/UPDATE/DELETE shape) so framework-routing per echo/self.md
+        # Constraint 2 holds even with a local decision source. ayoai_session
+        # stays None -> warm_dns is skipped.
+        logger.info(
+            "Solver-v2 mode: routing decisions through local "
+            "SolverV2StreamingAdapter (--use-solver-v2 set; episode-seeded, "
+            "deterministic-oracle seed stub; no live AyoAI session-open, no "
+            "--mock-url required)"
+        )
     elif args.mock_url:
         logger.info(
             f"Mock mode: routing decisions through {args.mock_url} "
@@ -475,8 +514,19 @@ def main() -> None:
     # AYOAI_API_KEY may be empty for mock mode (the mock ignores the header).
     # arc_game_id passes args.game so each unit's `arc_game_id` attribute
     # carries the canonical value (integration-design.md §3.2).
+    # g-315-134-a: declare the union so each decision-source branch (v0 adapter
+    # / v2 adapter / live+mock AyoaiStreamingClient) type-checks against one
+    # variable instead of inferring the first branch's concrete type.
+    streaming_client: (
+        SolverV0StreamingAdapter | SolverV2StreamingAdapter | AyoaiStreamingClient
+    )
     if args.use_solver_v0:
         streaming_client = SolverV0StreamingAdapter(
+            ayo_server_key=card_id,
+            arc_game_id=args.game,
+        )
+    elif args.use_solver_v2:
+        streaming_client = SolverV2StreamingAdapter(
             ayo_server_key=card_id,
             arc_game_id=args.game,
         )
@@ -516,6 +566,7 @@ def main() -> None:
     if args.record:
         solver_name = args.solver_name or (
             "solver-v0" if args.use_solver_v0
+            else "solver-v2" if args.use_solver_v2
             else "mock" if args.mock_url
             else "ayoai"
         )
