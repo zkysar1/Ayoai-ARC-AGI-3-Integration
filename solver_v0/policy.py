@@ -249,6 +249,15 @@ class HandBuiltPolicy:
     action_displacement: dict[int, list] = field(default_factory=dict)
     _prev_cursor_centroid: Optional[tuple] = field(default=None, repr=False)
     reached_targets: set = field(default_factory=set)
+    # g-315-136: per-episode set of (x, y) cells already RETURNED by the R4.5
+    # within-class spatial-rotation rule, so successive R4.5 picks of the same
+    # feature-class rotate across DISTINCT cells of that class instead of
+    # re-returning the lowest-flat-index cell every time (g-315-135 §7.14: su15
+    # R4.5 collapsed to one cell, sweep ratio 0.20). Keyed on (x, y) but
+    # per-episode runtime bookkeeping reset with a fresh policy (exactly like
+    # reached_targets above) — NOT a learned cross-episode coordinate, so the
+    # generalization guard (Self gate 3) holds.
+    _episode_tried_cells: set[tuple[int, int]] = field(default_factory=set, repr=False)
     # g-315-134-b: v2 episode-seed inputs to rule 4.6 directed steering. BOTH
     # default None -> byte-identical v1 behavior (the strict-superset guarantee:
     # a v2 seed can never make the policy score worse than v1). A v2 caller sets
@@ -522,7 +531,12 @@ class HandBuiltPolicy:
                counts are NOT uniform across candidates, prefer the least-visited
                feature-class (the coordinate twin of _least_visited_action):
                score-INDEPENDENT exploration over cell features on score=0
-               traces (rb-1274 reward-proxy mismatch).
+               traces (rb-1274 reward-proxy mismatch). WITHIN the chosen class,
+               rotate across DISTINCT cells via _episode_tried_cells rather than
+               always returning the lowest-flat-index cell (g-315-136): the visit
+               table keys on feature-class, so without this rotation the same
+               cell repeats every cycle (g-315-135 §7.14: su15 sweep ratio 0.20,
+               one cell clicked 14x of 76 salient ticks).
           R5   fallback — else the pre-g-315-124 heuristic: highest-churn mobile
                cell, then first rare cell.
 
@@ -559,54 +573,74 @@ class HandBuiltPolicy:
 
         # Single flat pass (guard-629: iterate flat roles/churns, no
         # CellAttribute). Always track the fallback anchors; build the
-        # per-feature-class lowest-flat-index map ONLY when learning. fc_index
-        # has at most |roles| x CHURN_BUCKET_COUNT entries (<=8 in practice),
-        # so the post-pass selection is O(8), not O(cells).
+        # per-feature-class cell-index lists ONLY when learning. fc_cells has at
+        # most |roles| x CHURN_BUCKET_COUNT keys (<=8 in practice); each list is
+        # in ascending flat-index order (the loop visits i ascending), so
+        # fc_cells[fc][0] is the lowest-flat-index cell of that class — the
+        # pre-g-315-136 fc_index value — and the tail enables R4.5 within-class
+        # spatial rotation (g-315-136). Bounded in practice (real frames have
+        # few salient cells); the all-mobile synthetic grid is cold-start
+        # (learning False) so fc_cells stays None there, holding tiny-compute.
         best_mobile_i = -1
         best_mobile_churn = -1.0
         first_rare_i = -1
-        fc_index: Optional[dict[tuple, int]] = {} if learning else None
+        fc_cells: Optional[dict[tuple[str, int], list[int]]] = {} if learning else None
         for i, role in enumerate(roles):
             if role == "mobile":
                 c = churns[i]
                 if c > best_mobile_churn:
                     best_mobile_churn = c
                     best_mobile_i = i
-                if fc_index is not None:
-                    fc = (role, _churn_bucket(c))
-                    if fc not in fc_index:
-                        fc_index[fc] = i
+                if fc_cells is not None:
+                    fc_cells.setdefault((role, _churn_bucket(c)), []).append(i)
             elif role == "rare":
                 if first_rare_i < 0:
                     first_rare_i = i
-                if fc_index is not None:
-                    fc = (role, _churn_bucket(churns[i]))
-                    if fc not in fc_index:
-                        fc_index[fc] = i
+                if fc_cells is not None:
+                    fc_cells.setdefault((role, _churn_bucket(churns[i])), []).append(i)
 
         chosen_i = -1
-        if fc_index:
+        if fc_cells:
             # R4 — reward preference: the candidate feature-class with the
-            # highest strictly-POSITIVE mean score-delta. fc_index is ordered by
-            # ascending first-seen flat index, so the strict `>` keeps the
-            # lowest-index feature-class on mean ties (deterministic, matching
-            # the action-id helpers' lowest-id tiebreak).
+            # highest strictly-POSITIVE mean score-delta. fc_cells is ordered by
+            # ascending first-seen flat index and fc_cells[fc][0] is that class's
+            # lowest-index cell, so the strict `>` keeps the lowest-index
+            # feature-class on mean ties (deterministic, matching the action-id
+            # helpers' lowest-id tiebreak). Reward EXPLOITS — it re-returns the
+            # best class's anchor cell every tick, deliberately NOT rotating
+            # (g-315-136 rotation is curiosity-only; you want to re-click a
+            # rewarding cell).
             best_mean = 0.0
-            for fc, idx in fc_index.items():
+            for fc, idxs in fc_cells.items():
                 m = means.get(fc)
                 if m is not None and m > best_mean:
                     best_mean = m
-                    chosen_i = idx
+                    chosen_i = idxs[0]
             # R4.5 — curiosity rotation: else the least-visited candidate
             # feature-class, when visit counts are non-uniform. Cold start
             # (empty visits) and uniform plateau both fall through, like
-            # rule 4.5.
+            # rule 4.5. WITHIN that class, g-315-136 rotates across DISTINCT
+            # cells: prefer the lowest-flat-index cell NOT yet returned this
+            # episode (_episode_tried_cells), falling back to the anchor cell
+            # once all are tried. Record the returned cell so the NEXT R4.5 pick
+            # of this class advances. Fixes the g-315-135 §7.14 collapse where
+            # R4.5 re-returned one cell per class every cycle (su15 sweep 0.20).
             if chosen_i < 0 and visits:
                 ranked = sorted(
-                    (visits.get(fc, 0), idx) for fc, idx in fc_index.items()
+                    (visits.get(fc, 0), idxs[0], fc) for fc, idxs in fc_cells.items()
                 )
                 if ranked[0][0] != ranked[-1][0]:  # non-uniform
-                    chosen_i = ranked[0][1]
+                    chosen_fc = ranked[0][2]
+                    cells = fc_cells[chosen_fc]
+                    chosen_i = next(
+                        (
+                            ci
+                            for ci in cells
+                            if (ci % w, ci // w) not in self._episode_tried_cells
+                        ),
+                        cells[0],
+                    )
+                    self._episode_tried_cells.add((chosen_i % w, chosen_i // w))
 
         # R5 — fallback: highest-churn mobile, then first rare (pre-g-315-124).
         if chosen_i < 0:

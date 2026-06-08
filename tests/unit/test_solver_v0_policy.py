@@ -588,6 +588,49 @@ def test_target_cell_curiosity_rotates_unvisited_feature_classes() -> None:
     assert (d3.x, d3.y) == (2, 0)
 
 
+def test_target_cell_curiosity_rotates_within_feature_class() -> None:
+    """g-315-136: when R4.5 curiosity picks a feature-class that has MULTIPLE
+    cells, it rotates across DISTINCT cells of that class across ticks (via the
+    per-episode _episode_tried_cells set), instead of re-returning the same
+    lowest-flat-index cell every time. Before this fix, R4.5 collapsed to one
+    cell per class (g-315-135 §7.14: su15 sweep ratio 0.20, one cell clicked
+    14x). The visit table still keys on feature-class (generalization guard);
+    the rotation is episode-local coordinate bookkeeping reset with a fresh
+    policy (like reached_targets)."""
+    # col0 & col1 both churn 0.25 -> ("rare",1) [the multi-cell class];
+    # col2 churn 1.0 -> ("mobile",3); col3 static. width=4, one row.
+    current = [[[1, 1, 9, 5]]]
+    history = [
+        [[[2, 1, 1, 5]]],
+        [[[1, 1, 2, 5]]],
+        [[[1, 2, 3, 5]]],
+        [[[1, 1, 4, 5]]],
+    ]
+    features = extract(current, available_actions=[6], history=history)
+    policy = HandBuiltPolicy()
+    # Seed ("mobile",3) heavily so ("rare",1) stays the least-visited class
+    # across several R4.5 picks (observing the rare class once must not flip it
+    # above mobile). No score_delta -> means stays empty -> R4 dead -> R4.5 path.
+    for _ in range(5):
+        policy.observe(6, frame_changed=True, cell_role="mobile", cell_churn_bucket=3)
+
+    # Tick 1: R4.5 -> least-visited class ("rare",1); lowest unvisited cell col0.
+    d1 = policy.decide(features)
+    assert (d1.x, d1.y) == (0, 0)
+    policy.observe(6, frame_changed=True)  # attributes ("rare",1) -> 1 visit
+
+    # Tick 2: ("rare",1)=1 still < ("mobile",3)=5 -> same class; col0 already
+    # returned this episode -> ROTATE to col1 (the g-315-136 behavior).
+    d2 = policy.decide(features)
+    assert (d2.x, d2.y) == (1, 0)
+    policy.observe(6, frame_changed=True)  # ("rare",1) -> 2
+
+    # Tick 3: both cells of ("rare",1) tried this episode -> fall back to the
+    # lowest-flat-index anchor (col0).
+    d3 = policy.decide(features)
+    assert (d3.x, d3.y) == (0, 0)
+
+
 def test_target_cell_reward_generalizes_across_position() -> None:
     """g-315-124 GENERALIZATION GUARD: reward keys on the feature-class, NEVER
     on (x, y). Reward is learned for ("rare", 1); on a NEW frame where the rare
