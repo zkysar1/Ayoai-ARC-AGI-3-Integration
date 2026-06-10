@@ -86,9 +86,11 @@ class DeterministicExecutor:
         x: Optional[int] = None
         y: Optional[int] = None
         if action == _ACTION6_ID:
-            if prior.goal_cell is not None and prior.objective in (
-                OBJECTIVE_REACH_CELL,
-                OBJECTIVE_TOGGLE_AT_CELL,
+            if (
+                prior.is_trusted()
+                and prior.objective
+                in (OBJECTIVE_REACH_CELL, OBJECTIVE_TOGGLE_AT_CELL)
+                and prior.goal_cell is not None
             ):
                 # The seed labelled a semantic goal_cell and a target-directed
                 # objective: ACTION6 clicks THAT cell. goal_cell is (row, col);
@@ -101,6 +103,20 @@ class DeterministicExecutor:
                 # already labels a goal_cell but the old action6_target=(0,0)
                 # fallback clicked the corner regardless. rb-1259: a spatial
                 # action's coordinate must come from perception, not a constant.
+                #
+                # The gate is prior.is_trusted() — episode.py's SINGLE source of
+                # the trust decision (goal_cell set AND objective != UNKNOWN AND
+                # confidence >= SEED_TRUST_MIN) — NOT a partial re-check of
+                # goal_cell + objective alone (g-315-142). Honoring the
+                # confidence floor HERE is a no-op for the deterministic oracle
+                # stub (it couples goal_cell with confidence == SEED_TRUST_MIN,
+                # so is_trusted() is already True whenever goal_cell is set), but
+                # becomes load-bearing at the BitNet seed swap (g-315-134-d),
+                # which emits a RANGE of confidences: a low-confidence goal_cell
+                # must degrade to v1 candidate-cycling, not be clicked as if
+                # trusted. The `and prior.goal_cell is not None` is logically
+                # redundant with is_trusted() but kept for mypy Optional-narrowing
+                # on the subscript below; it is NOT a second trust gate.
                 x, y = prior.goal_cell[1], prior.goal_cell[0]
             elif prior.action6_target is not None:
                 # Explicit seed-supplied click coordinate (already in (x, y)).

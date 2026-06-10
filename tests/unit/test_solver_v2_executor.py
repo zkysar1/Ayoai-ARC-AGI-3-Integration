@@ -11,6 +11,7 @@ from solver_v2.episode import (
     EpisodePrior,
     OBJECTIVE_TOGGLE_AT_CELL,
     OBJECTIVE_UNKNOWN,
+    SEED_TRUST_MIN,
 )
 from solver_v2.executor import DeterministicExecutor, ExecutorDecision
 
@@ -25,7 +26,13 @@ def _prior(
     action6_target: tuple[int, int] | None = None,
     goal_cell: tuple[int, int] | None = None,
     objective: str = OBJECTIVE_UNKNOWN,
+    confidence: float = SEED_TRUST_MIN,
 ) -> EpisodePrior:
+    # confidence defaults to SEED_TRUST_MIN so a labelled goal_cell produces a
+    # TRUSTED prior by default — mirroring DeterministicOracleSeedProvider, which
+    # always couples a labelled goal_cell with confidence == SEED_TRUST_MIN
+    # (g-315-142). Tests probing the untrusted/low-confidence path pass a
+    # sub-floor confidence explicitly.
     return EpisodePrior(
         episode_id=1,
         seed_source="deterministic-oracle",
@@ -33,6 +40,7 @@ def _prior(
         action6_target=action6_target,
         goal_cell=goal_cell,
         objective=objective,
+        confidence=confidence,
     )
 
 
@@ -120,6 +128,49 @@ def test_goal_cell_ignored_when_objective_not_target_directed() -> None:
     feats = _features([6])
     decision = ex.execute(prior, feats, 0)
     assert decision == ExecutorDecision(action=6, x=5, y=7)
+
+
+def test_goal_cell_ignored_when_confidence_below_trust_min() -> None:
+    # g-315-142: a labelled goal_cell with a target-directed objective but
+    # confidence BELOW SEED_TRUST_MIN is NOT trusted (is_trusted() fails on the
+    # confidence floor), so the goal_cell does NOT drive the ACTION6 click — it
+    # falls back to action6_target. This is the confidence-floor twin of the
+    # objective-gate degrade above: the executor gates on prior.is_trusted()
+    # (the SINGLE trust decision in episode.py), not a partial goal_cell +
+    # objective check. The deterministic oracle stub never reaches this case (it
+    # couples goal_cell with confidence == SEED_TRUST_MIN), but the BitNet seed
+    # (g-315-134-d) emits a RANGE of confidences — a low-confidence goal_cell
+    # MUST degrade to v1 candidate-cycling, not be clicked as if trusted.
+    ex = DeterministicExecutor()
+    prior = _prior(
+        (6,),
+        action6_target=(5, 7),
+        goal_cell=(6, 32),
+        objective=OBJECTIVE_TOGGLE_AT_CELL,
+        confidence=SEED_TRUST_MIN - 0.2,  # 0.3 — below the trust floor
+    )
+    feats = _features([6])
+    decision = ex.execute(prior, feats, 0)
+    assert decision == ExecutorDecision(action=6, x=5, y=7)
+
+
+def test_goal_cell_drives_at_exactly_trust_min() -> None:
+    # Boundary: confidence == SEED_TRUST_MIN IS trusted (is_trusted() uses >=),
+    # so the goal_cell DOES drive the click. Pins the oracle-stub contract
+    # (a labelled goal_cell carries confidence == SEED_TRUST_MIN exactly) on the
+    # inclusive side of the floor — a future is_trusted() drift from >= to >
+    # would silently stop the oracle stub from steering, and this test catches it.
+    ex = DeterministicExecutor()
+    prior = _prior(
+        (6,),
+        action6_target=(5, 7),
+        goal_cell=(6, 32),
+        objective=OBJECTIVE_TOGGLE_AT_CELL,
+        confidence=SEED_TRUST_MIN,
+    )
+    feats = _features([6])
+    decision = ex.execute(prior, feats, 0)
+    assert decision == ExecutorDecision(action=6, x=32, y=6)
 
 
 def test_simple_action_has_no_coords() -> None:
