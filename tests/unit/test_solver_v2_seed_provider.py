@@ -10,10 +10,11 @@ from __future__ import annotations
 import pytest
 
 from solver_v2.episode import (
-    EpisodeContext,
-    EpisodePrior,
+    OBJECTIVE_REACH_CELL,
     OBJECTIVE_TOGGLE_AT_CELL,
     OBJECTIVE_UNKNOWN,
+    EpisodeContext,
+    EpisodePrior,
 )
 from solver_v2.seed_provider import (
     DeterministicOracleSeedProvider,
@@ -136,18 +137,6 @@ def test_click_class_goal_cell_is_region_centroid() -> None:
     assert prior.is_trusted() is True
 
 
-def test_non_click_frame_leaves_goal_cell_none() -> None:
-    # Same salient frame, but directional simple actions (1,2,3) ARE available
-    # -> NOT a click-class -> the seed does not label a goal_cell (toggle is the
-    # wrong objective when the cursor can move). Backward-compatible degrade.
-    provider = DeterministicOracleSeedProvider()
-    frame = [[[0, 0, 0], [0, 9, 0], [0, 0, 0]]]
-    prior = provider.seed(_context((6, 1, 2, 3), frame=frame))
-    assert prior.goal_cell is None
-    assert prior.objective == OBJECTIVE_UNKNOWN
-    assert prior.is_trusted() is False
-
-
 def test_click_class_uniform_grid_degrades() -> None:
     # Click-class but a uniform grid (no salient cell) -> goal_cell stays None
     # -> executor degrades to v1 candidate-cycling (strict-superset guarantee).
@@ -240,3 +229,92 @@ def test_click_class_tied_rarest_compactness_deterministic() -> None:
     b = provider.seed(_context((6,), frame=frame))
     assert a == b
     assert a.goal_cell == (1, 2)
+
+
+# ── g-315-145: movement-class goal_cell labelling (REACH_CELL objective) ──
+
+
+def test_movement_class_labels_goal_cell_reach() -> None:
+    # The SAME salient frame as the click-class tests, but directional simple
+    # actions (1,2,3) ARE available alongside ACTION6 -> a MOVEMENT class: the
+    # cursor can move, so the salient cell is a REACH target (navigate the cursor
+    # onto it), NOT a toggle. g-315-145 supersedes the old g-315-139 behavior
+    # (which left goal_cell None here on the premise "toggle is the wrong
+    # objective when the cursor can move") — reach_cell is the RIGHT objective
+    # when the cursor can move, so the seed labels the target instead of degrading.
+    provider = DeterministicOracleSeedProvider()
+    frame = [[[0, 0, 0], [0, 9, 0], [0, 0, 0]]]
+    prior = provider.seed(_context((6, 1, 2, 3), frame=frame))
+    assert prior.goal_cell == (1, 1)  # (row, col)
+    assert prior.goal_value == 9
+    assert prior.objective == OBJECTIVE_REACH_CELL
+    assert prior.confidence >= 0.5
+    assert prior.is_trusted() is True
+
+
+def test_pure_directional_class_labels_reach_without_action6() -> None:
+    # REACH does not require ACTION6 — directional moves ARE the steering
+    # primitive. A pure-directional opening frame (1,2,3, no ACTION6) with an
+    # unambiguous salient target is still a movement class and labels reach_cell.
+    # (The DeterministicExecutor ignores goal_cell when ACTION6 is absent; the
+    # g-315-146 HandBuiltPolicy rule-4.6 delegation is the consumer that steers
+    # the cursor to it.)
+    provider = DeterministicOracleSeedProvider()
+    frame = [[[0, 0, 0], [0, 9, 0], [0, 0, 0]]]
+    prior = provider.seed(_context((1, 2, 3), frame=frame))
+    assert prior.goal_cell == (1, 1)
+    assert prior.goal_value == 9
+    assert prior.objective == OBJECTIVE_REACH_CELL
+    assert prior.is_trusted() is True
+    # No ACTION6 in the plan -> action6_target stays None (unchanged contract).
+    assert prior.action6_target is None
+
+
+def test_action_structure_selects_objective_click_vs_movement() -> None:
+    # The objective is chosen by action structure alone, on an IDENTICAL salient
+    # frame: ACTION6 + ACTION7 (no directional) -> toggle_at_cell; add a single
+    # directional action -> reach_cell. Pins the exact discriminator (g-315-145)
+    # and guards against a future regression that swaps the two branches.
+    # Outcome (c): the click-class path is unchanged (still toggle).
+    provider = DeterministicOracleSeedProvider()
+    frame = [[[0, 0, 0], [0, 9, 0], [0, 0, 0]]]
+    click = provider.seed(_context((6, 7), frame=frame))
+    movement = provider.seed(_context((6, 7, 1), frame=frame))
+    assert click.goal_cell == (1, 1)
+    assert click.objective == OBJECTIVE_TOGGLE_AT_CELL
+    assert movement.goal_cell == (1, 1)
+    assert movement.objective == OBJECTIVE_REACH_CELL
+
+
+def test_movement_class_uniform_grid_degrades() -> None:
+    # Movement class but a uniform grid (no salient cell) -> goal_cell stays None
+    # -> consumer degrades to v1 candidate-cycling (strict-superset guarantee).
+    provider = DeterministicOracleSeedProvider()
+    prior = provider.seed(_context((1, 2, 3), frame=[[[5, 5], [5, 5]]]))
+    assert prior.goal_cell is None
+    assert prior.objective == OBJECTIVE_UNKNOWN
+    assert prior.is_trusted() is False
+
+
+def test_movement_class_ambiguous_rarest_degrades() -> None:
+    # Movement class with a clear background (0) but TWO tied-rarest values
+    # (9, 8 each once) that the compactness tie-break also cannot resolve
+    # (each a single cell -> identical dispersion) -> ambiguous -> the seed
+    # refuses to guess and leaves goal_cell None (outcome (b)). is_trusted-gated:
+    # no over-confident REACH on an ambiguous single frame (guard-660).
+    provider = DeterministicOracleSeedProvider()
+    frame = [[[0, 0, 0], [0, 9, 8], [0, 0, 0]]]
+    prior = provider.seed(_context((1, 2, 3), frame=frame))
+    assert prior.goal_cell is None
+    assert prior.objective == OBJECTIVE_UNKNOWN
+    assert prior.is_trusted() is False
+
+
+def test_movement_class_reach_is_deterministic() -> None:
+    # The movement-class salience path is deterministic: same context -> same
+    # prior (palette salience + integer compactness, no randomness).
+    provider = DeterministicOracleSeedProvider()
+    frame = [[[0, 0, 0], [0, 9, 0], [0, 0, 0]]]
+    a = provider.seed(_context((6, 1, 2, 3), frame=frame))
+    b = provider.seed(_context((6, 1, 2, 3), frame=frame))
+    assert a == b

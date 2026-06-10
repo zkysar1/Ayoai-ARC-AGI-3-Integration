@@ -34,11 +34,12 @@ from typing import Optional
 
 from solver_v0.perception import FrameFeatures, extract
 from solver_v2.episode import (
-    EpisodeContext,
-    EpisodePrior,
+    OBJECTIVE_REACH_CELL,
     OBJECTIVE_TOGGLE_AT_CELL,
     OBJECTIVE_UNKNOWN,
     SEED_TRUST_MIN,
+    EpisodeContext,
+    EpisodePrior,
 )
 
 # ARC GameAction ids (fixed external API contract: RESET=0 .. ACTION7=7).
@@ -155,15 +156,23 @@ def _salient_click_cell(
     min_count = min(c for _, c in rest)
     rarest = [v for v, c in rest if c == min_count]
     if len(rarest) == 1:
-        target: Optional[int] = rarest[0]
+        target = rarest[0]
     else:
         # Tied rarest count — disambiguate by spatial compactness (g-315-140):
         # the tightest-clustered candidate is the most object-like click
         # target. Still degrades to None when compactness ALSO ties (a
         # genuinely-ambiguous grid), so the strict-superset guarantee holds.
-        target = _most_compact(values, w, rarest)
-        if target is None:
+        compact = _most_compact(values, w, rarest)
+        if compact is None:
             return None
+        target = compact
+    # target is now provably int in both branches (the len==1 branch is
+    # rarest[0]; the else branch returned early on a None compactness result),
+    # so the return below is tuple[int, int, int]. Threading the else result
+    # through `compact` lets mypy infer `target: int` without an Optional
+    # annotation — fixes a pre-existing strict-mypy return-value error
+    # (Optional leaked in via _most_compact when g-315-140 added the tie-break;
+    # surfaced now because g-315-145's movement-class branch also reaches here).
     positions = [(i // w, i % w) for i, v in enumerate(values) if v == target]
     row = max(0, min(round(sum(p[0] for p in positions) / len(positions)), h - 1))
     col = max(0, min(round(sum(p[1] for p in positions) / len(positions)), w - 1))
@@ -196,15 +205,25 @@ class DeterministicOracleSeedProvider(SeedProvider):
       4. If nothing strategic is available, fall back to the available ids
          minus RESET (sorted); if even that is empty, fall back to [RESET].
 
-    Goal-cell labelling (g-315-139, click-classes only): on an opening frame
-    where ACTION6 is available and no directional simple action (ACTION1-5) is,
-    derive a goal_cell + objective=toggle_at_cell + confidence=SEED_TRUST_MIN
-    from single-frame palette salience (_salient_click_cell). This makes
-    is_trusted() True so the deterministic executor's goal_cell path activates
-    (clicks the salient cell, not the (0,0) corner). Non-click frames, or frames
-    with no unambiguous salient cell, leave goal_cell None / objective unknown /
-    confidence 0.0 → the executor degrades to v1 candidate-cycling (the
-    strict-superset guarantee is preserved).
+    Goal-cell labelling (g-315-139 click-class + g-315-145 movement-class):
+    derive a goal_cell + objective + confidence=SEED_TRUST_MIN from single-frame
+    palette salience (_salient_click_cell), with the OBJECTIVE chosen by the
+    opening-frame action structure (mutually exclusive, value-agnostic):
+      - click-class    (ACTION6 available, NO directional ACTION1-5): the only
+        interaction is a direct click → objective=toggle_at_cell. Activates the
+        deterministic executor's goal_cell path (clicks the salient cell, not
+        the (0,0) corner).
+      - movement-class (at least one directional ACTION1-5 available): a cursor
+        can move → objective=reach_cell, naming the salient cell as the TARGET
+        the consumer navigates the cursor onto. REACH does not require ACTION6.
+        At the single-frame seed boundary the cursor (actor) cannot be told from
+        the target (no churn history for _detect_cursor_and_targets), so the seed
+        labels only the salient TARGET; the per-tick consumer resolves the cursor
+        (the v0 HandBuiltPolicy rule 4.6 delegation wired by g-315-146).
+    Either label makes is_trusted() True. Frames that are neither class
+    (e.g. only ACTION7+RESET), or with no unambiguous salient cell, leave
+    goal_cell None / objective unknown / confidence 0.0 → the consumer degrades
+    to v1 candidate-cycling (the strict-superset guarantee is preserved).
 
     Same EpisodeContext -> same EpisodePrior, every time (palette salience is
     deterministic — no LLM, no network, no randomness).
@@ -230,12 +249,22 @@ class DeterministicOracleSeedProvider(SeedProvider):
             _DEFAULT_ACTION6_TARGET if _ACTION6_ID in avail else None
         )
 
-        # g-315-139: on a click-class opening frame (ACTION6 available, no
-        # directional simple actions), derive a perception goal_cell so the
-        # deterministic executor's goal_cell path (g-315-138) ACTIVATES and
-        # clicks the salient cell instead of the (0,0) corner. Degrade-safe:
+        # Goal-cell labelling: pick the steering objective from the opening
+        # frame's action structure, then derive the salient TARGET cell once.
+        #   click-class    (g-315-139): ACTION6 available, NO directional
+        #     ACTION1-5 → toggle_at_cell. The executor's goal_cell path
+        #     (g-315-138) clicks the salient cell instead of the (0,0) corner.
+        #   movement-class (g-315-145): at least one directional ACTION1-5 →
+        #     reach_cell. The salient cell is the TARGET the consumer navigates
+        #     the cursor onto. The single-frame seed cannot tell the cursor
+        #     (actor) from the target (no churn history at the seed boundary),
+        #     so it labels only the salient TARGET; the per-tick consumer (the
+        #     v0 HandBuiltPolicy rule 4.6 delegation, g-315-146) resolves the
+        #     cursor. REACH does not require ACTION6.
+        # The two classes are mutually exclusive; frames that are neither
+        # (e.g. only ACTION7+RESET) keep objective=unknown. Degrade-safe:
         # goal_cell stays None (objective unknown, confidence 0.0 → is_trusted()
-        # False → v1 candidate-cycling) on non-click frames or when no
+        # False → v1 candidate-cycling) on neither-class frames or when no
         # unambiguous salient cell is found. The (0,0) action6_target above is
         # retained as the fallback the executor uses when goal_cell is absent.
         goal_cell: Optional[tuple[int, int]] = None
@@ -245,7 +274,19 @@ class DeterministicOracleSeedProvider(SeedProvider):
         is_click_class = _ACTION6_ID in avail and not (
             avail & _DIRECTIONAL_ACTION_IDS
         )
-        if is_click_class and context.frame is not None and context.frame.frame:
+        is_movement_class = bool(avail & _DIRECTIONAL_ACTION_IDS)
+        frame_objective = (
+            OBJECTIVE_TOGGLE_AT_CELL
+            if is_click_class
+            else OBJECTIVE_REACH_CELL
+            if is_movement_class
+            else OBJECTIVE_UNKNOWN
+        )
+        if (
+            frame_objective != OBJECTIVE_UNKNOWN
+            and context.frame is not None
+            and context.frame.frame
+        ):
             features = extract(
                 context.frame.frame,
                 available_actions=context.available_actions,
@@ -255,10 +296,13 @@ class DeterministicOracleSeedProvider(SeedProvider):
                 row, col, value = salient
                 goal_cell = (row, col)
                 goal_value = value
-                objective = OBJECTIVE_TOGGLE_AT_CELL
+                objective = frame_objective
                 # Honest floor (SEED_TRUST_MIN): meets is_trusted() so the
-                # executor steers to the cell, without overstating confidence in
-                # a single-frame heuristic (guard-660 — the live seed refines).
+                # consumer steers to the cell, without overstating confidence in
+                # a single-frame heuristic. The movement-class target is a
+                # palette-salience BEST GUESS — guard-660: the live BitNet seed
+                # (g-315-134-d) refines semantic accuracy; these offline tests
+                # prove the WIRE, never a live-score claim.
                 confidence = SEED_TRUST_MIN
 
         return EpisodePrior(
