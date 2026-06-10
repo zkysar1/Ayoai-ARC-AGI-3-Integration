@@ -44,7 +44,12 @@ from ayoai_streaming_client import (
     AyoaiStreamingError,
 )
 from solver_v0.perception import FrameFeatures, extract
-from solver_v0.policy import HandBuiltPolicy, PolicyDecision
+from solver_v0.policy import (
+    HandBuiltPolicy,
+    PolicyDecision,
+    detect_cursor_centroid,
+)
+from solver_v2.calibration import CalibrationProbe, move_actions_from
 from solver_v2.episode import (
     OBJECTIVE_REACH_CELL,
     EpisodeBoundaryDetector,
@@ -139,6 +144,18 @@ class SolverV2StreamingAdapter:
         self._previous_policy_action: Optional[int] = None
         self._previous_policy_score: Optional[int] = None
 
+        # g-315-148 per-EPISODE calibration startup (Apply 2b). For a movement
+        # episode, _route_episode() also builds a fresh CalibrationProbe and sets
+        # _calibrating=True. The first <= budget (k * |move_actions|) ticks issue
+        # the probe's deterministic move-action schedule, deferred-observe the
+        # cursor displacement, then finalize a calibrated axis_map that REPLACES
+        # the online steering basis used in 2a (policy.axis_map set once,
+        # before directed steering begins). Reset to None/False at every boundary
+        # and after a non-movement route (guard-629: once-per-episode startup,
+        # never per-tick instrumentation).
+        self._probe: Optional[CalibrationProbe] = None
+        self._calibrating: bool = False
+
         self._episode_prior: Optional[EpisodePrior] = None
         self._episode_id = 0
         self._tick_in_episode = 0
@@ -185,6 +202,20 @@ class SolverV2StreamingAdapter:
         """True when the current episode is movement-routed through
         HandBuiltPolicy (seed objective OBJECTIVE_REACH_CELL, trusted)."""
         return self._use_policy
+
+    @property
+    def calibrating(self) -> bool:
+        """True while the current movement episode is in its CalibrationProbe
+        startup phase (issuing probe move-actions before directed steering).
+        Flips False once the probe drains and policy.axis_map is set (g-315-148)."""
+        return self._calibrating
+
+    @property
+    def probe(self) -> Optional[CalibrationProbe]:
+        """The current movement episode's CalibrationProbe, or None when the
+        episode is not movement-routed or has no move-actions to calibrate. For
+        test inspection of the calibration startup wiring (g-315-148)."""
+        return self._probe
 
     def close(self) -> None:
         # No session, socket, or file handle to release. Match the
@@ -281,8 +312,11 @@ class SolverV2StreamingAdapter:
                     f"episode {self._episode_id}): {e}"
                 ) from e
             # Per-EPISODE routing (Option A, g-315-147): fix this episode's
-            # per-tick executor by the fresh seed's objective.
-            self._route_episode()
+            # per-tick executor by the fresh seed's objective. Pass the boundary
+            # frame's available actions so a movement route can build its
+            # CalibrationProbe over the move-actions present at episode start
+            # (g-315-148).
+            self._route_episode(available_action_ids)
 
         # Defensive: a boundary MUST have produced a prior on the first
         # strategic frame (episode_active=False forces initial-episode), so
@@ -320,8 +354,19 @@ class SolverV2StreamingAdapter:
         tick_in_episode = self._tick_in_episode
         decision: ExecutorDecision | PolicyDecision
         if self._use_policy and self._policy is not None:
-            decision = self._decide_via_policy(frame, features)
-            executor_name = "HandBuiltPolicy"
+            if self._calibrating and self._probe is not None:
+                # CalibrationProbe startup (g-315-148, Apply 2b): drive the
+                # probe's deterministic move-action schedule until it drains,
+                # then finalize the calibrated axis_map onto the policy and steer
+                # THIS tick. _calibrating flips False inside on the transition
+                # tick, so re-read it for the provenance label.
+                decision = self._decide_via_calibration(frame, features)
+                executor_name = (
+                    "CalibrationProbe" if self._calibrating else "HandBuiltPolicy"
+                )
+            else:
+                decision = self._decide_via_policy(frame, features)
+                executor_name = "HandBuiltPolicy"
         else:
             try:
                 decision = self._executor.execute(
@@ -371,19 +416,21 @@ class SolverV2StreamingAdapter:
 
     # ---------- Per-episode routing internals (g-315-147) ---------- #
 
-    def _route_episode(self) -> None:
+    def _route_episode(self, available_action_ids: list[int]) -> None:
         """Select this episode's per-tick executor ONCE, by the fresh seed's
         objective (Option A, per-EPISODE routing — g-315-147).
 
         A movement-class episode — the seed labelled OBJECTIVE_REACH_CELL on a
         TRUSTED prior — routes every tick through a fresh HandBuiltPolicy whose
         seed_target is the seed's goal_cell, so the offline-proven (g-315-134-c)
-        directed REACH_CELL steering finally runs in production. The ONLINE
-        action->displacement model is the steering basis (axis_map stays None
-        this sub-Apply; the calibrated axis_map is Apply 2b / g-315-148). A fresh
-        policy per episode matches HandBuiltPolicy's documented per-episode state
-        contract (visit_counts / cursor model / online axis model all reset at
-        the boundary).
+        directed REACH_CELL steering finally runs in production. A fresh
+        CalibrationProbe (g-315-148, Apply 2b) then calibrates the move-actions
+        over the first <= budget ticks; its finalized axis_map supersedes the 2a
+        online action->displacement model as rule 4.6's steering basis (and
+        graceful-degrades per-action to v1 plan-cycling for any action the probe
+        could not reliably calibrate). A fresh policy per episode matches
+        HandBuiltPolicy's documented per-episode state contract (visit_counts /
+        cursor model / online axis model all reset at the boundary).
 
         Click/toggle and unknown episodes keep the DeterministicExecutor — the
         proven confidence-gated goal_cell click path (g-315-138/139/142). The
@@ -408,16 +455,73 @@ class SolverV2StreamingAdapter:
                 else HandBuiltPolicy(game_class=self._game_class)
             )
             # The seed's ONE goal_cell (row, col) becomes rule 4.6's single
-            # target, firing directed steering from tick 0. axis_map None -> the
-            # online action->displacement model is the steering basis (2a).
+            # target. axis_map starts None (the 2a online model is the interim
+            # basis); the CalibrationProbe below replaces it before directed
+            # steering begins.
             self._policy.seed_target = prior.goal_cell
             self._policy.axis_map = None
+            # g-315-148 (Apply 2b): build the episode-start CalibrationProbe over
+            # the move-actions available now. The probe drives the first <=
+            # budget ticks (k * |move_actions|); _decide_via_calibration then
+            # finalizes the calibrated axis_map onto the policy. With no
+            # move-actions to calibrate, skip the probe and keep the 2a online
+            # model (axis_map None) as the degrade basis.
+            move_acts = move_actions_from(available_action_ids)
+            if move_acts:
+                self._probe = CalibrationProbe(move_acts)
+                self._calibrating = True
+            else:
+                self._probe = None
+                self._calibrating = False
         else:
             self._use_policy = False
+            self._probe = None
+            self._calibrating = False
         # Reset the deferred-observe linkage at EVERY boundary so the first
         # policy tick of an episode never observes a stale cross-episode action.
         self._previous_policy_action = None
         self._previous_policy_score = None
+
+    def _decide_via_calibration(
+        self, frame: FrameData, features: FrameFeatures
+    ) -> PolicyDecision:
+        """Drive the episode-start CalibrationProbe one tick, or finalize it and
+        steer (g-315-148, Apply 2b).
+
+        Deferred-observe (mirrors the probe's driver contract): pass THIS tick's
+        cursor centroid to probe.step(), which records the previous probe
+        action's displacement and returns the next move-action to issue. While
+        the schedule has actions, return that probe action as the decision (a
+        simple ACTION1-5 move; x=y=None). When step() returns None the schedule
+        is drained: finalize the calibrated AxisMap, set policy.axis_map to its
+        plain-tuple form (REPLACING the 2a online basis; unreliable/absent
+        entries degrade per-action to v1 inside the policy), flip _calibrating
+        off, and steer THIS tick with the freshly calibrated policy so the
+        transition tick is not wasted.
+
+        guard-629: the probe runs only during this startup window, never as
+        per-tick instrumentation on the steady-state steering path.
+        """
+        probe = self._probe
+        policy = self._policy
+        if probe is None or policy is None:
+            raise AyoaiStreamingError(
+                f"solver-v2 calibration route missing probe/policy "
+                f"(tick {self._tick})"
+            )
+        next_action = probe.step(detect_cursor_centroid(features))
+        if next_action is not None:
+            # Still calibrating: issue the probe's move-action this tick. Probe
+            # actions are simple moves, so no spatial coordinates.
+            return PolicyDecision(action=next_action, x=None, y=None)
+        # Schedule drained -> finalize and supersede the online steering basis.
+        policy.axis_map = probe.result().policy_axis_map()
+        self._calibrating = False
+        self._probe = None
+        # Steer THIS tick with the calibrated policy (do not burn the tick). The
+        # deferred-observe linkage was reset at the boundary and never set during
+        # calibration, so _decide_via_policy correctly skips its first observe().
+        return self._decide_via_policy(frame, features)
 
     def _decide_via_policy(
         self, frame: FrameData, features: FrameFeatures

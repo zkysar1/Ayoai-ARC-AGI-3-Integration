@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from solver_v0.policy import HandBuiltPolicy
+from solver_v2.calibration import K_REPEATS
 from solver_v2.episode import (
     OBJECTIVE_REACH_CELL,
     OBJECTIVE_TOGGLE_AT_CELL,
@@ -140,12 +141,12 @@ def test_no_reseed_mid_episode() -> None:
 
 
 def test_tick_in_episode_advances_within_episode() -> None:
-    # g-315-147: _strategic() is a movement class (ACTION1-5), and g-315-145
-    # labels it OBJECTIVE_REACH_CELL on a trusted seed, so the DEFAULT path now
-    # routes it through HandBuiltPolicy (NOT the DeterministicExecutor plan-cycle
-    # this test asserted pre-g-315-147). tick_in_episode advancement is executor-
-    # agnostic; the DeterministicExecutor plan-cycle is now covered by
-    # test_unknown_seed_plan_cycles_via_deterministic below.
+    # g-315-147/148: _strategic() is a movement class (ACTION1-5) labelled
+    # OBJECTIVE_REACH_CELL on a trusted seed, so the DEFAULT path routes it to the
+    # policy — which now OPENS with the CalibrationProbe startup (g-315-148). The
+    # first ticks issue the probe's move-action schedule; tick_in_episode
+    # advancement is executor-agnostic. (The DeterministicExecutor plan-cycle is
+    # covered by test_unknown_seed_plan_cycles_via_deterministic.)
     adapter = SolverV2StreamingAdapter(
         ayo_server_key="card", arc_game_id="ls20-test"
     )
@@ -153,8 +154,8 @@ def test_tick_in_episode_advances_within_episode() -> None:
     d1 = adapter.choose_action(_strategic(score=1))
     assert d0.provenance["tick_in_episode"] == 0
     assert d1.provenance["tick_in_episode"] == 1
-    assert d0.provenance["executor"] == "HandBuiltPolicy"
-    assert d1.provenance["executor"] == "HandBuiltPolicy"
+    assert d0.provenance["executor"] == "CalibrationProbe"
+    assert d1.provenance["executor"] == "CalibrationProbe"
     assert d0.action in LS20_AVAILABLE and d1.action in LS20_AVAILABLE
 
 
@@ -229,10 +230,13 @@ def test_movement_reach_cell_routes_to_policy() -> None:
     decision = adapter.choose_action(_strategic())
     assert adapter.use_policy is True
     assert adapter.policy is not None
-    # seed_target is the seed's goal_cell; axis_map stays None (2a online model).
     assert adapter.policy.seed_target == (0, 3)
+    # g-315-148: a movement episode OPENS in the CalibrationProbe startup; the
+    # axis_map stays None until the probe finalizes (after budget ticks).
+    assert adapter.calibrating is True
+    assert adapter.probe is not None
     assert adapter.policy.axis_map is None
-    assert decision.provenance["executor"] == "HandBuiltPolicy"
+    assert decision.provenance["executor"] == "CalibrationProbe"
     assert decision.provenance["decided_by"] == DECIDED_BY_SOLVER_V2
     assert decision.action in LS20_AVAILABLE
 
@@ -302,27 +306,43 @@ def test_unknown_seed_plan_cycles_via_deterministic() -> None:
 
 
 def test_policy_deferred_observe_accumulates_history() -> None:
-    # The deferred-observe loop closes HandBuiltPolicy's OBSERVE->DECIDE cycle:
-    # tick 0 records no observation (no prior policy action), tick 1 observes
-    # tick-0's action against tick-1's outcome -> history grows by one.
+    # The STEERING deferred-observe loop closes HandBuiltPolicy's OBSERVE->DECIDE
+    # cycle, but only AFTER the CalibrationProbe startup completes (g-315-148):
+    # observe() is not called during calibration (the probe drives displacement).
+    # Drive the full probe budget to reach steering, then two steering ticks ->
+    # history grows by at least one.
     seed = _ScriptedSeedProvider(
         _prior(OBJECTIVE_REACH_CELL, goal_cell=(0, 3), confidence=0.5)
     )
     adapter = SolverV2StreamingAdapter(
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
     )
-    adapter.choose_action(_strategic(score=0, guid="play-1"))
+    first = adapter.choose_action(_strategic(score=0, guid="play-1"))
+    assert first.provenance["executor"] == "CalibrationProbe"
+    probe = adapter.probe
+    assert probe is not None
+    budget = probe.budget
+    # Ticks 1..budget: the budget-th call is the transition (probe drained) and
+    # steers via HandBuiltPolicy. observe() is skipped during calibration.
+    last = first
+    for _ in range(budget):
+        last = adapter.choose_action(_strategic(score=0, guid="play-1"))
+    assert adapter.calibrating is False
+    assert last.provenance["executor"] == "HandBuiltPolicy"
     policy = adapter.policy
     assert policy is not None
-    assert len(policy.history) == 0
+    assert policy.axis_map is not None
+    hist_before = len(policy.history)
     adapter.choose_action(_strategic(score=1, guid="play-1"))
-    assert len(policy.history) == 1
+    adapter.choose_action(_strategic(score=2, guid="play-1"))
+    assert len(policy.history) > hist_before
 
 
 def test_per_episode_routing_switches_executor() -> None:
-    # Episode 1 movement (REACH_CELL) -> HandBuiltPolicy; episode 2 click
-    # (TOGGLE, via a guid-rotation boundary) -> DeterministicExecutor. The route
-    # is fixed per EPISODE at the boundary, not re-decided per tick.
+    # Episode 1 movement (REACH_CELL) opens in CalibrationProbe (g-315-148);
+    # episode 2 click (TOGGLE, via a guid-rotation boundary) -> DeterministicExecutor.
+    # The route is fixed per EPISODE at the boundary, not re-decided per tick; the
+    # episode-2 boundary resets the (interrupted) episode-1 calibration state.
     seed = _ScriptedSeedProvider(
         _prior(OBJECTIVE_REACH_CELL, goal_cell=(0, 3), confidence=0.5),
         _prior(OBJECTIVE_TOGGLE_AT_CELL, goal_cell=(0, 1), confidence=0.5),
@@ -333,10 +353,12 @@ def test_per_episode_routing_switches_executor() -> None:
     d1 = adapter.choose_action(_strategic(guid="play-1"))
     assert adapter.episode_id == 1
     assert adapter.use_policy is True
-    assert d1.provenance["executor"] == "HandBuiltPolicy"
+    assert d1.provenance["executor"] == "CalibrationProbe"
     d2 = adapter.choose_action(_strategic(guid="play-2"))
     assert adapter.episode_id == 2
     assert adapter.use_policy is False
+    assert adapter.calibrating is False
+    assert adapter.probe is None
     assert d2.provenance["executor"] == "DeterministicExecutor"
 
 
@@ -364,3 +386,86 @@ def test_policy_factory_injection_constructs_per_episode() -> None:
     assert len(made) == 1
     assert adapter.policy is made[0]
     assert made[0].seed_target == (0, 3)
+
+
+# ── g-315-148: CalibrationProbe startup (Apply 2b) ─────────────────────────
+
+
+def test_calibration_completes_and_sets_axis_map() -> None:
+    # The CalibrationProbe drives the first `budget` ticks; the budget-th call
+    # finalizes the calibrated axis_map (REPLACING the 2a online basis) and
+    # switches the executor to HandBuiltPolicy steering.
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_REACH_CELL, goal_cell=(0, 3), confidence=0.5)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    first = adapter.choose_action(_strategic(score=0))
+    assert adapter.calibrating is True
+    assert adapter.policy is not None
+    assert adapter.policy.axis_map is None
+    probe = adapter.probe
+    assert probe is not None
+    budget = probe.budget
+    assert budget == 5 * K_REPEATS  # ls20: 5 move-actions (ACTION1-5)
+    last = first
+    for _ in range(budget):
+        last = adapter.choose_action(_strategic(score=0))
+    # Probe drained -> calibration finalized, axis_map set, steering active.
+    assert adapter.calibrating is False
+    assert adapter.probe is None
+    assert adapter.policy is not None
+    assert adapter.policy.axis_map is not None
+    assert last.provenance["executor"] == "HandBuiltPolicy"
+
+
+def test_calibration_issues_scheduled_move_actions() -> None:
+    # During calibration every decision is a simple move-action issued in the
+    # probe's deterministic ascending schedule (each move-action repeated
+    # K_REPEATS times) — never RESET or ACTION6.
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_REACH_CELL, goal_cell=(0, 3), confidence=0.5)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    move_ga = [
+        GameAction.ACTION1,
+        GameAction.ACTION2,
+        GameAction.ACTION3,
+        GameAction.ACTION4,
+        GameAction.ACTION5,
+    ]
+    expected = [ga for ga in move_ga for _ in range(K_REPEATS)]
+    issued = [adapter.choose_action(_strategic()).action for _ in expected]
+    assert issued == expected
+    # After draining the schedule but BEFORE the transition step, still calibrating.
+    assert adapter.calibrating is True
+
+
+def test_no_move_actions_skips_calibration() -> None:
+    # A movement REACH seed whose frame exposes NO simple move-actions (only
+    # ACTION6) has nothing to calibrate: the probe is skipped and the policy
+    # steers on the 2a online model (axis_map None) from tick 0.
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_REACH_CELL, goal_cell=(0, 1), confidence=0.5)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    frame = FrameData(
+        game_id="ls20-test",
+        frame=[[[1, 2], [3, 4]]],
+        state=GameState.NOT_FINISHED,
+        score=0,
+        guid="play-1",
+        available_actions=ACTION6_AVAILABLE,  # [RESET, ACTION6] -> no move-actions
+    )
+    decision = adapter.choose_action(frame)
+    assert adapter.use_policy is True
+    assert adapter.calibrating is False
+    assert adapter.probe is None
+    assert adapter.policy is not None
+    assert adapter.policy.axis_map is None  # 2a online-model degrade
+    assert decision.provenance["executor"] == "HandBuiltPolicy"
