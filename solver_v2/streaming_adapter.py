@@ -36,15 +36,17 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from ayoai_streaming_client import (
     DECIDED_BY_CLIENT,
     AyoaiDecision,
     AyoaiStreamingError,
 )
-from solver_v0.perception import extract
+from solver_v0.perception import FrameFeatures, extract
+from solver_v0.policy import HandBuiltPolicy, PolicyDecision
 from solver_v2.episode import (
+    OBJECTIVE_REACH_CELL,
     EpisodeBoundaryDetector,
     EpisodeContext,
     EpisodePrior,
@@ -103,6 +105,7 @@ class SolverV2StreamingAdapter:
         seed_provider: SeedProvider | None = None,
         detector: EpisodeBoundaryDetector | None = None,
         executor: DeterministicExecutor | None = None,
+        policy_factory: Callable[[], HandBuiltPolicy] | None = None,
         history_depth: int = DEFAULT_HISTORY_DEPTH,
     ) -> None:
         # streaming_url / api_key / session / http_timeout_s / retry_sleep
@@ -122,6 +125,19 @@ class SolverV2StreamingAdapter:
         )
         self._detector = detector or EpisodeBoundaryDetector()
         self._executor = executor or DeterministicExecutor()
+        self._policy_factory = policy_factory
+
+        # g-315-147 per-EPISODE routing (Option A). A movement-class episode
+        # (seed objective OBJECTIVE_REACH_CELL, trusted) delegates every tick to
+        # a fresh seed-aware HandBuiltPolicy; click/unknown episodes keep the
+        # DeterministicExecutor. _route_episode() fixes the choice at each
+        # episode boundary. _policy/_use_policy hold the current episode's route;
+        # _previous_policy_action/_score drive HandBuiltPolicy's deferred-observe
+        # loop (reset at every boundary so no stale cross-episode observe).
+        self._policy: Optional[HandBuiltPolicy] = None
+        self._use_policy: bool = False
+        self._previous_policy_action: Optional[int] = None
+        self._previous_policy_score: Optional[int] = None
 
         self._episode_prior: Optional[EpisodePrior] = None
         self._episode_id = 0
@@ -156,6 +172,19 @@ class SolverV2StreamingAdapter:
     def seed_provider(self) -> SeedProvider:
         """Expose the seed provider for test inspection / swap verification."""
         return self._seed_provider
+
+    @property
+    def policy(self) -> Optional[HandBuiltPolicy]:
+        """The current movement episode's HandBuiltPolicy, or None when the
+        episode is click/unknown-routed (DeterministicExecutor). For test
+        inspection of routing + seed_target wiring (g-315-147)."""
+        return self._policy
+
+    @property
+    def use_policy(self) -> bool:
+        """True when the current episode is movement-routed through
+        HandBuiltPolicy (seed objective OBJECTIVE_REACH_CELL, trusted)."""
+        return self._use_policy
 
     def close(self) -> None:
         # No session, socket, or file handle to release. Match the
@@ -251,6 +280,9 @@ class SolverV2StreamingAdapter:
                     f"solver-v2 seed provider failed (tick {self._tick}, "
                     f"episode {self._episode_id}): {e}"
                 ) from e
+            # Per-EPISODE routing (Option A, g-315-147): fix this episode's
+            # per-tick executor by the fresh seed's objective.
+            self._route_episode()
 
         # Defensive: a boundary MUST have produced a prior on the first
         # strategic frame (episode_active=False forces initial-episode), so
@@ -280,25 +312,35 @@ class SolverV2StreamingAdapter:
         if frame.frame:
             self._frame_history.append(frame.frame)
 
-        # 3. Deterministic per-tick execution over the episode prior.
+        # 3. Per-tick decision, routed by the episode's class (Option A, fixed
+        #    at the boundary by _route_episode). Movement episodes
+        #    (OBJECTIVE_REACH_CELL, trusted seed) delegate to the seed-aware
+        #    HandBuiltPolicy directed steering; click/unknown episodes keep the
+        #    DeterministicExecutor (proven g-315-138/139/142 click path).
         tick_in_episode = self._tick_in_episode
-        try:
-            ed: ExecutorDecision = self._executor.execute(
-                self._episode_prior, features, tick_in_episode
-            )
-        except Exception as e:
-            raise AyoaiStreamingError(
-                f"solver-v2 executor failed (tick {self._tick}): {e}"
-            ) from e
+        decision: ExecutorDecision | PolicyDecision
+        if self._use_policy and self._policy is not None:
+            decision = self._decide_via_policy(frame, features)
+            executor_name = "HandBuiltPolicy"
+        else:
+            try:
+                decision = self._executor.execute(
+                    self._episode_prior, features, tick_in_episode
+                )
+            except Exception as e:
+                raise AyoaiStreamingError(
+                    f"solver-v2 executor failed (tick {self._tick}): {e}"
+                ) from e
+            executor_name = "DeterministicExecutor"
         self._tick_in_episode += 1
 
         # 4. Convert action id back to GameAction enum for AyoaiDecision.
         try:
-            ga = GameAction.from_id(ed.action)
+            ga = GameAction.from_id(decision.action)
         except ValueError as e:
             raise AyoaiStreamingError(
-                f"solver-v2 executor returned unknown action id {ed.action} "
-                f"(tick {self._tick})"
+                f"solver-v2 {executor_name} returned unknown action id "
+                f"{decision.action} (tick {self._tick})"
             ) from e
 
         provenance: dict[str, Any] = {
@@ -307,23 +349,132 @@ class SolverV2StreamingAdapter:
             "episode_id": self._episode_id,
             "tick_in_episode": tick_in_episode,
             "seed_source": self._episode_prior.seed_source,
-            "executor": "DeterministicExecutor",
+            "executor": executor_name,
         }
         if boundary_reason is not None:
             provenance["episode_boundary"] = boundary_reason
-        if ed.x is not None and ed.y is not None:
-            provenance["action6_target"] = {"x": ed.x, "y": ed.y}
+        if decision.x is not None and decision.y is not None:
+            provenance["action6_target"] = {"x": decision.x, "y": decision.y}
 
-        # Remember this tick's frame for next tick's boundary detection.
+        # Remember this tick's frame for next tick's boundary detection AND the
+        # HandBuiltPolicy deferred-observe loop (_decide_via_policy reads it
+        # BEFORE this update, so it sees the prior tick's frame).
         self._previous_frame = frame
 
         return AyoaiDecision(
             action=ga,
-            x=ed.x if ga.is_complex() else None,
-            y=ed.y if ga.is_complex() else None,
+            x=decision.x if ga.is_complex() else None,
+            y=decision.y if ga.is_complex() else None,
             reasoning=None,
             provenance=provenance,
         )
+
+    # ---------- Per-episode routing internals (g-315-147) ---------- #
+
+    def _route_episode(self) -> None:
+        """Select this episode's per-tick executor ONCE, by the fresh seed's
+        objective (Option A, per-EPISODE routing — g-315-147).
+
+        A movement-class episode — the seed labelled OBJECTIVE_REACH_CELL on a
+        TRUSTED prior — routes every tick through a fresh HandBuiltPolicy whose
+        seed_target is the seed's goal_cell, so the offline-proven (g-315-134-c)
+        directed REACH_CELL steering finally runs in production. The ONLINE
+        action->displacement model is the steering basis (axis_map stays None
+        this sub-Apply; the calibrated axis_map is Apply 2b / g-315-148). A fresh
+        policy per episode matches HandBuiltPolicy's documented per-episode state
+        contract (visit_counts / cursor model / online axis model all reset at
+        the boundary).
+
+        Click/toggle and unknown episodes keep the DeterministicExecutor — the
+        proven confidence-gated goal_cell click path (g-315-138/139/142). The
+        DeterministicExecutor is NOT extended with a duplicate rule 4.6
+        (implementation-discipline: reuse Half B, do not reimplement).
+
+        Degrade-safe: an untrusted seed, an absent goal_cell, or any non-REACH
+        objective falls through to the DeterministicExecutor — byte-identical to
+        the pre-g-315-147 behavior (guard-660: this wires the path; live reward
+        is gated behind g-315-98 + g-315-134-d).
+        """
+        prior = self._episode_prior
+        if (
+            prior is not None
+            and prior.objective == OBJECTIVE_REACH_CELL
+            and prior.is_trusted()
+        ):
+            self._use_policy = True
+            self._policy = (
+                self._policy_factory()
+                if self._policy_factory is not None
+                else HandBuiltPolicy(game_class=self._game_class)
+            )
+            # The seed's ONE goal_cell (row, col) becomes rule 4.6's single
+            # target, firing directed steering from tick 0. axis_map None -> the
+            # online action->displacement model is the steering basis (2a).
+            self._policy.seed_target = prior.goal_cell
+            self._policy.axis_map = None
+        else:
+            self._use_policy = False
+        # Reset the deferred-observe linkage at EVERY boundary so the first
+        # policy tick of an episode never observes a stale cross-episode action.
+        self._previous_policy_action = None
+        self._previous_policy_score = None
+
+    def _decide_via_policy(
+        self, frame: FrameData, features: FrameFeatures
+    ) -> PolicyDecision:
+        """Per-tick movement decision via the seed-aware HandBuiltPolicy.
+
+        Replicates SolverV0StreamingAdapter's deferred-observe loop: BEFORE
+        deciding, close HandBuiltPolicy's OBSERVE->DECIDE loop by observing the
+        PREVIOUS policy tick's action against this tick's outcome (frame_changed
+        + score_delta). The online action->displacement model that rule 4.6
+        steers by is built from these observe() calls, so without the loop
+        seed_target would have no learned direction to move toward (the 2b
+        axis_map supersedes the online model). observe() is best-effort: a
+        failure is logged and swallowed, never aborting the tick.
+
+        self._previous_frame still holds the PRIOR tick's frame here
+        (choose_action updates it only after this returns), so frame_changed
+        compares this tick to the previous one correctly.
+        """
+        policy = self._policy
+        if policy is None:
+            raise AyoaiStreamingError(
+                f"solver-v2 movement route has no policy (tick {self._tick})"
+            )
+        if (
+            self._previous_policy_action is not None
+            and self._previous_frame is not None
+        ):
+            frame_changed = frame.frame != self._previous_frame.frame
+            score_delta: Optional[int] = None
+            if (
+                self._previous_policy_score is not None
+                and frame.score is not None
+            ):
+                score_delta = frame.score - self._previous_policy_score
+            try:
+                policy.observe(
+                    self._previous_policy_action,
+                    frame_changed,
+                    score_delta=score_delta,
+                )
+            except Exception:
+                # observe() is a best-effort signal accumulator; never let it
+                # raise out of choose_action. decide() below still returns a
+                # valid action even if observe() were to fail.
+                logger.exception(
+                    "solver-v2 policy.observe() failed (tick %d)", self._tick
+                )
+        try:
+            pd: PolicyDecision = policy.decide(features)
+        except Exception as e:
+            raise AyoaiStreamingError(
+                f"solver-v2 policy.decide failed (tick {self._tick}): {e}"
+            ) from e
+        self._previous_policy_action = pd.action
+        self._previous_policy_score = frame.score
+        return pd
 
     def send_add(self, frame: FrameData) -> None:
         """No-op for remote registration (local solver). Seeds _frame_history
