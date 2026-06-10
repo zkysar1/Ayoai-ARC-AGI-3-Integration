@@ -8,7 +8,9 @@ boundary, plus the current FrameFeatures, and returns an action.
 Spine behavior: cycle deterministically through the prior's action_plan,
 advancing one step per tick within the episode, filtered to the actions that
 are actually legal on the current frame. The complex action (ACTION6) gets its
-coordinates from the prior's action6_target. This is the simplest executor
+coordinates from the seed's labelled goal_cell when the objective is
+target-directed (reach/toggle a cell), else from the prior's action6_target,
+else a degenerate (0,0) (g-315-138). This is the simplest executor
 that genuinely CONSUMES the seed (the plan is the seed's product) while
 remaining fully reproducible. Later executors can use the richer FrameFeatures
 signal (roles/churn/score) the interface already passes in.
@@ -22,7 +24,11 @@ from dataclasses import dataclass
 from typing import Optional
 
 from solver_v0.perception import FrameFeatures
-from solver_v2.episode import EpisodePrior
+from solver_v2.episode import (
+    EpisodePrior,
+    OBJECTIVE_REACH_CELL,
+    OBJECTIVE_TOGGLE_AT_CELL,
+)
 
 # ARC GameAction ids (fixed external API contract). Literal ints (not
 # GameAction.RESET.value) because strict mypy types a specific enum member's
@@ -80,7 +86,29 @@ class DeterministicExecutor:
         x: Optional[int] = None
         y: Optional[int] = None
         if action == _ACTION6_ID:
-            target = prior.action6_target or (0, 0)
-            x, y = target[0], target[1]
+            if prior.goal_cell is not None and prior.objective in (
+                OBJECTIVE_REACH_CELL,
+                OBJECTIVE_TOGGLE_AT_CELL,
+            ):
+                # The seed labelled a semantic goal_cell and a target-directed
+                # objective: ACTION6 clicks THAT cell. goal_cell is (row, col);
+                # ACTION6 addresses (x, y) = (col, row) — the same convention
+                # solver_v0.policy.decide() uses for _target_cell. Deriving the
+                # click from the seed's labelled cell (never the hardcoded (0,0)
+                # corner) is the click-class realization of the once-per-episode
+                # seed -> deterministic executor steering (g-315-138, rb-1438):
+                # on a pure click-class (e.g. su15, available=[6,7]) perception
+                # already labels a goal_cell but the old action6_target=(0,0)
+                # fallback clicked the corner regardless. rb-1259: a spatial
+                # action's coordinate must come from perception, not a constant.
+                x, y = prior.goal_cell[1], prior.goal_cell[0]
+            elif prior.action6_target is not None:
+                # Explicit seed-supplied click coordinate (already in (x, y)).
+                x, y = prior.action6_target[0], prior.action6_target[1]
+            else:
+                # No labelled goal_cell and no explicit target — degenerate
+                # corner. Preserves backward-compatible behavior for spine-oracle
+                # priors that set neither field.
+                x, y = 0, 0
 
         return ExecutorDecision(action=action, x=x, y=y)

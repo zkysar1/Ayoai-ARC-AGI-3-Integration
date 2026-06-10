@@ -7,7 +7,11 @@ ACTION6 coordinate sourcing from the prior, and the no-legal-plan fallback.
 from __future__ import annotations
 
 from solver_v0.perception import FrameFeatures, extract
-from solver_v2.episode import EpisodePrior
+from solver_v2.episode import (
+    EpisodePrior,
+    OBJECTIVE_TOGGLE_AT_CELL,
+    OBJECTIVE_UNKNOWN,
+)
 from solver_v2.executor import DeterministicExecutor, ExecutorDecision
 
 
@@ -19,12 +23,16 @@ def _features(available: list[int]) -> FrameFeatures:
 def _prior(
     action_plan: tuple[int, ...],
     action6_target: tuple[int, int] | None = None,
+    goal_cell: tuple[int, int] | None = None,
+    objective: str = OBJECTIVE_UNKNOWN,
 ) -> EpisodePrior:
     return EpisodePrior(
         episode_id=1,
         seed_source="deterministic-oracle",
         action_plan=action_plan,
         action6_target=action6_target,
+        goal_cell=goal_cell,
+        objective=objective,
     )
 
 
@@ -64,6 +72,54 @@ def test_action6_default_coords_when_target_missing() -> None:
     feats = _features([6])
     decision = ex.execute(prior, feats, 0)
     assert decision == ExecutorDecision(action=6, x=0, y=0)
+
+
+def test_action6_coords_from_goal_cell_when_objective_target_directed() -> None:
+    # g-315-138: on a click-class the seed labels a semantic goal_cell with a
+    # target-directed objective; ACTION6 clicks (x, y) = (col, row) of THAT
+    # cell, not the (0,0) corner. su15 case: goal_cell (row=6, col=32) -> (32, 6).
+    ex = DeterministicExecutor()
+    prior = _prior(
+        (6,),
+        action6_target=None,
+        goal_cell=(6, 32),
+        objective=OBJECTIVE_TOGGLE_AT_CELL,
+    )
+    feats = _features([6])
+    decision = ex.execute(prior, feats, 0)
+    assert decision == ExecutorDecision(action=6, x=32, y=6)
+
+
+def test_goal_cell_takes_precedence_over_action6_target_when_directed() -> None:
+    # When BOTH a target-directed goal_cell and an action6_target are present,
+    # the semantic goal_cell wins — it is more meaningful than the spine
+    # oracle's default (0,0) action6_target (g-315-138).
+    ex = DeterministicExecutor()
+    prior = _prior(
+        (6,),
+        action6_target=(0, 0),
+        goal_cell=(6, 32),
+        objective=OBJECTIVE_TOGGLE_AT_CELL,
+    )
+    feats = _features([6])
+    decision = ex.execute(prior, feats, 0)
+    assert decision == ExecutorDecision(action=6, x=32, y=6)
+
+
+def test_goal_cell_ignored_when_objective_not_target_directed() -> None:
+    # goal_cell present but objective == "unknown" (untrusted seed): the
+    # goal_cell does NOT drive the click; falls back to action6_target. Mirrors
+    # EpisodePrior.is_trusted()'s objective != unknown gate (g-315-138).
+    ex = DeterministicExecutor()
+    prior = _prior(
+        (6,),
+        action6_target=(5, 7),
+        goal_cell=(6, 32),
+        objective=OBJECTIVE_UNKNOWN,
+    )
+    feats = _features([6])
+    decision = ex.execute(prior, feats, 0)
+    assert decision == ExecutorDecision(action=6, x=5, y=7)
 
 
 def test_simple_action_has_no_coords() -> None:
