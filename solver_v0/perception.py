@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from typing import Iterable, Optional
+from typing import Iterable, Iterator, Optional
 
 
 @dataclass(frozen=True)
@@ -61,7 +61,7 @@ class _CellRowView:
         i = self._r * ff.width + c
         return CellAttribute(value=ff.values[i], role=ff.roles[i], churn=ff.churns[i])
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[CellAttribute]:
         ff = self._ff
         base = self._r * ff.width
         for c in range(ff.width):
@@ -95,7 +95,7 @@ class _CellGridView:
             raise IndexError(r)
         return _CellRowView(ff, r)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator["_CellRowView"]:
         for r in range(self._ff.height):
             yield _CellRowView(self._ff, r)
 
