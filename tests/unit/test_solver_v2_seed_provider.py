@@ -176,3 +176,67 @@ def test_click_class_goal_cell_is_deterministic() -> None:
     a = provider.seed(_context((6, 7), frame=frame))
     b = provider.seed(_context((6, 7), frame=frame))
     assert a == b
+
+
+# ── g-315-140: tied-rarest compactness tie-break (ft09-class generalization) ──
+
+
+def test_click_class_tied_rarest_distinct_compactness_fires() -> None:
+    # ft09-class: the rarest non-background COUNT is shared by two values
+    # (g-315-139 left this as goal_cell=None — singleton heuristic refused to
+    # guess). The secondary compactness tie-break (g-315-140) picks the
+    # tighter-clustered candidate: value 7 is a tight horizontal segment at
+    # row 1 (D=6); value 9 is three scattered corners (D=100). 7 wins; its
+    # centroid (1, 2) is the goal_cell. Background 1 fills the rest (30 cells).
+    provider = DeterministicOracleSeedProvider()
+    frame = [[
+        [9, 1, 1, 1, 1, 9],
+        [1, 7, 7, 7, 1, 1],
+        [1, 1, 1, 1, 1, 1],
+        [1, 1, 1, 1, 1, 1],
+        [1, 1, 1, 1, 1, 1],
+        [9, 1, 1, 1, 1, 1],
+    ]]
+    prior = provider.seed(_context((6,), frame=frame))
+    assert prior.goal_cell == (1, 2)  # centroid of the compact value-7 segment
+    assert prior.goal_value == 7
+    assert prior.objective == OBJECTIVE_TOGGLE_AT_CELL
+    assert prior.is_trusted() is True
+
+
+def test_click_class_tied_rarest_equal_compactness_degrades() -> None:
+    # Genuine ambiguity preserved: two tied-rarest values (7 and 9), each a
+    # 2x2 block (identical shape -> identical dispersion D=8). Compactness
+    # ALSO ties -> the seed refuses to guess and leaves goal_cell None, so the
+    # executor degrades to v1 candidate-cycling (strict-superset guarantee).
+    provider = DeterministicOracleSeedProvider()
+    frame = [[
+        [7, 7, 1, 1, 1, 1],
+        [7, 7, 1, 1, 1, 1],
+        [1, 1, 1, 1, 1, 1],
+        [1, 1, 1, 1, 1, 1],
+        [1, 1, 1, 1, 9, 9],
+        [1, 1, 1, 1, 9, 9],
+    ]]
+    prior = provider.seed(_context((6,), frame=frame))
+    assert prior.goal_cell is None
+    assert prior.objective == OBJECTIVE_UNKNOWN
+    assert prior.is_trusted() is False
+
+
+def test_click_class_tied_rarest_compactness_deterministic() -> None:
+    # The compactness tie-break is deterministic: same tied-rarest frame twice
+    # -> identical prior (integer metric, no float fragility, no randomness).
+    provider = DeterministicOracleSeedProvider()
+    frame = [[
+        [9, 1, 1, 1, 1, 9],
+        [1, 7, 7, 7, 1, 1],
+        [1, 1, 1, 1, 1, 1],
+        [1, 1, 1, 1, 1, 1],
+        [1, 1, 1, 1, 1, 1],
+        [9, 1, 1, 1, 1, 1],
+    ]]
+    a = provider.seed(_context((6,), frame=frame))
+    b = provider.seed(_context((6,), frame=frame))
+    assert a == b
+    assert a.goal_cell == (1, 2)

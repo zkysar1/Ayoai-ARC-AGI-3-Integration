@@ -66,6 +66,53 @@ _DEFAULT_ACTION6_TARGET: tuple[int, int] = (0, 0)
 _DIRECTIONAL_ACTION_IDS: frozenset[int] = frozenset({1, 2, 3, 4, 5})
 
 
+def _most_compact(
+    values: list[int], width: int, candidates: list[int]
+) -> Optional[int]:
+    """Pick the tied-rarest value whose cells form the tightest cluster.
+
+    Secondary salience signal for click-class disambiguation (g-315-140):
+    when the rarest-non-background count is shared by 2+ palette values, the
+    primary singleton heuristic (``_salient_click_cell``) cannot choose. The
+    tighter-clustered region is the more object-like click target; a scattered
+    region of the same count reads as texture/border.
+
+    Metric: integer spatial dispersion
+        D = n*(Σr² + Σc²) - ((Σr)² + (Σc)²)
+    which is n² times the cells' spatial variance about their centroid. Lower
+    D = tighter cluster. Equal cell-count across the tied candidates (that is
+    exactly what "tied-rarest" means) makes raw D directly comparable. Fully
+    integer, so equal compactness is detected EXACTLY — no float fragility:
+    returns the unique minimum-D value, or ``None`` when the minimum is itself
+    shared. A genuinely-ambiguous grid (two equally-compact regions) therefore
+    still degrades to v1 candidate-cycling, preserving the strict-superset
+    guarantee. value-agnostic (keys on relative cell geometry, never a palette
+    int) and a single O(n) pass per candidate, computed once per episode at the
+    seed boundary — no per-tick cost (guard-629).
+    """
+    best_val: Optional[int] = None
+    best_d: Optional[int] = None
+    min_is_tied = False
+    for v in candidates:
+        sr = sc = srr = scc = n = 0
+        for i, x in enumerate(values):
+            if x == v:
+                r, c = divmod(i, width)
+                sr += r
+                sc += c
+                srr += r * r
+                scc += c * c
+                n += 1
+        d = n * (srr + scc) - (sr * sr + sc * sc)
+        if best_d is None or d < best_d:
+            best_d = d
+            best_val = v
+            min_is_tied = False
+        elif d == best_d:
+            min_is_tied = True
+    return None if min_is_tied else best_val
+
+
 def _salient_click_cell(
     features: FrameFeatures,
 ) -> Optional[tuple[int, int, int]]:
@@ -75,18 +122,22 @@ def _salient_click_cell(
     returns all-"unknown" roles), so the only deterministic salience signal is
     the palette structure of the opening primary layer. Heuristic: the unique
     rarest non-background value names the salient region; the click target is
-    that region's centroid (rounded, clamped to the grid). Returns
-    ``(row, col, value)`` — the goal cell plus the salient palette value — or
-    ``None`` when no clear salient cell exists (uniform grid, no unique modal
-    background, or an ambiguous tie for rarest).
+    that region's centroid (rounded, clamped to the grid). When the rarest
+    non-background COUNT is shared by 2+ values, a secondary compactness
+    tie-break (``_most_compact``, g-315-140) picks the tightest-clustered
+    candidate. Returns ``(row, col, value)`` — the goal cell plus the salient
+    palette value — or ``None`` when no clear salient cell exists (uniform
+    grid, no unique modal background, or a tie for rarest that the compactness
+    tie-break also cannot resolve).
 
-    Conservative by design: labels a cell ONLY on an unambiguous singleton
-    anomaly, degrading to None (→ v1 candidate-cycling, the strict-superset
-    guarantee) otherwise. value-agnostic — keys on RELATIVE palette frequency,
-    never a specific palette int or absolute coordinate, so it generalizes
-    across click-classes (Self constraint gate 3). guard-660: the cell is a
-    perception-derived BEST GUESS, not a known-correct goal — the live BitNet
-    seed (g-315-134-d) refines it.
+    Conservative by design: labels a cell on an unambiguous singleton anomaly,
+    or — when the rarest count ties — on the tightest-clustered candidate;
+    degrades to None (→ v1 candidate-cycling, the strict-superset guarantee)
+    only when even compactness ties. value-agnostic — keys on RELATIVE palette
+    frequency and relative cell geometry, never a specific palette int or
+    absolute coordinate, so it generalizes across click-classes (Self
+    constraint gate 3). guard-660: the cell is a perception-derived BEST GUESS,
+    not a known-correct goal — the live BitNet seed (g-315-134-d) refines it.
     """
     values = features.values
     w = features.width
@@ -103,9 +154,16 @@ def _salient_click_cell(
     rest = [(v, c) for v, c in counts.items() if v != background]
     min_count = min(c for _, c in rest)
     rarest = [v for v, c in rest if c == min_count]
-    if len(rarest) != 1:
-        return None  # ambiguous rarest — degrade rather than guess arbitrarily
-    target = rarest[0]
+    if len(rarest) == 1:
+        target: Optional[int] = rarest[0]
+    else:
+        # Tied rarest count — disambiguate by spatial compactness (g-315-140):
+        # the tightest-clustered candidate is the most object-like click
+        # target. Still degrades to None when compactness ALSO ties (a
+        # genuinely-ambiguous grid), so the strict-superset guarantee holds.
+        target = _most_compact(values, w, rarest)
+        if target is None:
+            return None
     positions = [(i // w, i % w) for i, v in enumerate(values) if v == target]
     row = max(0, min(round(sum(p[0] for p in positions) / len(positions)), h - 1))
     col = max(0, min(round(sum(p[1] for p in positions) / len(positions)), w - 1))
