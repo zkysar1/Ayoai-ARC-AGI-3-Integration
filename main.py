@@ -11,7 +11,6 @@ import os
 import random
 import sys
 import time
-from copy import deepcopy
 
 import requests
 from pydantic import ValidationError
@@ -249,6 +248,30 @@ def run_game_loop(
 
     elapsed = time.time() - timer
     return action_counter, elapsed
+
+
+def build_v2_seed_provider(
+    ayoai_session: AyoaiSessionInfo | None, api_key: str = ""
+) -> SeedProvider | None:
+    """Build the live BitNet seed provider for solver-v2 from an OPEN AyoAI
+    session (g-315-154 wiring; extracted for testability — g-315-158).
+
+    Returns None when no session is present, so ``SolverV2StreamingAdapter``
+    falls back to its in-process ``DeterministicOracleSeedProvider``. Site 1 of
+    ``main()`` guarantees a session under ``--use-solver-v2`` (or the play has
+    already aborted); the None-guard is the defensive fallback that keeps the
+    adapter on its oracle rather than crashing on an unexpected None.
+
+    The seed endpoint shares the streaming host:port (path ``/ArcEpisodeSeed``,
+    alpha's g-315-156 contract); it is derived from ``streaming_url`` so the
+    host:port has a single source of truth (no duplicated port literal).
+    """
+    if ayoai_session is None:
+        return None
+    seed_endpoint = (
+        ayoai_session.streaming_url.rsplit("/", 1)[0] + "/ArcEpisodeSeed"
+    )
+    return BitNetSeedProvider(seed_endpoint, api_key)
 
 
 def main() -> None:
@@ -564,17 +587,15 @@ def main() -> None:
         # ayoai_session is set here (or the play already aborted); the
         # None-guard keeps the adapter on its default oracle as a defensive
         # fallback rather than crashing on an unexpected None.
-        v2_seed_provider: SeedProvider | None = None
-        if ayoai_session is not None:
-            seed_endpoint = (
-                ayoai_session.streaming_url.rsplit("/", 1)[0] + "/ArcEpisodeSeed"
-            )
-            v2_seed_provider = BitNetSeedProvider(
-                seed_endpoint,
-                os.getenv("AYOAI_API_KEY", ""),
-            )
+        v2_seed_provider: SeedProvider | None = build_v2_seed_provider(
+            ayoai_session, os.getenv("AYOAI_API_KEY", "")
+        )
+        if v2_seed_provider is not None:
+            # Endpoint host:port is in the session-open log line above; this
+            # confirms the live seed source replaced the in-process oracle.
             logger.info(
-                f"Solver-v2 seed source: BitNetSeedProvider -> {seed_endpoint}"
+                "Solver-v2 seed source: live BitNetSeedProvider "
+                "(POST /ArcEpisodeSeed)"
             )
         streaming_client = SolverV2StreamingAdapter(
             ayo_server_key=card_id,
