@@ -24,6 +24,7 @@ from ayoai_streaming_client import (
 )
 from recorder import Recorder
 from solver_v0.streaming_adapter import SolverV0StreamingAdapter
+from solver_v2.seed_provider import BitNetSeedProvider, SeedProvider
 from solver_v2.streaming_adapter import SolverV2StreamingAdapter
 from structs import FrameData, GameAction, GameState, Scorecard
 
@@ -456,19 +457,47 @@ def main() -> None:
             "AyoAI session-open, no --mock-url required)"
         )
     elif args.use_solver_v2:
-        # g-315-134-a: --use-solver-v2 routes decisions through
-        # SolverV2StreamingAdapter (episode-seeded local pipeline), bypassing
-        # both the live AyoAI session-open and the mock-server HTTP loopback.
-        # The adapter preserves the AyoaiStreamingClient public surface
-        # (ADD/UPDATE/DELETE shape) so framework-routing per echo/self.md
-        # Constraint 2 holds even with a local decision source. ayoai_session
-        # stays None -> warm_dns is skipped.
-        logger.info(
-            "Solver-v2 mode: routing decisions through local "
-            "SolverV2StreamingAdapter (--use-solver-v2 set; episode-seeded, "
-            "deterministic-oracle seed stub; no live AyoAI session-open, no "
-            "--mock-url required)"
-        )
+        # g-315-154: --use-solver-v2 now FRAMEWORK-ROUTES through a LIVE AyoAI
+        # session (was offline oracle-only under g-315-134-a). Opening the
+        # Env-Server session lets the per-episode BitNet seed (alpha's
+        # /ArcEpisodeSeed, g-315-156) replace the in-process oracle —
+        # ayoai_session.ayoai_hostname builds the seed endpoint at the
+        # adapter-construction site below. Per-tick decisions still run locally
+        # in the v2 pipeline (tiny-compute-safe, echo/self.md Constraint 1), but
+        # the seed now flows through the AyoAI server (Constraint 2). On
+        # session-open failure echo MUST abort the play, never fall back to a
+        # non-AyoAI path (mission-fail) — identical to the live branch below.
+        try:
+            logger.info(
+                f"Opening AyoAI session for solver-v2 (ayoServerKey={card_id}, "
+                f"ayoEnvironmentKey={env_key})..."
+            )
+            ayoai_session = open_ayoai_session(card_id, env_key=env_key)
+            logger.info(
+                f"AyoAI session OPEN (solver-v2): "
+                f"hostname={ayoai_session.ayoai_hostname} "
+                f"streaming_url={ayoai_session.streaming_url} "
+                f"attempts={ayoai_session.attempts} "
+                f"elapsed_s={ayoai_session.elapsed_s}"
+            )
+            streaming_url = ayoai_session.streaming_url
+        except AyoaiSessionError as e:
+            logger.error(
+                f"AyoAI session OPEN FAILED (solver-v2) — aborting play: {e}"
+            )
+            # Close the scorecard so ARC accounting stays clean (mirrors the
+            # live branch's abort).
+            try:
+                session.post(
+                    f"{ROOT_URL}/api/scorecard/close",
+                    json={"card_id": card_id},
+                    timeout=10,
+                )
+            except requests.exceptions.RequestException:
+                logger.exception(
+                    "scorecard close also failed after session-open abort"
+                )
+            return
     elif args.mock_url:
         logger.info(
             f"Mock mode: routing decisions through {args.mock_url} "
@@ -526,9 +555,31 @@ def main() -> None:
             arc_game_id=args.game,
         )
     elif args.use_solver_v2:
+        # g-315-154: inject the live BitNet seed provider built from the AyoAI
+        # session opened above. The seed endpoint shares the streaming host:port
+        # (path /ArcEpisodeSeed, alpha's g-315-156 contract); derive it from
+        # ayoai_session.streaming_url so the host:port has a single source of
+        # truth (no duplicated port literal). AYOAI_API_KEY authenticates it
+        # (same AYOAI-API-KEY header as the streaming UPDATE). Site 1 guarantees
+        # ayoai_session is set here (or the play already aborted); the
+        # None-guard keeps the adapter on its default oracle as a defensive
+        # fallback rather than crashing on an unexpected None.
+        v2_seed_provider: SeedProvider | None = None
+        if ayoai_session is not None:
+            seed_endpoint = (
+                ayoai_session.streaming_url.rsplit("/", 1)[0] + "/ArcEpisodeSeed"
+            )
+            v2_seed_provider = BitNetSeedProvider(
+                seed_endpoint,
+                os.getenv("AYOAI_API_KEY", ""),
+            )
+            logger.info(
+                f"Solver-v2 seed source: BitNetSeedProvider -> {seed_endpoint}"
+            )
         streaming_client = SolverV2StreamingAdapter(
             ayo_server_key=card_id,
             arc_game_id=args.game,
+            seed_provider=v2_seed_provider,
         )
     else:
         streaming_client = AyoaiStreamingClient(

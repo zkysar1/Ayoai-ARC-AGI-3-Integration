@@ -30,13 +30,16 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import Counter
-from typing import Optional
+from typing import Any, Optional
+
+import requests
 
 from solver_v0.perception import FrameFeatures, extract
 from solver_v2.episode import (
     OBJECTIVE_REACH_CELL,
     OBJECTIVE_TOGGLE_AT_CELL,
     OBJECTIVE_UNKNOWN,
+    OBJECTIVES,
     SEED_TRUST_MIN,
     EpisodeContext,
     EpisodePrior,
@@ -65,6 +68,42 @@ _DEFAULT_ACTION6_TARGET: tuple[int, int] = (0, 0)
 # honest single-frame equivalent. ACTION7 (a non-directional simple action) may
 # co-exist on a click-class and does not disqualify it.
 _DIRECTIONAL_ACTION_IDS: frozenset[int] = frozenset({1, 2, 3, 4, 5})
+
+
+def _derive_action_plan(
+    available_actions: "tuple[int, ...] | list[int] | set[int]",
+) -> tuple[tuple[int, ...], Optional[tuple[int, int]]]:
+    """Mechanically derive ``(action_plan, action6_target)`` from the available
+    actions — the deterministic part of an EpisodePrior shared by EVERY
+    SeedProvider (the oracle stub AND the live BitNet provider).
+
+    Construction (fully deterministic, no I/O):
+      1. Keep simple strategic actions (exclude RESET=0 and ACTION6=6), sorted
+         ascending — a stable probe order.
+      2. Append ACTION6 last when available (the complex/spatial action runs
+         after the simple probes).
+      3. If nothing strategic is available, fall back to the available ids minus
+         RESET (sorted); if even that is empty, fall back to ``[RESET]`` so the
+         executor always has a legal pick.
+    ``action6_target`` is the fixed default corner ``(0, 0)`` when ACTION6 is
+    available, else None.
+
+    Single source of truth (DRY): the oracle and the BitNet provider derive the
+    SAME plan from the SAME available actions, so the two providers can never
+    drift on the mechanical part — only the SEMANTIC seed fields (goal_cell,
+    objective, confidence) differ between them. The server's /ArcEpisodeSeed
+    response carries ONLY the semantic seed, not a plan, so the BitNet provider
+    derives the plan locally exactly as the oracle does.
+    """
+    avail = set(available_actions)
+    simple = sorted(a for a in avail if a != _RESET_ID and a != _ACTION6_ID)
+    plan: list[int] = list(simple)
+    if _ACTION6_ID in avail:
+        plan.append(_ACTION6_ID)
+    if not plan:
+        plan = sorted(a for a in avail if a != _RESET_ID) or [_RESET_ID]
+    action6_target = _DEFAULT_ACTION6_TARGET if _ACTION6_ID in avail else None
+    return tuple(plan), action6_target
 
 
 def _most_compact(
@@ -234,20 +273,11 @@ class DeterministicOracleSeedProvider(SeedProvider):
     def seed(self, context: EpisodeContext) -> EpisodePrior:
         avail = set(context.available_actions)
 
-        simple = sorted(
-            a for a in avail if a != _RESET_ID and a != _ACTION6_ID
-        )
-        plan: list[int] = list(simple)
-        if _ACTION6_ID in avail:
-            plan.append(_ACTION6_ID)
-        if not plan:
-            # No strategic action available — degrade to any non-RESET id, or
-            # RESET as a last resort so the executor always has a legal pick.
-            plan = sorted(a for a in avail if a != _RESET_ID) or [_RESET_ID]
-
-        action6_target = (
-            _DEFAULT_ACTION6_TARGET if _ACTION6_ID in avail else None
-        )
+        # Mechanical plan, shared with BitNetSeedProvider via
+        # _derive_action_plan so the two providers can never drift on the
+        # deterministic part (only the semantic seed fields differ). `avail`
+        # is still needed below for the goal-cell labelling class detection.
+        plan, action6_target = _derive_action_plan(context.available_actions)
 
         # Goal-cell labelling: pick the steering objective from the opening
         # frame's action structure, then derive the salient TARGET cell once.
@@ -308,7 +338,7 @@ class DeterministicOracleSeedProvider(SeedProvider):
         return EpisodePrior(
             episode_id=context.episode_id,
             seed_source=self.SEED_SOURCE,
-            action_plan=tuple(plan),
+            action_plan=plan,
             action6_target=action6_target,
             rationale=(
                 f"oracle stub plan for episode {context.episode_id} "
@@ -318,5 +348,207 @@ class DeterministicOracleSeedProvider(SeedProvider):
             goal_cell=goal_cell,
             goal_value=goal_value,
             objective=objective,
+            confidence=confidence,
+        )
+
+
+# Default per-episode seed timeout (seconds). Generous because the server-side
+# BitNet pass is ONCE PER EPISODE (not per tick — guard-629), so a few seconds
+# of boundary latency is acceptable; a slow/unreachable server degrades to v1
+# rather than blocking the play.
+_DEFAULT_SEED_TIMEOUT_S: float = 30.0
+
+
+def _parse_cell(raw: Any) -> Optional[tuple[int, int]]:
+    """Parse a server ``{"r": int, "c": int}`` cell into a ``(row, col)`` tuple.
+
+    Returns None when the value is absent or malformed (not a dict, missing
+    keys, or non-int coordinates). Degrade-safe — NEVER raises; a malformed cell
+    simply becomes None, which (for goal_cell) makes is_trusted() False and the
+    executor degrades to v1 candidate-cycling.
+    """
+    if not isinstance(raw, dict):
+        return None
+    r = raw.get("r")
+    c = raw.get("c")
+    if isinstance(r, int) and isinstance(c, int):
+        return (r, c)
+    return None
+
+
+class BitNetSeedProvider(SeedProvider):
+    """Live per-episode seed from the AyoAI Env-Server's co-resident BitNet.
+
+    g-315-134-d / g-315-154 — the real v2 brain that replaces the offline oracle
+    stub. At each episode boundary it POSTs the opening frame to alpha's
+    ``/ArcEpisodeSeed`` endpoint (g-315-156, same host:port as the streaming
+    contract) and maps the server's SEMANTIC response (goal_cell, goal_value,
+    objective, cursor_hint, confidence, rationale) onto the SAME EpisodePrior
+    shape the oracle produces. The mechanical action_plan / action6_target are
+    derived LOCALLY via the shared ``_derive_action_plan`` (the server returns
+    only the semantic seed, not a plan), so the two providers never drift on the
+    deterministic part.
+
+    Self constraint gates:
+      1. Tiny-compute-safe: the BitNet pass is SERVER-side and once-per-episode;
+         the client per-tick path stays deterministic math (no LLM in the hot
+         loop — guard-629).
+      2. Framework-routed: the seed flows through the AyoAI Environment Server
+         (the streaming-contract surface), not a side channel.
+      3. Generalization-preserving: the request carries NO game id (anti-
+         memorization — the server labels from the frame alone).
+
+    Degrade-safe (the strict-superset guarantee): ANY failure — connection
+    error, timeout, non-2xx, malformed JSON, or invalid/missing fields — yields
+    a VALID EpisodePrior carrying the mechanical action_plan but
+    objective=unknown / confidence=0.0 / goal_cell=None, so is_trusted() is False
+    and the executor degrades to v1 candidate-cycling. seed() NEVER raises: the
+    adapter wraps a raise into a fatal AyoaiStreamingError that aborts the whole
+    play (streaming_adapter.py choose_action), so a degraded seed must keep the
+    game running on the v1 baseline instead. guard-660: a green offline unit
+    test of the degrade path proves the WIRE, never a live score — only a live
+    recording with score > 0 does that (g-315-154).
+
+    A ``session`` may be injected for connection reuse / test stubbing, mirroring
+    AyoaiStreamingClient's constructor (so unit tests exercise the mapping +
+    degrade paths with a fake session, no real network).
+    """
+
+    SEED_SOURCE = "bitnet"
+
+    def __init__(
+        self,
+        endpoint_url: str,
+        api_key: str = "",
+        *,
+        timeout_s: float = _DEFAULT_SEED_TIMEOUT_S,
+        session: Any = None,
+    ) -> None:
+        self._endpoint_url = endpoint_url
+        self._api_key = api_key
+        self._timeout_s = timeout_s
+        self._session = session if session is not None else requests.Session()
+
+    def _build_headers(self) -> dict[str, str]:
+        # Mirrors AyoaiStreamingClient._build_headers (same auth + content
+        # negotiation as the streaming UPDATE call — cross-call parity).
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        if self._api_key:
+            headers["AYOAI-API-KEY"] = self._api_key
+        return headers
+
+    def seed(self, context: EpisodeContext) -> EpisodePrior:
+        # Mechanical plan first: it is BOTH the live plan (the server returns no
+        # plan) AND the degrade-safe fallback when the request fails.
+        plan, action6_target = _derive_action_plan(context.available_actions)
+
+        frame = context.frame
+        # Anti-memorization (Constraint 3): send the frame value-map + available
+        # actions + score ONLY — never the game id. The server labels from the
+        # frame alone.
+        request_body: dict[str, Any] = {
+            "frame": frame.frame if frame is not None else [],
+            "available_actions": list(context.available_actions),
+            "score": (
+                frame.score
+                if frame is not None and frame.score is not None
+                else 0
+            ),
+        }
+
+        try:
+            resp = self._session.post(
+                self._endpoint_url,
+                headers=self._build_headers(),
+                json=request_body,
+                timeout=self._timeout_s,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:  # noqa: BLE001 — degrade-safe: NEVER raise.
+            return self._degraded_prior(
+                context, plan, action6_target, reason=f"seed request failed: {e!r}"
+            )
+
+        return self._prior_from_response(context, plan, action6_target, data)
+
+    def _degraded_prior(
+        self,
+        context: EpisodeContext,
+        plan: tuple[int, ...],
+        action6_target: Optional[tuple[int, int]],
+        *,
+        reason: str,
+    ) -> EpisodePrior:
+        """A valid EpisodePrior that carries the mechanical plan but is NOT
+        trusted (objective unknown, confidence 0.0, no goal_cell) → v1 fallback.
+        seed_source stays "bitnet" so provenance records that the BitNet provider
+        was used even when it degraded (accurate for live diagnosis)."""
+        return EpisodePrior(
+            episode_id=context.episode_id,
+            seed_source=self.SEED_SOURCE,
+            action_plan=plan,
+            action6_target=action6_target,
+            rationale=f"bitnet seed degraded ({reason[:160]}) — v1 fallback",
+            goal_cell=None,
+            goal_value=None,
+            objective=OBJECTIVE_UNKNOWN,
+            cursor_hint=None,
+            confidence=0.0,
+        )
+
+    def _prior_from_response(
+        self,
+        context: EpisodeContext,
+        plan: tuple[int, ...],
+        action6_target: Optional[tuple[int, int]],
+        data: Any,
+    ) -> EpisodePrior:
+        """Map a parsed ``/ArcEpisodeSeed`` response onto an EpisodePrior.
+
+        Every field is parsed defensively — an invalid or missing field degrades
+        THAT field to its safe default (never raises). An unknown objective, an
+        absent goal_cell, or a sub-threshold confidence each make is_trusted()
+        False, so a partial/low-confidence server seed correctly degrades to v1
+        without special-casing."""
+        if not isinstance(data, dict):
+            return self._degraded_prior(
+                context, plan, action6_target, reason="response not a JSON object"
+            )
+
+        goal_cell = _parse_cell(data.get("goal_cell"))
+        cursor_hint = _parse_cell(data.get("cursor_hint"))
+
+        objective = data.get("objective")
+        if objective not in OBJECTIVES:
+            objective = OBJECTIVE_UNKNOWN
+
+        try:
+            confidence = float(data.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        confidence = max(0.0, min(1.0, confidence))  # clamp to [0, 1]
+
+        goal_value = data.get("goal_value")
+        if not isinstance(goal_value, int) or isinstance(goal_value, bool):
+            goal_value = None
+
+        rationale = data.get("rationale")
+        if not isinstance(rationale, str):
+            rationale = ""
+
+        return EpisodePrior(
+            episode_id=context.episode_id,
+            seed_source=self.SEED_SOURCE,
+            action_plan=plan,
+            action6_target=action6_target,
+            rationale=rationale[:200],  # server contract: <= 200 chars
+            goal_cell=goal_cell,
+            goal_value=goal_value,
+            objective=objective,
+            cursor_hint=cursor_hint,
             confidence=confidence,
         )
