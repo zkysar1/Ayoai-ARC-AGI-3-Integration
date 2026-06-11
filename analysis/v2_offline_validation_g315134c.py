@@ -16,6 +16,24 @@ design/v2-llm-episode-seed.md Section 7. Covers the offline-computable subset:
   V4  anti-memorization      -- the SAME machinery on a non-ls20 env-class does
                                 not collapse (oracle + calibration still produce
                                 sensible, non-degenerate output).
+  V6  production routing E2E -- (g-315-149) drives recorded ls20 episodes through
+                                the PRODUCTION SolverV2StreamingAdapter.choose_action()
+                                so the per-episode routing (g-315-147) + the
+                                CalibrationProbe startup (g-315-148) run end-to-end
+                                exactly as in a live tick: a REACH_CELL seed routes
+                                to HandBuiltPolicy, the probe calibrates over the
+                                first <= budget ticks, policy.axis_map is set, and
+                                directed steering fires. A forced REACH_CELL seed
+                                (goal_cell from the V1 churn oracle) GUARANTEES the
+                                movement route is exercised regardless of whether the
+                                production single-frame seed salience fires on a given
+                                zero-score recording; a second pass reports what the
+                                REAL production DeterministicOracleSeedProvider routes
+                                these recordings to (production-faithful observation).
+                                Unlike V1/V2/V4 (which call perception/policy
+                                directly), V6 reconstructs FrameData and exercises the
+                                whole adapter -- the closest offline analog of a live
+                                decision loop.
 
 V3 (live score, the litmus) and V5 (envelope) need a live BitNet seed + a live
 play; they are OUT of scope here (g-315-134-d / a live goal).
@@ -53,7 +71,10 @@ from solver_v0 import perception
 from solver_v0.policy import HandBuiltPolicy, detect_cursor_centroid
 from solver_v0.streaming_adapter import DEFAULT_HISTORY_DEPTH
 from solver_v2.calibration import calibrate_from_recording, move_actions_from
-from solver_v2.episode import OBJECTIVE_REACH_CELL, EpisodePrior
+from solver_v2.episode import OBJECTIVE_REACH_CELL, EpisodeContext, EpisodePrior
+from solver_v2.seed_provider import SeedProvider
+from solver_v2.streaming_adapter import SolverV2StreamingAdapter
+from structs import FrameData, GameAction, GameState
 
 RECORDINGS_DIR = "recordings"
 LS20_GAME = "ls20-9607627b"
@@ -375,6 +396,190 @@ def find_unseen_class_recordings() -> dict[str, str]:
     return {cls: pf for cls, (pf, _n) in best.items()}
 
 
+# ── V6: production per-episode routing + calibration startup (g-315-149) ──────
+class _ForcedReachCellSeedProvider(SeedProvider):
+    """Offline-validation seed provider: forces a TRUSTED REACH_CELL prior with a
+    precomputed goal_cell so the PRODUCTION per-episode routing (g-315-147) and
+    CalibrationProbe startup (g-315-148) are exercised end-to-end and
+    DETERMINISTICALLY -- independent of whether the production single-frame
+    DeterministicOracleSeedProvider salience happens to fire on a given
+    zero-score recording. The goal_cell comes from this harness's own churn-based
+    geometry oracle (oracle_label_goal_cell), a deterministic perception stand-in
+    for the live BitNet seed.
+
+    guard-660: this proves the WIRE (the real adapter routes + calibrates +
+    steers end to end), NOT a live score. A geometry oracle cannot memorize;
+    semantic-label accuracy + live reward are V3 (g-315-98 + g-315-134-d).
+    """
+
+    SEED_SOURCE = "offline-forced-reach-cell"
+
+    def __init__(self, goal_cell: tuple[int, int]) -> None:
+        self._goal_cell = goal_cell
+
+    def seed(self, context: EpisodeContext) -> EpisodePrior:
+        return EpisodePrior(
+            episode_id=context.episode_id,
+            seed_source=self.SEED_SOURCE,
+            action_plan=tuple(move_actions_from(list(context.available_actions))),
+            goal_cell=self._goal_cell,
+            objective=OBJECTIVE_REACH_CELL,
+            confidence=ORACLE_CONFIDENCE,
+        )
+
+
+def _framedata_from_record(rec: dict[str, Any]) -> Optional[FrameData]:
+    """Reconstruct a FrameData from a recording `data` dict so recorded frames can
+    be driven through the PRODUCTION SolverV2StreamingAdapter.choose_action(),
+    which -- unlike the V1/V2/V4 lanes that call perception/policy directly --
+    takes a typed FrameData. available_actions are recorded as plain ints
+    (e.g. [1,2,3,4]) -> GameAction enums; state is honored when present+valid,
+    else NOT_FINISHED (a same-guid episode's frames are active play). Returns None
+    for a record carrying no frame."""
+    frame = rec.get("frame")
+    if not frame:
+        return None
+    avail: list[GameAction] = []
+    for a in rec.get("available_actions") or []:
+        try:
+            avail.append(GameAction.from_id(int(a)))
+        except (ValueError, TypeError):
+            continue
+    state_raw = rec.get("state")
+    try:
+        state = GameState(state_raw) if state_raw else GameState.NOT_FINISHED
+    except ValueError:
+        state = GameState.NOT_FINISHED
+    score = rec.get("score")
+    score = score if isinstance(score, int) and 0 <= score <= 254 else 0
+    return FrameData(
+        frame=frame,
+        state=state,
+        score=score,
+        guid=rec.get("guid"),
+        available_actions=avail,
+    )
+
+
+def _drive_adapter(
+    records: list[dict[str, Any]],
+    *,
+    game_class: Optional[str],
+    seed_provider: Optional[SeedProvider],
+) -> dict[str, Any]:
+    """Drive one recorded episode through a PRODUCTION SolverV2StreamingAdapter
+    and collect the per-tick executor-provenance sequence + the finalized
+    axis_map + steering actions. seed_provider=None uses the adapter's default
+    (DeterministicOracleSeedProvider) -- the production-faithful path; a
+    _ForcedReachCellSeedProvider guarantees the movement route. Pure offline:
+    no HTTP/DNS/LLM (the adapter does no network I/O)."""
+    arc_game_id = (
+        LS20_GAME
+        if game_class == "ls20"
+        else f"{game_class}-offline"
+        if game_class
+        else ""
+    )
+    adapter = (
+        SolverV2StreamingAdapter(arc_game_id=arc_game_id, seed_provider=seed_provider)
+        if seed_provider is not None
+        else SolverV2StreamingAdapter(arc_game_id=arc_game_id)
+    )
+    executor_seq: list[Optional[str]] = []
+    expected_budget: Optional[int] = None
+    axis_map_after_calib: Optional[dict[int, tuple[float, float, int, bool]]] = None
+    steering_actions: list[int] = []
+    routed_to_policy = False
+    for rec in records:
+        fd = _framedata_from_record(rec)
+        if fd is None:
+            continue
+        decision = adapter.choose_action(fd)
+        ex = (decision.provenance or {}).get("executor")
+        executor_seq.append(ex)
+        if adapter.use_policy:
+            routed_to_policy = True
+        # Capture the probe budget on the first calibrating tick (the probe is
+        # set to None once calibration finalizes, so grab it while it exists).
+        if (
+            expected_budget is None
+            and adapter.calibrating
+            and adapter.probe is not None
+        ):
+            expected_budget = adapter.probe.budget
+        if ex == "HandBuiltPolicy":
+            # The first HandBuiltPolicy tick is the calibration->steer transition:
+            # policy.axis_map was just set from the drained probe.
+            if axis_map_after_calib is None and adapter.policy is not None:
+                axis_map_after_calib = adapter.policy.axis_map
+            steering_actions.append(int(decision.action.value))
+    calib_ticks = sum(1 for e in executor_seq if e == "CalibrationProbe")
+    steer_ticks = sum(1 for e in executor_seq if e == "HandBuiltPolicy")
+    det_ticks = sum(1 for e in executor_seq if e == "DeterministicExecutor")
+    reliable_after = (
+        sorted(a for a, v in axis_map_after_calib.items() if v[3])
+        if axis_map_after_calib
+        else []
+    )
+    return {
+        "routed_to_policy": routed_to_policy,
+        "calibration_ticks": calib_ticks,
+        "expected_budget": expected_budget,
+        "calibration_full": expected_budget is not None
+        and calib_ticks == expected_budget,
+        "axis_map_set_after_calibration": axis_map_after_calib is not None,
+        "reliable_actions_after_calibration": reliable_after,
+        "steering_ticks": steer_ticks,
+        "deterministic_ticks": det_ticks,
+        "steering_actions_distinct": sorted(set(steering_actions)),
+        "executor_head": executor_seq[: (expected_budget or 8) + 3],
+    }
+
+
+def validate_production_routing(
+    guid: Any, records: list[dict[str, Any]], *, game_class: Optional[str]
+) -> dict[str, Any]:
+    """V6: prove the PRODUCTION per-episode routing (g-315-147) + CalibrationProbe
+    startup (g-315-148) WIRE end-to-end on ONE recorded movement episode.
+
+    Two adapter passes:
+      forced  -- a _ForcedReachCellSeedProvider (goal_cell from the V1 churn
+                 oracle) GUARANTEES the REACH_CELL movement route, so the
+                 CalibrationProbe* -> HandBuiltPolicy(axis_map set) -> steering
+                 sequence is exercised deterministically. The WIRE proof.
+      default -- the REAL production DeterministicOracleSeedProvider, reporting
+                 what it routes this recording to (production-faithful behaviour;
+                 single-frame salience may or may not fire on a zero-score run).
+
+    Offline caveat (guard-660, same as V1): the cursor follows the RECORDED
+    trajectory -- this proves the machinery routes + calibrates + WOULD steer,
+    not that the cursor reaches the cell live (that is V3)."""
+    label = oracle_label_goal_cell(records)
+    goal_cell = label["goal_cell"]
+    base = {"guid": str(guid)[:12] if guid else None, "n_frames": len(records)}
+    if goal_cell is None:
+        return {**base, "verdict": "no_target_detected", "goal_cell": None}
+    forced = _drive_adapter(
+        records,
+        game_class=game_class,
+        seed_provider=_ForcedReachCellSeedProvider(goal_cell),
+    )
+    default = _drive_adapter(records, game_class=game_class, seed_provider=None)
+    wire_ok = (
+        forced["routed_to_policy"]
+        and forced["calibration_ticks"] > 0
+        and forced["axis_map_set_after_calibration"]
+        and forced["steering_ticks"] > 0
+    )
+    return {
+        **base,
+        "goal_cell": goal_cell,
+        "forced": forced,
+        "default": default,
+        "verdict": "production_wire_ok" if wire_ok else "production_wire_incomplete",
+    }
+
+
 def main() -> int:
     print("=" * 78)
     print("g-315-134-c :: v2 OFFLINE validation (V1 seed-accuracy / V2 calibration / V4 anti-memorization)")
@@ -444,6 +649,36 @@ def main() -> int:
                   f"goal_cell={lbl['goal_cell']} (targets@label={lbl['n_targets_at_label']}) "
                   f"verdict={seed['verdict']}")
 
+    # ---- V6: production routing + calibration startup, end-to-end ----
+    print("\n=== V6 PRODUCTION ROUTING (g-315-147 per-episode + g-315-148 calibration) END-TO-END ===")
+    print("  drives recorded ls20 episodes through SolverV2StreamingAdapter.choose_action()")
+    print("  forced:  REACH_CELL seed (churn-oracle goal_cell) GUARANTEES the route (WIRE proof)")
+    print("  default: the REAL DeterministicOracleSeedProvider -- production-faithful observation")
+    v6_results: list[dict[str, Any]] = []
+    for f in ls20_files:
+        for guid, ep in split_episodes(load_records(f)):
+            if len(ep) < 3:
+                continue
+            v6_results.append(validate_production_routing(guid, ep, game_class="ls20"))
+    for r in v6_results:
+        if r["verdict"] == "no_target_detected":
+            print(f"\n  episode guid={r['guid']} frames={r['n_frames']}: "
+                  f"no (cursor,target) detected -> route not exercised")
+            continue
+        fc = r["forced"]
+        df = r["default"]
+        print(f"\n  episode guid={r['guid']} frames={r['n_frames']} goal_cell={r['goal_cell']}")
+        print(f"    [forced]  routed={fc['routed_to_policy']} "
+              f"calib={fc['calibration_ticks']}/{fc['expected_budget']} (full={fc['calibration_full']}) "
+              f"axis_map_set={fc['axis_map_set_after_calibration']} "
+              f"reliable={fc['reliable_actions_after_calibration']}")
+        print(f"              steering_ticks={fc['steering_ticks']} "
+              f"steer_actions={fc['steering_actions_distinct']} verdict={r['verdict']}")
+        print(f"              executor head: {fc['executor_head']}")
+        print(f"    [default] routed={df['routed_to_policy']} calib={df['calibration_ticks']} "
+              f"steer={df['steering_ticks']} det={df['deterministic_ticks']} "
+              f"(production seed {'DID' if df['routed_to_policy'] else 'did NOT'} route this recording to movement)")
+
     # ---- summary verdicts ----
     print("\n" + "=" * 78)
     print("SUMMARY (offline machinery verdicts -- live reward is V3, NOT measured here)")
@@ -475,6 +710,17 @@ def main() -> int:
     print("  calibration + rule 4.6) runs on the unseen class without collapse iff the")
     print("  unseen-class counts above are non-zero where the ls20 counts are. A geometry")
     print("  oracle cannot memorize; learned-seed memorization is a V3-live question.")
+
+    v6_real = [r for r in v6_results if r["verdict"] != "no_target_detected"]
+    if v6_real:
+        wire_ok = sum(1 for r in v6_results if r["verdict"] == "production_wire_ok")
+        default_routed = sum(1 for r in v6_real if r["default"]["routed_to_policy"])
+        print(f"\n  V6 production routing (forced WIRE proof): {wire_ok}/{len(v6_real)} "
+              f"episodes production_wire_ok")
+        print("    (REACH_CELL seed -> CalibrationProbe x budget -> axis_map set -> steering)")
+        print(f"  V6 production routing (default seed, faithful): {default_routed}/{len(v6_real)} "
+              f"episodes routed to movement via the REAL DeterministicOracleSeedProvider")
+        print("  guard-660: WIRE proven offline; live reward (does steering raise the score) is V3.")
     return 0
 
 
