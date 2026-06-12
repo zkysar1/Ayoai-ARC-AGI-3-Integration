@@ -66,6 +66,7 @@ no live env dependency.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -123,6 +124,17 @@ DIRECTED_MIN_IMPROVEMENT = 1.0
 #   wall ambiguity 7.10 documents: the true goal is whichever reached candidate
 #   makes score move). Per-episode bookkeeping, reset when all are reached.
 TARGET_REACHED_DIST = 1.0
+# PLANNER_MAX_NODES (g-315-171): per-tick node bound for the v2 seeded-path
+#   optimistic-BFS planner (rule 4.6 obstacle-aware steering). The planner
+#   assumes every un-tried stride is open (free-space assumption) until proven
+#   blocked, so a goal walled off in the KNOWN graph would expand the search
+#   outward without terminating. This cap keeps the search in a tiny-compute
+#   envelope: the real ls20 stride-lattice is ~13x13 = ~169 nodes (64-cell
+#   board / ~5-cell stride), so this never trips on a reachable goal — it only
+#   bounds the walled-off degenerate case to O(cap), where the planner returns
+#   None and the caller falls through to re-plan next tick. A compute bound,
+#   NOT a board-size constant (no env magnitude leaks).
+PLANNER_MAX_NODES = 4096
 
 
 def _churn_bucket(churn: float, k: int = CHURN_BUCKET_COUNT) -> int:
@@ -275,6 +287,24 @@ class HandBuiltPolicy:
     #     decoupled from the calibration module.
     seed_target: Optional[tuple[int, int]] = None
     axis_map: Optional[dict[int, tuple[float, float, int, bool]]] = None
+    # g-315-171: v2 seeded-path obstacle-aware planner state. BOTH are touched
+    # ONLY when seed_target is set (the v2 trusted path), so v1 (seed_target
+    # None) is byte-identical — the strict-superset guarantee extends to the
+    # planner. Per-episode runtime bookkeeping, reset with a fresh policy per
+    # episode exactly like reached_targets / _episode_tried_cells (the
+    # generalization guard, Self gate 3 — NO cross-episode coordinate learned).
+    #   _lattice_origin: the FIRST observed cursor centroid this episode. Every
+    #     observed cursor lies on origin + integer*stride, so this anchors the
+    #     discrete movement-lattice the planner searches. DISCOVERED online,
+    #     never hardcoded.
+    #   blocked_edges: set of (lattice_node, action) pairs where a directional
+    #     stride produced a ZERO cursor move (a wall). The planner excludes them
+    #     so the cursor routes AROUND the wall — the structural fix for the
+    #     greedy rule's inability to take a distance-increasing detour
+    #     (g-315-170 b2-ii). lattice_node is a RELATIVE index from
+    #     _lattice_origin (reset per episode), NOT an absolute coordinate.
+    _lattice_origin: Optional[tuple] = field(default=None, repr=False)
+    blocked_edges: set = field(default_factory=set)
 
     def observe(
         self,
@@ -975,6 +1005,13 @@ class HandBuiltPolicy:
         if cursor is None:
             self._prev_cursor_centroid = None
             return None
+        # g-315-171 (v2 seeded path only): anchor the per-episode lattice on the
+        # FIRST observed cursor. Every observed cursor lies on origin +
+        # integer*stride, so any observed position serves as origin; the first
+        # one is set once and reused. seed_target None in v1 -> never set ->
+        # planner never runs -> byte-identical.
+        if seed_target is not None and self._lattice_origin is None:
+            self._lattice_origin = cursor
         # Online action->displacement update from the previous tick's move.
         if self._prev_cursor_centroid is not None and self.history:
             last_a = self.history[-1].action
@@ -988,6 +1025,15 @@ class HandBuiltPolicy:
                     acc[0] += dr
                     acc[1] += dc
                     acc[2] += 1
+            elif seed_target is not None:
+                # g-315-171 (v2 seeded path only): a ZERO move from the issued
+                # directional stride is a BLOCKED lattice edge (a wall). Record
+                # (prev_lattice_node, last_action) so the planner routes AROUND
+                # it. v1 (seed_target None) skips this branch -> the zero-move
+                # stays a pure no-op, byte-identical to pre-g-315-171.
+                self._record_blocked_edge(
+                    self._prev_cursor_centroid, last_a, axis_map
+                )
         self._prev_cursor_centroid = cursor
         # v2 seeded path (g-315-134-b): a TRUSTED seed labels the ONE goal cell,
         # so the detected (often over-identified) target set is replaced with a
@@ -1007,6 +1053,22 @@ class HandBuiltPolicy:
         if not live:
             self.reached_targets.clear()
             live = targets
+        # g-315-171 (v2 seeded path): replace the greedy 1-step rule below with an
+        # optimistic-BFS planner over the online-discovered stride-lattice with
+        # blocked-edge memory. The greedy loop requires every step to REDUCE
+        # cursor->goal distance, so it structurally cannot take the distance-
+        # increasing detour needed to round a wall (g-315-170/171 Step A: greedy
+        # stalled at min dist 9.5 on the ls20 litmus, never reaching the goal).
+        # The planner routes around blocked edges to the lattice cell nearest the
+        # (possibly off-lattice) goal_cell. seed_target None in v1 -> the greedy
+        # loop runs byte-identical (strict superset). A None from the planner
+        # (uncalibrated lattice / already at the goal node / planned step rate-
+        # limited) falls through to the greedy loop, which degrades to None too
+        # on a genuine stall.
+        if seed_target is not None:
+            planned = self._seeded_plan_action(cursor, live, candidates, axis_map)
+            if planned is not None:
+                return planned
         cur_dist = min(abs(cursor[0] - t[0]) + abs(cursor[1] - t[1]) for t in live)
         # Prefer the candidate whose mean learned displacement most reduces the
         # predicted distance. Unknown-displacement candidates are skipped here
@@ -1027,6 +1089,151 @@ class HandBuiltPolicy:
                 best_improve = improve
                 best_a = a
         return best_a
+
+    def _lattice_step(
+        self, axis_map: Optional[dict[int, tuple[float, float, int, bool]]]
+    ) -> tuple[Optional[float], Optional[float], dict[int, tuple[int, int]]]:
+        """Per-episode lattice geometry from the calibrated axis_map (g-315-171).
+
+        Returns ``(stride_row, stride_col, action_delta)`` where ``action_delta``
+        maps a reliably-calibrated action_id to its integer ``(di, dj)`` lattice-
+        index step, or ``(None, None, {})`` when no axis is calibrated.
+
+        The stride MAGNITUDE is discovered from the episode-start micro-probe
+        (axis_map) via the SAME reliable-only basis the greedy rule reads
+        (``_action_mean_displacement`` — single source of truth), never
+        hardcoded. On ls20 the cursor moves in fixed strides (action1 up-N,
+        action2 down-N, action3 left-N, action4 right-N), so the max |mean
+        displacement| over reliable actions IS the per-axis stride; quantizing
+        the continuous cursor centroid by it collapses it onto the discrete
+        movement lattice the planner searches. Value-agnostic — no coordinate or
+        board magnitude leaks (only relative displacement ratios)."""
+        steps: dict[int, tuple[float, float]] = {}
+        for a in sorted(axis_map or {}):
+            disp = self._action_mean_displacement(a, axis_map)
+            if disp is not None:
+                steps[a] = disp
+        if not steps:
+            return None, None, {}
+        stride_row = max((abs(dr) for dr, _ in steps.values()), default=0.0)
+        stride_col = max((abs(dc) for _, dc in steps.values()), default=0.0)
+        action_delta: dict[int, tuple[int, int]] = {}
+        for a, (dr, dc) in steps.items():
+            di = round(dr / stride_row) if stride_row > 0 else 0
+            dj = round(dc / stride_col) if stride_col > 0 else 0
+            if di != 0 or dj != 0:
+                action_delta[a] = (di, dj)
+        return stride_row, stride_col, action_delta
+
+    def _to_node(
+        self, pos: tuple[float, float], stride_row: float, stride_col: float
+    ) -> tuple[int, int]:
+        """Quantize a continuous cursor centroid onto the per-episode lattice
+        index ``(i, j)`` relative to ``_lattice_origin`` (g-315-171). A RELATIVE
+        index reset each episode (fresh policy per episode), NOT an absolute
+        coordinate — the same per-episode-bookkeeping discipline as
+        ``reached_targets`` (generalization guard, Self gate 3)."""
+        o_row, o_col = self._lattice_origin
+        i = round((pos[0] - o_row) / stride_row) if stride_row > 0 else 0
+        j = round((pos[1] - o_col) / stride_col) if stride_col > 0 else 0
+        return i, j
+
+    def _record_blocked_edge(
+        self,
+        prev_cursor: tuple[float, float],
+        action: int,
+        axis_map: Optional[dict[int, tuple[float, float, int, bool]]],
+    ) -> None:
+        """Mark ``(prev_lattice_node, action)`` blocked after a directional
+        stride produced a ZERO cursor move (a wall) on the v2 seeded path
+        (g-315-171). The planner excludes blocked edges so the cursor routes
+        AROUND the wall instead of hammering it (the greedy rule's structural
+        failure, g-315-170 b2-ii). Per-episode (reset with a fresh policy);
+        no-op when the lattice is uncalibrated or origin not yet anchored."""
+        stride_row, stride_col, _ = self._lattice_step(axis_map)
+        if stride_row is None or self._lattice_origin is None:
+            return
+        node = self._to_node(prev_cursor, stride_row, stride_col)
+        self.blocked_edges.add((node, action))
+
+    def _seeded_plan_action(
+        self,
+        cursor: tuple[float, float],
+        targets: List[tuple[int, int]],
+        candidates: List[int],
+        axis_map: Optional[dict[int, tuple[float, float, int, bool]]],
+    ) -> Optional[int]:
+        """Rule 4.6 v2 seeded planner (g-315-171): optimistic breadth-first
+        search over the online-discovered stride-lattice with blocked-edge
+        memory.
+
+        Returns the FIRST action of the shortest known-open path to the lattice
+        cell nearest the (possibly off-lattice) goal_cell, or None when: the
+        lattice is uncalibrated; the cursor already occupies that cell (as close
+        as fixed strides allow — the b2-iv off-lattice limit); the goal is
+        unreachable in the known-open graph within PLANNER_MAX_NODES; or the
+        planned first step is not currently allowed (rate/noop/sig filtered). In
+        every None case the caller falls through to the greedy loop (which
+        degrades to None too on a genuine stall).
+
+        Why BFS and not greedy: the greedy 1-step rule requires every move to
+        REDUCE cursor->goal distance, so it cannot take the distance-INCREASING
+        detour needed to round a wall (g-315-170/171 Step A: greedy stalled at
+        min dist 9.5). BFS over the lattice finds the shortest detour. The
+        free-space assumption (un-tried edges presumed open) keeps the search
+        COMPLETE on the finite board: blocked edges only accumulate, so repeated
+        re-planning converges on the open route or exhausts it. Tiny-compute:
+        the ls20 stride-lattice is ~13x13; PLANNER_MAX_NODES bounds the walled-
+        off case.
+
+        Generalization: the lattice origin+stride are DISCOVERED online (never
+        hardcoded); blocked_edges and lattice indices are per-episode runtime
+        bookkeeping reset with a fresh policy — no cross-episode coordinate is
+        learned (Self gate 3)."""
+        stride_row, stride_col, action_delta = self._lattice_step(axis_map)
+        if not action_delta or self._lattice_origin is None:
+            return None
+        start = self._to_node(cursor, stride_row, stride_col)
+        goal = self._to_node(targets[0], stride_row, stride_col)
+        if start == goal:
+            # At the lattice cell nearest the goal — fixed strides cannot land
+            # closer to an off-lattice goal_cell (b2-iv). Nothing to steer.
+            return None
+        # Optimistic BFS: every action_delta edge is open unless recorded
+        # blocked. Deterministic — actions expanded in sorted order; first
+        # discovery of a node wins (shortest path, lowest-id tiebreak).
+        frontier = deque([start])
+        came_from: dict[tuple, tuple] = {start: (None, None)}
+        found = False
+        while frontier:
+            node = frontier.popleft()
+            if node == goal:
+                found = True
+                break
+            if len(came_from) > PLANNER_MAX_NODES:
+                # Goal walled off in the known graph under the free-space
+                # assumption — bound the search and re-plan next tick.
+                return None
+            for a in sorted(action_delta):
+                if (node, a) in self.blocked_edges:
+                    continue
+                di, dj = action_delta[a]
+                nxt = (node[0] + di, node[1] + dj)
+                if nxt not in came_from:
+                    came_from[nxt] = (node, a)
+                    frontier.append(nxt)
+        if not found:
+            return None
+        # Backtrack goal -> start; keep the action issued FROM start.
+        node = goal
+        first_action: Optional[int] = None
+        while came_from[node][0] is not None:
+            prev, act = came_from[node]
+            first_action = act
+            node = prev
+        if first_action is not None and first_action in set(candidates):
+            return first_action
+        return None
 
     def _action4_at_quota(self) -> bool:
         """True iff ACTION4 was used at-or-above ACTION_RATE_LIMIT_MAX

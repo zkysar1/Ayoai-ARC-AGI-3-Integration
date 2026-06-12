@@ -1067,3 +1067,121 @@ def test_trusted_prior_drives_rule46_untrusted_degrades() -> None:
     )
     assert not untrusted.is_trusted()
     assert HandBuiltPolicy().choose(_nav_features()) == 3  # v1 default
+
+
+# ── Rule 4.6 v2 seeded PLANNER (g-315-171) ──────────────────────────────────
+# Obstacle-aware steering: an optimistic-BFS planner over the online-discovered
+# stride-lattice with blocked-edge memory REPLACES the greedy 1-step rule on the
+# v2 seeded path (seed_target + calibrated axis_map). The greedy rule structurally
+# cannot take the distance-INCREASING detour needed to round a wall (g-315-170/171
+# Step A: greedy stalled at min dist 9.5 on the ls20 litmus, never reaching the
+# goal). v1 (seed_target None) is byte-identical — the planner state is never
+# touched. Full 4-direction calibrated axis_map (action1 up / 2 down / 3 left /
+# 4 right, 5-cell strides) — the empirical ls20 cursor dynamics Step A measured.
+_AX4 = {
+    1: (-5.0, 0.0, 4, True),
+    2: (5.0, 0.0, 4, True),
+    3: (0.0, -5.0, 4, True),
+    4: (0.0, 5.0, 4, True),
+}
+
+
+def test_lattice_step_derives_stride_and_action_delta() -> None:
+    """The per-episode lattice geometry is DISCOVERED from the calibrated axis_map
+    (never hardcoded): the per-axis stride is the max |mean displacement| over
+    reliable actions, and each action maps to its integer (di, dj) lattice step."""
+    policy = HandBuiltPolicy()
+    stride_row, stride_col, action_delta = policy._lattice_step(_AX4)
+    assert stride_row == 5.0 and stride_col == 5.0
+    assert action_delta == {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
+    # Uncalibrated / all-unreliable axis_map -> no geometry (planner no-ops).
+    assert policy._lattice_step({4: (0.0, 5.0, 0, False)}) == (None, None, {})
+
+
+def test_seeded_planner_open_path_returns_straight_line_first_step() -> None:
+    """With no walls, the BFS shortest path IS the straight line, so the planner's
+    first step equals the greedy distance-reducer — the strict-superset property at
+    the planner level (open space: planner == greedy)."""
+    policy = HandBuiltPolicy()
+    policy._lattice_origin = (45.5, 21.0)
+    # cursor at origin node (0,0); goal four strides right -> node (0,4).
+    result = policy._seeded_plan_action(
+        (45.5, 21.0), [(45.5, 41.0)], [1, 2, 3, 4], _AX4
+    )
+    assert result == 4  # rightward stride, the straight-line first step
+
+
+def test_seeded_planner_routes_around_blocked_edge() -> None:
+    """THE b2-ii fix: with the direct rightward edge blocked, the planner returns a
+    distance-INCREASING vertical detour first step — exactly the move the greedy
+    rule (improve > MIN) could never pick. Proves planning depth, not greed."""
+    policy = HandBuiltPolicy()
+    policy._lattice_origin = (45.5, 21.0)
+    policy.blocked_edges.add(((0, 0), 4))  # rightward stride from start is a wall
+    result = policy._seeded_plan_action(
+        (45.5, 21.0), [(45.5, 41.0)], [1, 2, 3, 4], _AX4
+    )
+    # A real move that is NOT the blocked direct step — the cursor goes around.
+    assert result is not None and result != 4 and result in (1, 2, 3)
+
+
+def test_seeded_planner_records_blocked_edge_and_detours_integration() -> None:
+    """Integration through _directed_target_action: a directional stride that
+    produces a ZERO cursor move records (start_node, action) as blocked, and the
+    NEXT decision detours around it. Models the live loop where observe() appends
+    the issued (now-blocked) action between consecutive choose() calls."""
+    policy = HandBuiltPolicy()
+    feats = _nav_features()  # cursor centroid (0.5, 0.5); detect target (0,7)
+    # Tick 1: open -> steer right toward the seed (node (0,0) -> goal (0,1)).
+    r1 = policy._directed_target_action(
+        feats, [1, 2, 3, 4], seed_target=(0, 7), axis_map=_AX4
+    )
+    assert r1 == 4
+    # The issued ACTION4 is blocked: cursor does not move. observe() would append
+    # it to history; the SAME features model the unchanged cursor.
+    policy.history.append(ActionOutcome(action=4, frame_changed=False))
+    r2 = policy._directed_target_action(
+        feats, [1, 2, 3, 4], seed_target=(0, 7), axis_map=_AX4
+    )
+    assert ((0, 0), 4) in policy.blocked_edges  # the wall was remembered
+    assert r2 is not None and r2 != 4  # and the cursor now routes around it
+
+
+def test_seeded_planner_at_goal_node_returns_none() -> None:
+    """The b2-iv off-lattice limit: when the goal_cell lies within half a stride of
+    the cursor (same lattice node), fixed strides cannot land closer, so the planner
+    returns None (nothing to steer) rather than oscillating off the goal node."""
+    policy = HandBuiltPolicy()
+    policy._lattice_origin = (45.5, 21.0)
+    # goal_cell 1 cell off the start in each axis -> still lattice node (0,0).
+    result = policy._seeded_plan_action(
+        (45.5, 21.0), [(46.5, 22.0)], [1, 2, 3, 4], _AX4
+    )
+    assert result is None
+
+
+def test_seeded_planner_first_step_not_allowed_returns_none() -> None:
+    """When the planned first step is not in the current candidate set (rate /
+    noop / sig filtered this tick), the planner returns None so the caller falls
+    through and re-plans next tick — it never issues a filtered action."""
+    policy = HandBuiltPolicy()
+    policy._lattice_origin = (45.5, 21.0)
+    # straight-line first step is ACTION4 (right); exclude it from candidates.
+    result = policy._seeded_plan_action(
+        (45.5, 21.0), [(45.5, 41.0)], [1, 2, 3], _AX4
+    )
+    assert result is None
+
+
+def test_seeded_planner_v1_path_never_touches_planner_state() -> None:
+    """Strict-superset guard at the planner level: with seed_target None, neither
+    _lattice_origin nor blocked_edges is ever mutated — even across a zero-move tick
+    that WOULD record a blocked edge on the seeded path. v1 is byte-identical."""
+    policy = HandBuiltPolicy(action_displacement={4: [0.0, 5.0, 1], 1: [5.0, 0.0, 1]})
+    feats = _nav_features()
+    policy._directed_target_action(feats, [1, 2, 3, 4])  # no seed
+    assert policy._lattice_origin is None and policy.blocked_edges == set()
+    # A zero-move tick on the v1 path must NOT record a blocked edge.
+    policy.history.append(ActionOutcome(action=4, frame_changed=False))
+    policy._directed_target_action(feats, [1, 2, 3, 4])
+    assert policy._lattice_origin is None and policy.blocked_edges == set()
