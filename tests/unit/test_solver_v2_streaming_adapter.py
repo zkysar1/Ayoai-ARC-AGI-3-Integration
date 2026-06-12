@@ -338,6 +338,60 @@ def test_policy_deferred_observe_accumulates_history() -> None:
     assert len(policy.history) > hist_before
 
 
+# ── rb-1668 / g-315-154: seed-prior provenance observability ───────────────
+# The post-deploy litmus saw the seed degrade to untrusted (DeterministicExecutor
+# 80/80, score 0) but COULD NOT tell from the recording alone WHICH of
+# goal_cell / objective / confidence failed is_trusted(). These tests pin the
+# fix: the parsed prior's trust-determining fields are stamped into provenance
+# on the episode-boundary tick, so the failure is diagnosable offline.
+
+
+def test_seed_prior_recorded_in_provenance_untrusted() -> None:
+    # An UNKNOWN seed (degrade-safe) records its trust-determining fields on the
+    # boundary tick, so an offline recording shows WHY is_trusted() was False.
+    seed = _ScriptedSeedProvider(_prior(OBJECTIVE_UNKNOWN))
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    decision = adapter.choose_action(_strategic())
+    sp = decision.provenance["seed_prior"]
+    assert sp["is_trusted"] is False
+    assert sp["objective"] == OBJECTIVE_UNKNOWN
+    assert sp["goal_cell"] is None
+    assert sp["confidence"] == 0.0
+
+
+def test_seed_prior_recorded_in_provenance_trusted() -> None:
+    # A trusted REACH_CELL seed (goal_cell + confidence >= SEED_TRUST_MIN) records
+    # is_trusted True and goal_cell as a JSON-serializable list (not a tuple).
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_REACH_CELL, goal_cell=(1, 1), confidence=0.9)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    decision = adapter.choose_action(_strategic())
+    sp = decision.provenance["seed_prior"]
+    assert sp["is_trusted"] is True
+    assert sp["objective"] == OBJECTIVE_REACH_CELL
+    assert sp["goal_cell"] == [1, 1]
+    assert sp["confidence"] == 0.9
+
+
+def test_seed_prior_only_on_boundary_tick() -> None:
+    # The prior is immutable per episode, so it is stamped only on the
+    # episode-boundary tick (keeps per-tick records lean). Tick 0 carries it;
+    # the next same-episode tick does not.
+    seed = _ScriptedSeedProvider(_prior(OBJECTIVE_UNKNOWN))
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    d0 = adapter.choose_action(_strategic(score=0))
+    d1 = adapter.choose_action(_strategic(score=1))
+    assert "seed_prior" in d0.provenance
+    assert "seed_prior" not in d1.provenance
+
+
 def test_per_episode_routing_switches_executor() -> None:
     # Episode 1 movement (REACH_CELL) opens in CalibrationProbe (g-315-148);
     # episode 2 click (TOGGLE, via a guid-rotation boundary) -> DeterministicExecutor.

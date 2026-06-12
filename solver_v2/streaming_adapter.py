@@ -398,6 +398,24 @@ class SolverV2StreamingAdapter:
         }
         if boundary_reason is not None:
             provenance["episode_boundary"] = boundary_reason
+            # Observability (rb-1668, g-315-154 post-deploy litmus): stamp the
+            # parsed seed prior's trust-determining fields at the episode-start
+            # tick so a degrade-to-untrusted is diagnosable OFFLINE from the
+            # recording alone -- which of goal_cell / objective / confidence
+            # failed is_trusted() -- without a server-log round-trip. The prior
+            # is immutable for the episode, so recording it once (on the
+            # boundary tick) suffices and keeps per-tick records lean.
+            provenance["seed_prior"] = {
+                "is_trusted": self._episode_prior.is_trusted(),
+                "objective": self._episode_prior.objective,
+                "goal_cell": (
+                    list(self._episode_prior.goal_cell)
+                    if self._episode_prior.goal_cell is not None
+                    else None
+                ),
+                "confidence": self._episode_prior.confidence,
+                "goal_value": self._episode_prior.goal_value,
+            }
         if decision.x is not None and decision.y is not None:
             provenance["action6_target"] = {"x": decision.x, "y": decision.y}
 
