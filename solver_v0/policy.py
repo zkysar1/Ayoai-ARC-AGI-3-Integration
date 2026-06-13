@@ -135,6 +135,20 @@ TARGET_REACHED_DIST = 1.0
 #   None and the caller falls through to re-plan next tick. A compute bound,
 #   NOT a board-size constant (no env magnitude leaks).
 PLANNER_MAX_NODES = 4096
+# PLANNER_UNREACHABLE_DECLARE_TICKS (g-315-173): consecutive seeded-planner ticks
+#   that find NO known-open path to the goal AND discover NO new blocked edge
+#   before the planner DECLARES the goal unreachable-from-here (sets
+#   goal_declared_unreachable). The g-315-171 optimistic-BFS planner is COMPLETE
+#   for reachable goals but, on a walled-off goal, returns None EVERY tick and the
+#   caller explores INDEFINITELY — it never recognizes "I have mapped my reachable
+#   region and the goal is not in it." This threshold gates the declaration: while
+#   the cursor keeps finding new walls (blocked_edges growing) re-planning is still
+#   productive, so the streak resets; only a STABLE wall-map with the goal still
+#   unreachable for this many consecutive ticks declares unreachability and yields
+#   to systematic coverage. Magnitude mirrors STAGNATION_WINDOW (8) — the existing
+#   "we have been stuck this long" horizon. A behavior threshold, NOT a board
+#   constant (no env magnitude leaks); seed_target None (v1) never reaches it.
+PLANNER_UNREACHABLE_DECLARE_TICKS = 8
 
 
 def _churn_bucket(churn: float, k: int = CHURN_BUCKET_COUNT) -> int:
@@ -305,6 +319,26 @@ class HandBuiltPolicy:
     #     _lattice_origin (reset per episode), NOT an absolute coordinate.
     _lattice_origin: Optional[tuple] = field(default=None, repr=False)
     blocked_edges: set = field(default_factory=set)
+    # g-315-173: frontier-exhaustion detection over the g-315-171 planner. The
+    # optimistic BFS is COMPLETE for reachable goals but never DECLARES a walled-
+    # off goal unreachable — it returns None every tick and the caller explores
+    # indefinitely. These track when the planner has converged on unreachability
+    # so it can declare it (and yield to systematic coverage) instead. Per-episode
+    # runtime bookkeeping reset with a fresh policy (Self gate 3 — no cross-episode
+    # coordinate learned). All three are touched ONLY on the v2 seeded path
+    # (seed_target set, where _seeded_plan_action runs); v1 is byte-identical.
+    #   _unreachable_streak: consecutive planner ticks with no known-open path AND
+    #     no newly-discovered wall (a stable-but-stuck signal).
+    #   _blocked_edges_at_last_unreach: len(blocked_edges) at the previous
+    #     unreachable tick; a change means the cursor is still mapping walls, so
+    #     re-planning remains productive and the streak resets.
+    #   goal_declared_unreachable: the observable declaration — set once the streak
+    #     reaches PLANNER_UNREACHABLE_DECLARE_TICKS, cleared when the goal becomes
+    #     reachable again. The local, framework-routed signal (NO streaming-contract
+    #     message — that is the Environment Server's lane, guard-573).
+    _unreachable_streak: int = field(default=0, repr=False)
+    _blocked_edges_at_last_unreach: int = field(default=-1, repr=False)
+    goal_declared_unreachable: bool = False
 
     def observe(
         self,
@@ -1198,6 +1232,10 @@ class HandBuiltPolicy:
         if start == goal:
             # At the lattice cell nearest the goal — fixed strides cannot land
             # closer to an off-lattice goal_cell (b2-iv). Nothing to steer.
+            # g-315-173: the goal node is reached, so it is by definition NOT
+            # unreachable — clear any in-progress frontier-exhaustion streak.
+            self._unreachable_streak = 0
+            self.goal_declared_unreachable = False
             return None
         # Optimistic BFS: every action_delta edge is open unless recorded
         # blocked. Deterministic — actions expanded in sorted order; first
@@ -1212,8 +1250,10 @@ class HandBuiltPolicy:
                 break
             if len(came_from) > PLANNER_MAX_NODES:
                 # Goal walled off in the known graph under the free-space
-                # assumption — bound the search and re-plan next tick.
-                return None
+                # assumption — bound the search and re-plan next tick. found
+                # stays False so this funnels through the unreachable handler
+                # below exactly like a natural frontier exhaustion (g-315-173).
+                break
             for a in sorted(action_delta):
                 if (node, a) in self.blocked_edges:
                     continue
@@ -1223,7 +1263,20 @@ class HandBuiltPolicy:
                     came_from[nxt] = (node, a)
                     frontier.append(nxt)
         if not found:
+            # g-315-173: no known-open path to the goal this tick — either the
+            # reachable frontier exhausted with the goal enclosed by known blocked
+            # edges, or the free-space expansion hit PLANNER_MAX_NODES (the walled-
+            # off case the cap bounds). Advance the frontier-exhaustion streak so a
+            # STABLE-but-stuck situation eventually declares unreachability instead
+            # of exploring indefinitely. Still returns None — the caller falls
+            # through to coverage (systematic region exploration).
+            self._note_planner_unreachable()
             return None
+        # g-315-173: a path was found — the goal is reachable in the known-open
+        # graph this tick. Clear any in-progress unreachable streak / declaration
+        # (the situation changed: the cursor moved or an open route appeared).
+        self._unreachable_streak = 0
+        self.goal_declared_unreachable = False
         # Backtrack goal -> start; keep the action issued FROM start.
         node = goal
         first_action: Optional[int] = None
@@ -1234,6 +1287,30 @@ class HandBuiltPolicy:
         if first_action is not None and first_action in set(candidates):
             return first_action
         return None
+
+    def _note_planner_unreachable(self) -> None:
+        """g-315-173: advance the frontier-exhaustion streak after a seeded-planner
+        tick that found NO known-open path to the goal (natural frontier exhaustion
+        OR the PLANNER_MAX_NODES-bounded walled-off case — both leave found=False).
+        The streak advances ONLY while the wall-map is STABLE: if blocked_edges grew
+        since the previous unreachable tick the cursor is still actively mapping
+        walls (re-planning remains productive), so the streak restarts at 1. Once
+        the goal stays unreachable for PLANNER_UNREACHABLE_DECLARE_TICKS consecutive
+        ticks with no newly-discovered wall, set goal_declared_unreachable — the
+        observable declaration that lets the caller stop hammering the directed goal
+        and yield to systematic coverage instead of exploring indefinitely (the
+        g-315-171 planner caveat). Per-episode runtime bookkeeping reset with a
+        fresh policy (Self gate 3 — no cross-episode coordinate learned)."""
+        edges_now = len(self.blocked_edges)
+        if edges_now == self._blocked_edges_at_last_unreach:
+            self._unreachable_streak += 1
+        else:
+            # New wall(s) discovered since the last unreachable tick — still
+            # mapping the maze; re-planning is productive. Restart the streak.
+            self._unreachable_streak = 1
+            self._blocked_edges_at_last_unreach = edges_now
+        if self._unreachable_streak >= PLANNER_UNREACHABLE_DECLARE_TICKS:
+            self.goal_declared_unreachable = True
 
     def _action4_at_quota(self) -> bool:
         """True iff ACTION4 was used at-or-above ACTION_RATE_LIMIT_MAX

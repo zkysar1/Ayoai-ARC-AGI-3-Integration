@@ -28,6 +28,7 @@ from collections import Counter
 
 from solver_v0.perception import FrameFeatures, extract
 from solver_v0.policy import (
+    PLANNER_UNREACHABLE_DECLARE_TICKS,
     STAGNATION_WINDOW,
     ActionOutcome,
     HandBuiltPolicy,
@@ -1185,3 +1186,80 @@ def test_seeded_planner_v1_path_never_touches_planner_state() -> None:
     policy.history.append(ActionOutcome(action=4, frame_changed=False))
     policy._directed_target_action(feats, [1, 2, 3, 4])
     assert policy._lattice_origin is None and policy.blocked_edges == set()
+
+
+# ── g-315-173: optimistic-BFS planner frontier-exhaustion detection ──────────
+# The g-315-171 planner is COMPLETE for reachable goals but never DECLARES a
+# walled-off goal unreachable — it returns None every tick and the caller
+# explores indefinitely. These tests pin the declaration: a STABLE wall-map with
+# the goal still unreachable for PLANNER_UNREACHABLE_DECLARE_TICKS consecutive
+# ticks sets goal_declared_unreachable; an actively-growing wall-map (still
+# mapping the maze) resets the streak; reachability clears the declaration; and
+# the v1 path (seed_target None) never touches the detector (strict superset).
+# Start node (0,0) fully enclosed by its 4 outgoing blocked edges; goal four
+# strides right at node (0,4) (centroid (45.5, 41.0)) lies outside the pocket.
+_ENCLOSED = {((0, 0), 1), ((0, 0), 2), ((0, 0), 3), ((0, 0), 4)}
+
+
+def test_planner_declares_unreachable_after_stable_frontier_exhaustion() -> None:
+    """Start node fully enclosed by known blocked edges, goal outside it: every
+    tick the BFS exhausts the reachable frontier without the goal. With the
+    wall-map STABLE, the unreachable streak advances and the planner DECLARES
+    unreachability at PLANNER_UNREACHABLE_DECLARE_TICKS instead of exploring
+    indefinitely (the g-315-171 planner caveat g-315-173 closes)."""
+    policy = HandBuiltPolicy()
+    policy._lattice_origin = (45.5, 21.0)
+    policy.blocked_edges = set(_ENCLOSED)  # all 4 edges from start node blocked
+    n = PLANNER_UNREACHABLE_DECLARE_TICKS
+    for _ in range(n - 1):
+        r = policy._seeded_plan_action((45.5, 21.0), [(45.5, 41.0)], [1, 2, 3, 4], _AX4)
+        assert r is None  # no known-open path this tick
+        assert policy.goal_declared_unreachable is False  # not yet declared
+    # The Nth consecutive stable-unreachable tick crosses the threshold.
+    policy._seeded_plan_action((45.5, 21.0), [(45.5, 41.0)], [1, 2, 3, 4], _AX4)
+    assert policy.goal_declared_unreachable is True
+    assert policy._unreachable_streak >= n
+
+
+def test_planner_unreachable_streak_resets_while_mapping_new_walls() -> None:
+    """No premature declaration: while the cursor keeps discovering NEW walls
+    (blocked_edges grows each tick) re-planning is still productive, so the streak
+    restarts every tick and the goal is never declared unreachable — even well
+    past the threshold horizon."""
+    policy = HandBuiltPolicy()
+    policy._lattice_origin = (45.5, 21.0)
+    policy.blocked_edges = set(_ENCLOSED)
+    for i in range(PLANNER_UNREACHABLE_DECLARE_TICKS * 2):
+        policy.blocked_edges.add(((i + 1, 7), 1))  # a distinct NEW wall each tick
+        policy._seeded_plan_action((45.5, 21.0), [(45.5, 41.0)], [1, 2, 3, 4], _AX4)
+        assert policy.goal_declared_unreachable is False
+
+
+def test_planner_unreachable_clears_when_goal_becomes_reachable() -> None:
+    """The declaration is not latched: once the enclosing walls clear and the goal
+    is reachable again, the next planner tick finds a path, returns a real first
+    step, and clears the streak + declaration."""
+    policy = HandBuiltPolicy()
+    policy._lattice_origin = (45.5, 21.0)
+    policy.blocked_edges = set(_ENCLOSED)
+    for _ in range(PLANNER_UNREACHABLE_DECLARE_TICKS):
+        policy._seeded_plan_action((45.5, 21.0), [(45.5, 41.0)], [1, 2, 3, 4], _AX4)
+    assert policy.goal_declared_unreachable is True  # declared
+    policy.blocked_edges.clear()  # walls gone — goal now reachable in open space
+    r = policy._seeded_plan_action((45.5, 21.0), [(45.5, 41.0)], [1, 2, 3, 4], _AX4)
+    assert r == 4  # straight-line rightward first step
+    assert policy.goal_declared_unreachable is False
+    assert policy._unreachable_streak == 0
+
+
+def test_planner_v1_path_never_declares_unreachable() -> None:
+    """Strict-superset guard: with seed_target None the planner never runs, so the
+    frontier-exhaustion detector is never touched — goal_declared_unreachable stays
+    False and the streak stays 0 even across many zero-move (blocked) ticks."""
+    policy = HandBuiltPolicy(action_displacement={4: [0.0, 5.0, 1], 1: [5.0, 0.0, 1]})
+    feats = _nav_features()
+    for _ in range(PLANNER_UNREACHABLE_DECLARE_TICKS * 2):
+        policy._directed_target_action(feats, [1, 2, 3, 4])  # no seed
+        policy.history.append(ActionOutcome(action=4, frame_changed=False))
+    assert policy.goal_declared_unreachable is False
+    assert policy._unreachable_streak == 0
