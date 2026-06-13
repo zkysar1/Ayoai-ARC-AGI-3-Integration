@@ -39,10 +39,10 @@ from solver_v2.episode import (
     OBJECTIVE_REACH_CELL,
     OBJECTIVE_TOGGLE_AT_CELL,
     OBJECTIVE_UNKNOWN,
-    OBJECTIVES,
     SEED_TRUST_MIN,
     EpisodeContext,
     EpisodePrior,
+    normalize_objective,
 )
 
 # ARC GameAction ids (fixed external API contract: RESET=0 .. ACTION7=7).
@@ -522,9 +522,11 @@ class BitNetSeedProvider(SeedProvider):
         goal_cell = _parse_cell(data.get("goal_cell"))
         cursor_hint = _parse_cell(data.get("cursor_hint"))
 
-        objective = data.get("objective")
-        if objective not in OBJECTIVES:
-            objective = OBJECTIVE_UNKNOWN
+        # g-315-175: canonicalize off-contract near-misses (e.g. the BitNet
+        # seed's "reach_6" -> "reach_cell") by objective family instead of
+        # strict-degrading every near-miss to UNKNOWN. Unrecognized families and
+        # non-strings still degrade to UNKNOWN (-> v1 fallback via is_trusted()).
+        objective = normalize_objective(data.get("objective"))
 
         try:
             confidence = float(data.get("confidence", 0.0))

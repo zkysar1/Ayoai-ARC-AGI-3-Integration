@@ -55,6 +55,51 @@ OBJECTIVES: frozenset[str] = frozenset(
     }
 )
 
+# Family-based normalization for off-contract objective labels (g-315-175).
+# The BitNet/LLM seed producer is stochastic and occasionally emits a near-miss
+# of the canonical vocabulary — e.g. "reach_6" instead of "reach_cell" (observed
+# on the ls20-9607627b litmus, g-315-154). A STRICT membership check degraded
+# every such near-miss to UNKNOWN, forcing a v1 fallback even though the
+# producer's intent was unambiguous. normalize_objective canonicalizes a raw
+# label by its leading alphabetic token (the objective FAMILY) so "reach_6",
+# "reach_7", "reach_target" all map to OBJECTIVE_REACH_CELL — generalization-
+# preserving (no single game's label is hardcoded). Canonical values pass
+# through unchanged; an unrecognized family or a non-string degrades to
+# OBJECTIVE_UNKNOWN, preserving the prior strict degrade-to-v1 contract.
+_OBJECTIVE_FAMILY: dict[str, str] = {
+    "reach": OBJECTIVE_REACH_CELL,
+    "align": OBJECTIVE_ALIGN_TO_CELL,
+    "toggle": OBJECTIVE_TOGGLE_AT_CELL,
+    "avoid": OBJECTIVE_AVOID,
+    "unknown": OBJECTIVE_UNKNOWN,
+}
+
+
+def normalize_objective(raw: Any) -> str:
+    """Map a raw seed objective label onto the canonical OBJECTIVES vocabulary.
+
+    Canonical values (already in OBJECTIVES) pass through unchanged. A
+    non-canonical string is matched by its leading alphabetic token (the
+    objective family), so a stochastic producer's near-miss like "reach_6"
+    canonicalizes to OBJECTIVE_REACH_CELL. Anything else — an unrecognized
+    family, an empty/digit-leading string, a non-string, None — degrades to
+    OBJECTIVE_UNKNOWN, preserving the strict degrade-to-v1 guarantee in
+    is_trusted(). Never raises (the server-response path requires it).
+    """
+    if not isinstance(raw, str):
+        return OBJECTIVE_UNKNOWN
+    if raw in OBJECTIVES:
+        return raw  # canonical pass-through (covers the literal "unknown" too)
+    # Leading alphabetic token: "reach_6" -> "reach", "align-to-7" -> "align".
+    token = ""
+    for ch in raw.strip().lower():
+        if ch.isalpha():
+            token += ch
+        else:
+            break
+    return _OBJECTIVE_FAMILY.get(token, OBJECTIVE_UNKNOWN)
+
+
 # Minimum seed confidence for the goal_cell to DRIVE the deterministic directed
 # steering (rule 4.6). Below it, OR objective==unknown, OR goal_cell absent, the
 # seed is NOT trusted and the executor degrades to v1 candidate-cycling — the

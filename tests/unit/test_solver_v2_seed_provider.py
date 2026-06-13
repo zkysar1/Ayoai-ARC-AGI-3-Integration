@@ -13,11 +13,14 @@ import pytest
 import requests
 
 from solver_v2.episode import (
+    OBJECTIVE_ALIGN_TO_CELL,
+    OBJECTIVE_AVOID,
     OBJECTIVE_REACH_CELL,
     OBJECTIVE_TOGGLE_AT_CELL,
     OBJECTIVE_UNKNOWN,
     EpisodeContext,
     EpisodePrior,
+    normalize_objective,
 )
 from solver_v2.seed_provider import (
     BitNetSeedProvider,
@@ -507,11 +510,64 @@ def test_bitnet_non_dict_response_degrades() -> None:
 
 
 def test_bitnet_unknown_objective_field_degrades() -> None:
-    seed = dict(_FULL_SEED, objective="open_the_lock")  # not in OBJECTIVES
+    # "open" is an unrecognized objective family (g-315-175) -> UNKNOWN -> v1.
+    seed = dict(_FULL_SEED, objective="open_the_lock")
     sess = _FakeSession(_FakeResponse(seed))
     prior = BitNetSeedProvider(_ENDPOINT, session=sess).seed(_bitnet_context((6,)))
     assert prior.objective == OBJECTIVE_UNKNOWN
     assert prior.is_trusted() is False
+
+
+def test_bitnet_offcontract_objective_normalizes_and_trusts() -> None:
+    # g-315-175 / g-315-154 litmus: the BitNet seed emitted "reach_6" — an
+    # off-contract near-miss of "reach_cell" — on ls20-9607627b. The OLD strict
+    # membership check degraded it to UNKNOWN -> is_trusted() False -> v1
+    # fallback, the last blocker on b2-v trust. Family normalization now maps the
+    # near-miss to OBJECTIVE_REACH_CELL so the seed STEERS v2 instead of degrading
+    # (goal_cell + confidence on _FULL_SEED already satisfy the other trust gates).
+    seed = dict(_FULL_SEED, objective="reach_6")
+    sess = _FakeSession(_FakeResponse(seed))
+    prior = BitNetSeedProvider(_ENDPOINT, session=sess).seed(_bitnet_context((6,)))
+    assert prior.objective == OBJECTIVE_REACH_CELL
+    assert prior.is_trusted() is True  # the litmus trust blocker is cleared
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        # Canonical values pass through unchanged.
+        ("reach_cell", OBJECTIVE_REACH_CELL),
+        ("align_to_cell", OBJECTIVE_ALIGN_TO_CELL),
+        ("toggle_at_cell", OBJECTIVE_TOGGLE_AT_CELL),
+        ("avoid", OBJECTIVE_AVOID),
+        ("unknown", OBJECTIVE_UNKNOWN),
+        # Off-contract near-misses canonicalize by leading-token FAMILY — the
+        # generalization point: no single game's label is hardcoded.
+        ("reach_6", OBJECTIVE_REACH_CELL),  # the litmus incident
+        ("reach_7", OBJECTIVE_REACH_CELL),  # generalizes across labels
+        ("reach_target", OBJECTIVE_REACH_CELL),
+        ("reach", OBJECTIVE_REACH_CELL),  # bare family name
+        ("reach6", OBJECTIVE_REACH_CELL),  # no separator
+        ("align_2", OBJECTIVE_ALIGN_TO_CELL),
+        ("toggle_now", OBJECTIVE_TOGGLE_AT_CELL),
+        ("avoid_it", OBJECTIVE_AVOID),
+        ("REACH_CELL", OBJECTIVE_REACH_CELL),  # case-insensitive family match
+        ("  reach_6  ", OBJECTIVE_REACH_CELL),  # surrounding whitespace
+        # Unrecognized family -> UNKNOWN (preserves strict degrade-to-v1).
+        ("open_the_lock", OBJECTIVE_UNKNOWN),
+        ("teleport", OBJECTIVE_UNKNOWN),
+        ("", OBJECTIVE_UNKNOWN),  # empty string -> empty token
+        ("6reach", OBJECTIVE_UNKNOWN),  # digit-leading -> empty token
+        # Non-strings -> UNKNOWN, never raises (covers malformed server JSON;
+        # the list/dict cases also guard the unhashable-`in` no-raise contract).
+        (None, OBJECTIVE_UNKNOWN),
+        (6, OBJECTIVE_UNKNOWN),
+        (["reach_6"], OBJECTIVE_UNKNOWN),
+        ({"objective": "reach_6"}, OBJECTIVE_UNKNOWN),
+    ],
+)
+def test_normalize_objective(raw: Any, expected: str) -> None:
+    assert normalize_objective(raw) == expected
 
 
 def test_bitnet_null_goal_cell_not_trusted() -> None:
