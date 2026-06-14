@@ -1168,9 +1168,26 @@ class HandBuiltPolicy:
         displacement| over reliable actions IS the per-axis stride; quantizing
         the continuous cursor centroid by it collapses it onto the discrete
         movement lattice the planner searches. Value-agnostic — no coordinate or
-        board magnitude leaks (only relative displacement ratios)."""
+        board magnitude leaks (only relative displacement ratios).
+
+        Unidirectional axes (g-315-194): a calibrated axis can be reliable in
+        only ONE direction (e.g. DOWN reliable, UP reachable only via a
+        noisy/high-variance action that the reliable-only basis above skips).
+        vertical_blocked/horizontal_blocked stay False (a reliable axis action
+        exists), so a naive consumer would treat the axis as fully navigable
+        while action_delta held a single directed edge and the BFS could never
+        route toward a goal on the return-direction side (a one-way conveyor /
+        ratchet env). The return direction is surfaced as a TENTATIVE edge so the
+        optimistic BFS can attempt it; if the env is truly one-way the resulting
+        zero move records a blocked edge and the _note_planner_unreachable streak
+        declares the goal unreachable -- both candidate behaviours (opportunistic
+        attempt, then report-unreachable) fall out of the existing machinery.
+        Scoped to genuine one-way axes by the (-di,-dj)-covered guard below: on a
+        fully bidirectional env every direction is already covered, so nothing is
+        added (strict superset, Self gate 3)."""
+        am = axis_map or {}
         steps: dict[int, tuple[float, float]] = {}
-        for a in sorted(axis_map or {}):
+        for a in sorted(am):
             disp = self._action_mean_displacement(a, axis_map)
             if disp is not None:
                 steps[a] = disp
@@ -1184,6 +1201,27 @@ class HandBuiltPolicy:
             dj = round(dc / stride_col) if stride_col > 0 else 0
             if di != 0 or dj != 0:
                 action_delta[a] = (di, dj)
+        # g-315-194: surface the return direction of a UNIDIRECTIONAL axis as a
+        # tentative edge (see docstring). For any axis_map action NOT already a
+        # reliable lattice step, whose unreliable mean rounds (on the reliable
+        # stride) to a unit step that is (a) non-zero, (b) not already covered,
+        # and (c) the NEGATION of a covered step, add it. Reuses the reliable
+        # stride as the quantizer -- no new magnitude constant (value-agnostic).
+        covered = set(action_delta.values())
+        for a in sorted(am):
+            if a in action_delta:
+                continue
+            mean_dr, mean_dc, n, reliable = am[a]
+            if reliable or n == 0:
+                continue
+            di = round(mean_dr / stride_row) if stride_row > 0 else 0
+            dj = round(mean_dc / stride_col) if stride_col > 0 else 0
+            if (di, dj) == (0, 0) or (di, dj) in covered:
+                continue
+            if (-di, -dj) not in covered:
+                continue
+            action_delta[a] = (di, dj)
+            covered.add((di, dj))
         return stride_row, stride_col, action_delta
 
     def _to_node(

@@ -1294,3 +1294,92 @@ def test_planner_v1_path_never_declares_unreachable() -> None:
         policy.history.append(ActionOutcome(action=4, frame_changed=False))
     assert policy.goal_declared_unreachable is False
     assert policy._unreachable_streak == 0
+
+
+# ── g-315-194: unidirectional-axis tentative return edge ─────────────────────
+# A calibrated axis can be reliable in only ONE direction (a one-way conveyor /
+# ratchet): DOWN (action2) reliable, UP (action1) reachable only via a noisy /
+# high-variance action the reliable-only basis skips. vertical_blocked stays
+# False (a reliable vertical action exists), so the consumer must surface the
+# return direction itself or the BFS silently cannot route toward a goal on the
+# UP side. _lattice_step adds the return direction as a TENTATIVE edge, scoped to
+# genuine one-way axes (the negated forward direction must be reliably covered).
+# UP unreliable but directional; the other three directions reliable.
+_AX_UNIDIR = {
+    1: (-5.0, 0.0, 4, False),  # UP: clear up-mean, UNRELIABLE (noisy / one-way)
+    2: (5.0, 0.0, 4, True),    # DOWN: reliable
+    3: (0.0, -5.0, 4, True),   # LEFT: reliable
+    4: (0.0, 5.0, 4, True),    # RIGHT: reliable
+}
+
+
+def test_lattice_step_unidirectional_axis_adds_reverse_edge() -> None:
+    """The return direction of a one-way axis (UP, via the unreliable action1) is
+    surfaced as a tentative lattice edge, so action_delta carries BOTH vertical
+    directions even though only DOWN calibrated reliable. The stride is unchanged
+    (the reliable basis is the sole quantizer) — no new magnitude constant."""
+    policy = HandBuiltPolicy()
+    stride_row, stride_col, action_delta = policy._lattice_step(_AX_UNIDIR)
+    assert stride_row == 5.0 and stride_col == 5.0
+    assert action_delta == {2: (1, 0), 3: (0, -1), 4: (0, 1), 1: (-1, 0)}
+
+
+def test_lattice_step_noise_unreliable_action_adds_no_edge() -> None:
+    """An unreliable action with a near-zero mean (pure noise rounds to the (0,0)
+    lattice step on the reliable stride) is not a usable return direction, so no
+    tentative edge is added — the lattice stays the reliable-only basis."""
+    policy = HandBuiltPolicy()
+    ax = {1: (0.3, 0.0, 4, False), 2: (5.0, 0.0, 4, True),
+          3: (0.0, -5.0, 4, True), 4: (0.0, 5.0, 4, True)}
+    _, _, action_delta = policy._lattice_step(ax)
+    assert action_delta == {2: (1, 0), 3: (0, -1), 4: (0, 1)}
+
+
+def test_lattice_step_covered_direction_not_duplicated() -> None:
+    """An unreliable action whose direction is ALREADY covered by a reliable
+    action (a second, noisy DOWN) is not duplicated — the lattice keeps the
+    reliable edge for that direction, never a noisy twin."""
+    policy = HandBuiltPolicy()
+    ax = {1: (-5.0, 0.0, 4, True), 2: (5.0, 0.0, 4, True),
+          3: (0.0, -5.0, 4, True), 4: (0.0, 5.0, 4, True),
+          5: (5.0, 0.0, 4, False)}  # noisy DOWN; (1,0) already covered by action2
+    _, _, action_delta = policy._lattice_step(ax)
+    assert action_delta == {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
+
+
+def test_lattice_step_uncovered_negation_no_tentative_edge() -> None:
+    """Scoping guard: a tentative edge is added ONLY for the return direction of a
+    reliably-covered axis (its negation is covered). A noisy DOUBLE-stride DOWN
+    (rounds to (2,0)) has neither (2,0) nor its negation (-2,0) covered, so it is
+    not injected — the lattice never gains a phantom multi-stride edge."""
+    policy = HandBuiltPolicy()
+    ax = {2: (5.0, 0.0, 4, True), 3: (0.0, -5.0, 4, True),
+          4: (0.0, 5.0, 4, True), 5: (10.0, 0.0, 4, False)}  # noisy 2x DOWN
+    _, _, action_delta = policy._lattice_step(ax)
+    assert action_delta == {2: (1, 0), 3: (0, -1), 4: (0, 1)}
+
+
+def test_lattice_step_bidirectional_unchanged_with_noise() -> None:
+    """Strict-superset guard (Self gate 3): a fully bidirectional axis_map (_AX4,
+    all four directions reliable) plus an extra unreliable noise action yields
+    EXACTLY the four reliable edges — every direction is already covered, so the
+    tentative-edge pass is a no-op. Bidirectional envs are byte-identical."""
+    policy = HandBuiltPolicy()
+    ax = dict(_AX4)
+    ax[5] = (-5.0, 0.0, 4, False)  # noisy UP, but (-1,0) already covered by action1
+    _, _, action_delta = policy._lattice_step(ax)
+    assert action_delta == {1: (-1, 0), 2: (1, 0), 3: (0, -1), 4: (0, 1)}
+
+
+def test_seeded_planner_routes_up_unidirectional_return_axis() -> None:
+    """Integration: with a unidirectional vertical axis, the BFS now routes toward
+    a goal on the return-direction (UP) side via the tentative edge — before
+    g-315-194 the reliable-only lattice had no UP edge and the planner returned
+    None (goal silently unreachable despite vertical_blocked=False)."""
+    policy = HandBuiltPolicy()
+    policy._lattice_origin = (45.5, 21.0)
+    # goal one stride UP of the cursor: node (-1, 0) -> centroid (40.5, 21.0).
+    result = policy._seeded_plan_action(
+        (45.5, 21.0), [(40.5, 21.0)], [1, 2, 3, 4], _AX_UNIDIR
+    )
+    assert result == 1  # the tentative UP action (action1), now a lattice edge
