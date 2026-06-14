@@ -114,6 +114,22 @@ COMPACT_DENSITY_MIN = 0.25
 #   candidate (a target does not move; the cursor does). RELATIVE to the
 #   detected cursor, so no absolute churn constant leaks.
 TARGET_STABLE_CHURN_RATIO = 0.5
+# CURSOR_CHURN_FLOOR: a cursor MOVES, so its cells must churn. The highest-churn
+#   COMPACT-rare blob is only the cursor when it actually moves; on some env
+#   topologies (cn04: scattered moving actor + compact STATIC decorations) the
+#   only compact-rare blobs are static decorations (mean_churn ~= 0), and
+#   max(compact, key=mean_churn) would return one — a static blob the calibration
+#   then measures ~zero displacement for, gating every axis blocked (a PERCEPTION
+#   artifact, not a controllability fact — guard-689). Require the selected cursor
+#   to clear this floor; when none does, return None (graceful-degrade to the v0
+#   online model, never a static-blob axis_map). Value-agnostic: mean_churn is a
+#   normalized [0,1] fraction (share of recent frames a cell changed), like
+#   COMPACT_DENSITY_MIN — NOT an env magnitude. Floor sits in (0.0, 0.13):
+#   strictly above cn04 static decorations (mean_churn 0.0) and below the slowest
+#   observed moving cursor (ls20 0.13-0.50, sp80 0.27-0.42), so real cursors clear
+#   it 2.6x-10x over while static decorations are rejected (g-315-185 / g-315-192
+#   cross-class replay; guard-594 threshold rationale).
+CURSOR_CHURN_FLOOR = 0.05
 # DIRECTED_MIN_IMPROVEMENT: a candidate's learned displacement must reduce the
 #   cursor->target Manhattan distance by at least this many cells to be
 #   preferred. > 0 so a no-op / orthogonal move never wins the directed rule.
@@ -949,6 +965,17 @@ class HandBuiltPolicy:
         if not compact:
             return None, []
         cursor_value = max(compact, key=lambda v: mean_churn[v])
+        # Churn floor (g-315-185 / cn04 generalization, g-315-192): a cursor moves,
+        # so it must churn. When the only compact-rare blobs are static decorations
+        # (mean_churn ~= 0 — cn04's row-0 strip / corner block), the max() above
+        # still returns one; calibrating off it measures ~zero displacement and
+        # gates every axis blocked (a perception artifact, not a controllability
+        # fact — guard-689). Reject a static "cursor": graceful-degrade to None so
+        # the consumer falls back to the v0 online model rather than trusting a
+        # static-blob axis_map. ls20 (0.13-0.50) + sp80 (0.27-0.42) moving cursors
+        # clear the floor; cn04 (0.0) does not.
+        if mean_churn[cursor_value] <= CURSOR_CHURN_FLOOR:
+            return None, []
         stable_cut = mean_churn[cursor_value] * TARGET_STABLE_CHURN_RATIO
         target_values = {
             v for v in rare if v != cursor_value and mean_churn[v] < stable_cut

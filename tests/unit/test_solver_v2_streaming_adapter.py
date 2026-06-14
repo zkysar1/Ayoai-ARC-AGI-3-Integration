@@ -392,6 +392,42 @@ def test_seed_prior_only_on_boundary_tick() -> None:
     assert "seed_prior" not in d1.provenance
 
 
+def test_axis_map_recorded_in_provenance_on_calibration_complete_tick() -> None:
+    # rb-1668 (axis_map half, g-315-185): the FINALIZED calibration axis_map is
+    # stamped into decision_provenance on the calibration-complete (transition)
+    # tick, so an axis-collapse (g-315-172: reachable region pinned to one
+    # direction) is diagnosable from the recording alone, not only by offline
+    # re-replay. The seed-prior half (above) covers the boundary tick; this
+    # covers the axis_map half on the calibration-complete tick.
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_REACH_CELL, goal_cell=(0, 3), confidence=0.5)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    first = adapter.choose_action(_strategic(score=0, guid="play-1"))
+    assert "axis_map" not in first.provenance  # boundary/calibrating: not yet
+    probe = adapter.probe
+    assert probe is not None
+    budget = probe.budget
+    last = first
+    for _ in range(budget):
+        last = adapter.choose_action(_strategic(score=0, guid="play-1"))
+    # The transition tick (probe drained -> HandBuiltPolicy) carries the stamp.
+    assert last.provenance["executor"] == "HandBuiltPolicy"
+    am = last.provenance["axis_map"]
+    assert isinstance(am["reliable_actions"], list)
+    assert "horizontal_blocked" in am and "vertical_blocked" in am
+    assert isinstance(am["vectors"], dict)
+    # Each calibrated vector exposes the rb-1668 schema (per-action mean + n +
+    # reliable) — what an offline axis-collapse diagnosis needs.
+    for vec in am["vectors"].values():
+        assert set(vec) == {"mean_dr", "mean_dc", "n", "reliable"}
+    # One-shot: the next steering tick does NOT re-stamp the immutable axis_map.
+    nxt = adapter.choose_action(_strategic(score=1, guid="play-1"))
+    assert "axis_map" not in nxt.provenance
+
+
 def test_per_episode_routing_switches_executor() -> None:
     # Episode 1 movement (REACH_CELL) opens in CalibrationProbe (g-315-148);
     # episode 2 click (TOGGLE, via a guid-rotation boundary) -> DeterministicExecutor.

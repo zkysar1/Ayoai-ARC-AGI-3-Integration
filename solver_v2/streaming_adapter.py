@@ -49,7 +49,7 @@ from solver_v0.policy import (
     PolicyDecision,
     detect_cursor_centroid,
 )
-from solver_v2.calibration import CalibrationProbe, move_actions_from
+from solver_v2.calibration import AxisMap, CalibrationProbe, move_actions_from
 from solver_v2.episode import (
     OBJECTIVE_REACH_CELL,
     EpisodeBoundaryDetector,
@@ -155,6 +155,12 @@ class SolverV2StreamingAdapter:
         # never per-tick instrumentation).
         self._probe: Optional[CalibrationProbe] = None
         self._calibrating: bool = False
+        # rb-1668 (axis_map half): the AxisMap finalized on the calibration-
+        # complete tick, stashed for one-shot stamping into that tick's
+        # decision_provenance (the seed_prior half is already stamped on the
+        # boundary tick). choose_action consumes + clears it, so only the
+        # transition tick records the axis_map (it is immutable thereafter).
+        self._finalized_axis_map: Optional[AxisMap] = None
 
         self._episode_prior: Optional[EpisodePrior] = None
         self._episode_id = 0
@@ -416,6 +422,30 @@ class SolverV2StreamingAdapter:
                 "confidence": self._episode_prior.confidence,
                 "goal_value": self._episode_prior.goal_value,
             }
+        # rb-1668 (axis_map half): on the calibration-complete tick, stamp the
+        # finalized AxisMap (reliable_actions + per-action mean_dr/mean_dc/reliable
+        # + the per-axis blocked flags) so an axis-collapse (g-315-172: reachable
+        # region pinned to one direction) is diagnosable from the recording alone,
+        # not only by offline re-replay. One-shot: cleared after stamping (the
+        # axis_map is immutable for the rest of the episode, so only the transition
+        # tick carries it — keeps steady-state steering records lean).
+        if self._finalized_axis_map is not None:
+            am = self._finalized_axis_map
+            provenance["axis_map"] = {
+                "reliable_actions": am.reliable_actions(),
+                "horizontal_blocked": am.horizontal_blocked,
+                "vertical_blocked": am.vertical_blocked,
+                "vectors": {
+                    str(a): {
+                        "mean_dr": v.mean_dr,
+                        "mean_dc": v.mean_dc,
+                        "n": v.n,
+                        "reliable": v.reliable,
+                    }
+                    for a, v in am.vectors.items()
+                },
+            }
+            self._finalized_axis_map = None
         if decision.x is not None and decision.y is not None:
             provenance["action6_target"] = {"x": decision.x, "y": decision.y}
 
@@ -533,9 +563,16 @@ class SolverV2StreamingAdapter:
             # actions are simple moves, so no spatial coordinates.
             return PolicyDecision(action=next_action, x=None, y=None)
         # Schedule drained -> finalize and supersede the online steering basis.
-        policy.axis_map = probe.result().policy_axis_map()
+        axis = probe.result()
+        policy.axis_map = axis.policy_axis_map()
         self._calibrating = False
         self._probe = None
+        # rb-1668 (axis_map half): stash the finalized AxisMap so choose_action
+        # stamps it into THIS tick's decision_provenance (one-shot). Without this
+        # the calibrated reliable_actions / per-action vectors are NOT in the
+        # recording, so an axis-collapse (g-315-172) is only diagnosable by
+        # offline re-replay, not from the recording alone.
+        self._finalized_axis_map = axis
         # Steer THIS tick with the calibrated policy (do not burn the tick). The
         # deferred-observe linkage was reset at the boundary and never set during
         # calibration, so _decide_via_policy correctly skips its first observe().

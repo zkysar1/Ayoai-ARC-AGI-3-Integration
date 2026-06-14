@@ -33,6 +33,7 @@ from solver_v0.policy import (
     ActionOutcome,
     HandBuiltPolicy,
     PolicyDecision,
+    detect_cursor_centroid,
     invalid_action_rate,
 )
 
@@ -857,6 +858,36 @@ def test_detect_returns_none_on_degenerate_palette() -> None:
         multi_layer=False,
     )
     assert HandBuiltPolicy()._detect_cursor_and_targets(feats) == (None, [])
+
+
+def test_detect_churn_floor_rejects_static_compact_decoration() -> None:
+    """Churn floor (g-315-185 / cn04 generalization, g-315-192): when the only
+    COMPACT-rare blob is STATIC (mean_churn ~= 0 — a decoration, not a cursor),
+    the detector returns None instead of calibrating off a static blob. This is
+    the cn04 failure shape: the genuinely-moving actor is scattered (excluded by
+    compactness) and the only compact-rare value is a static decoration. Without
+    the floor, max(compact, key=mean_churn) still returns the static blob, whose
+    ~zero displacement then gates EVERY calibration axis blocked — a perception
+    artifact, not a controllability fact (guard-689)."""
+    static = _nav_features(cursor_churn=0.0)  # compact blob present but NOT moving
+    assert HandBuiltPolicy()._detect_cursor_and_targets(static) == (None, [])
+    # detect_cursor_centroid (the v2 calibration entry point) graceful-degrades
+    # to None, so calibrate_from_recording records no displacements (v0 online
+    # fallback) rather than building a static-blob axis_map.
+    assert detect_cursor_centroid(static) is None
+
+
+def test_detect_churn_floor_admits_moving_cursor_above_floor() -> None:
+    """Non-regression for the churn floor: a compact cursor that MOVES (churn
+    above the floor) is still detected. The floor sits strictly above cn04's
+    static decorations (mean_churn 0.0) and below the slowest observed live mover
+    (ls20 0.13-0.50, sp80 0.27-0.42), so real cursors are never rejected.
+    cursor_churn=0.13 is ls20's observed minimum — it clears the floor and the
+    2x2 block's centroid (0.5, 0.5) is returned unchanged."""
+    moving = _nav_features(cursor_churn=0.13)
+    cursor, _targets = HandBuiltPolicy()._detect_cursor_and_targets(moving)
+    assert cursor == (0.5, 0.5)
+    assert detect_cursor_centroid(moving) == (0.5, 0.5)
 
 
 def test_directed_action_cold_start_returns_none() -> None:

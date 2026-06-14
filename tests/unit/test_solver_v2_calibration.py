@@ -155,9 +155,11 @@ def _drive_probe(probe, world, start_cursor):
 
 def test_probe_issues_each_move_action_k_times_in_order() -> None:
     """The probe schedules each move-action k=2x in ascending id order and the
-    deferred-observe accumulates the exact per-action displacement. Two clean
-    movers (action 1 up-by-2, action 2 right-by-2) calibrate reliable, both axes
-    free."""
+    deferred-observe accumulates the per-action displacement. Two clean movers
+    (action 1 up-by-2, action 2 right-by-2) calibrate reliable, both axes free.
+    action 1 opens the detect-chain, so its first observation (off the cold
+    opening-frame baseline) is QUARANTINED (g-315-185) -> n=1; action 2 is
+    mid-chain -> n=2. The surviving samples carry the exact per-action means."""
 
     def world(a, c):
         r, col = c
@@ -171,13 +173,15 @@ def test_probe_issues_each_move_action_k_times_in_order() -> None:
     assert probe.budget == 4
     issued = _drive_probe(probe, world, (5.0, 5.0))
 
-    assert issued == [1, 1, 2, 2]
+    assert issued == [1, 1, 2, 2]  # schedule unchanged: each action issued k=2x
     assert probe.done is True
     am = probe.result()
+    # action 1 opens the chain -> first (cold-baselined) observation quarantined,
+    # leaving 1 clean sample with the same -2-row mean (g-315-185).
     assert (am.vectors[1].mean_dr, am.vectors[1].mean_dc, am.vectors[1].n) == (
         -2.0,
         0.0,
-        2,
+        1,
     )
     assert (am.vectors[2].mean_dr, am.vectors[2].mean_dc, am.vectors[2].n) == (
         0.0,
@@ -190,16 +194,19 @@ def test_probe_issues_each_move_action_k_times_in_order() -> None:
 
 def test_probe_records_blocked_action_as_unreliable() -> None:
     """An action that never moves the cursor (wall) accumulates (0,0)
-    observations and finalizes UNRELIABLE with both axes blocked."""
+    observations and finalizes UNRELIABLE with both axes blocked. action 3 opens
+    the detect-chain, so its first (0,0) observation is quarantined (g-315-185)
+    -> n=1; the surviving (0,0) still finalizes UNRELIABLE (a single zero-vector
+    fails the noise floor)."""
 
     def world(a, c):
         return c  # nothing moves
 
     probe = CalibrationProbe([3], k=2)
     issued = _drive_probe(probe, world, (4.0, 4.0))
-    assert issued == [3, 3]
+    assert issued == [3, 3]  # schedule unchanged: action 3 still issued k=2x
     am = probe.result()
-    assert am.vectors[3].n == 2
+    assert am.vectors[3].n == 1  # first observation quarantined (cold baseline)
     assert am.vectors[3].reliable is False
     assert am.horizontal_blocked and am.vertical_blocked
 
@@ -314,3 +321,141 @@ def test_recording_axis_map_is_consumable_by_policy() -> None:
     )
     chosen = policy.choose(features)
     assert chosen == 0 or chosen in available  # RESET sentinel or a legal action
+
+
+# ─────────── cold-start quarantine (g-315-185, opening-frame contamination) ───
+
+
+def test_probe_quarantines_cold_opening_baseline() -> None:
+    """g-315-185 outcome 1 (the synthetic regression, PRIMARY pass/fail): a short
+    controlled episode with an opening cold MIS-READ then clean moves on BOTH
+    axes. The opening-frame cursor centroid is mislocated (no perception history
+    -> rb-1301), so the FIRST displacement off it is a large outlier. Before the
+    fix that single sample sat beside the clean sample and blew action 1's
+    variance past MAX_AXIS_STDDEV, gating an otherwise-consistent UP action
+    reliable=False (the g-315-172 collapse). The baseline_cold quarantine drops
+    the cold-baselined first observation of the detect-chain; the clean samples
+    keep ALL four actions reliable, both axes free."""
+
+    def world(a: int, c: tuple) -> tuple:
+        r, col = c
+        # The cold opening centroid (60,5) is mislocated; the first real move off
+        # it SNAPS to the true cursor region — a -20-row OUTLIER (the contaminant
+        # the opening-frame no-history detection produces). Every subsequent move
+        # is a clean +/-5 on its axis.
+        if (r, col) == (60.0, 5.0):
+            return (40.0, 5.0)  # action 1's first issue off the cold baseline
+        if a == 1:
+            return (r - 5.0, col)  # UP   (vertical)
+        if a == 2:
+            return (r + 5.0, col)  # DOWN (vertical)
+        if a == 3:
+            return (r, col - 5.0)  # LEFT  (horizontal)
+        if a == 4:
+            return (r, col + 5.0)  # RIGHT (horizontal)
+        return c
+
+    probe = CalibrationProbe([1, 2, 3, 4], k=2)
+    issued = _drive_probe(probe, world, (60.0, 5.0))
+    assert issued == [1, 1, 2, 2, 3, 3, 4, 4]
+    am = probe.result()
+    # Action 1 (UP): the -20 cold-baseline outlier was quarantined, leaving only
+    # the clean -5 sample -> reliable, n=1 (one of its two issues was dropped).
+    assert am.vectors[1].reliable is True
+    assert am.vectors[1].n == 1
+    assert am.vectors[1].mean_dr == -5.0
+    # All four actions calibrate reliable; both axes free (the row-21 collapse,
+    # where reliable_actions degenerated to [2] DOWN-only, cannot happen).
+    assert am.reliable_actions() == [1, 2, 3, 4]
+    assert not am.horizontal_blocked and not am.vertical_blocked
+
+
+def test_build_axis_map_cold_baseline_outlier_poisons_without_quarantine() -> None:
+    """The contamination mechanism the quarantine removes (g-315-185). The PURE
+    builder correctly treats both samples as signal: the cold-baseline outlier
+    (-20) beside the clean sample (-5) yields stddev ~7.5 >> MAX_AXIS_STDDEV, so
+    the otherwise-consistent UP action gates UNRELIABLE. The fix does NOT change
+    build_axis_map (its unit tests stay valid) — it drops the contaminant in the
+    observation-producing callers (CalibrationProbe / calibrate_from_recording),
+    leaving the clean sample, which alone is reliable."""
+    poisoned = build_axis_map({1: [(-20.0, 0.0), (-5.0, 0.0)]})
+    assert poisoned.vectors[1].reliable is False
+    clean = build_axis_map({1: [(-5.0, 0.0)]})  # what the quarantine leaves
+    assert clean.vectors[1].reliable is True
+
+
+# ─────────── live-regression offline replays (gitignored fixtures, skip) ──────
+
+
+def _ls20_142b6807_episode1():
+    """Episode 1 (first guid) of the 142b6807 solver-v2 ls20 recording — the
+    trusted-seed REACH_CELL episode whose calibration collapsed to DOWN-only
+    before g-315-185 (the row-21 unreachability, g-315-172). Skips if absent (the
+    recording is gitignored)."""
+    paths = sorted(
+        (REPO_ROOT / "recordings").glob(
+            "ls20-*.solver-v2.*.142b6807*.recording.jsonl"
+        )
+    )
+    if not paths:
+        pytest.skip("142b6807 solver-v2 recording fixture not present (gitignored)")
+    recs = [
+        json.loads(line)["data"]
+        for line in paths[0].read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    frames = [r for r in recs if "frame" in r]
+    if not frames:
+        pytest.skip("142b6807 recording has no frame records")
+    order: list = []
+    for f in frames:
+        g = f.get("guid")
+        if g not in order:
+            order.append(g)
+    return [f for f in frames if f.get("guid") == order[0]]
+
+
+def test_calibrate_142b6807_ep1_quarantine_restores_up_action() -> None:
+    """g-315-185 outcome 2 (the live regression this fix targets): on the REAL
+    142b6807 ls20 episode-1 frames, the cold-start quarantine makes the UP action
+    (action 1) calibrate reliable=True, so the reachable lattice gains an UP edge
+    (vertical_blocked=False) toward goal row 21. Before the fix a single
+    opening-frame no-history displacement poisoned action 1's variance, collapsing
+    reliable_actions to [2] (DOWN only) and making any goal ABOVE the cursor
+    structurally unreachable (g-315-172). The column actions (3/4) stay unreliable
+    here — that is the DISTINCT wall-contact-variance sibling (Problem B), NOT
+    this fix; asserting horizontal_blocked here would be a false negative
+    (g-315-191), so this test asserts only the row (vertical) axis it restores."""
+    ep1 = _ls20_142b6807_episode1()
+    am = calibrate_from_recording(ep1)
+    assert am.vectors[1].reliable is True  # UP no longer poisoned by the cold sample
+    assert 1 in am.reliable_actions()
+    assert am.vertical_blocked is False  # lattice gains a row (UP/DOWN) edge
+
+
+def test_calibrate_cn04_graceful_degrades_to_empty_axis_map() -> None:
+    """Churn-floor cross-class non-regression (g-315-185 / g-315-192): on a real
+    cn04 recording — where the moving actor is scattered (excluded by compactness)
+    and the only compact-rare blobs are STATIC decorations — the churn floor makes
+    detect_cursor_centroid return None every frame, so calibrate_from_recording
+    observes no displacements and yields an EMPTY axis_map (graceful-degrade to
+    the v0 online model) rather than a static-blob axis_map that would gate every
+    axis blocked. ls20 (the WORKS baseline) still calibrates a reliable map — see
+    test_calibrate_from_recording_builds_verified_axis_map above. Skips if absent
+    (recording gitignored)."""
+    paths = sorted(
+        (REPO_ROOT / "recordings").glob("cn04-*.solver-v0.*.recording.jsonl")
+    )
+    if not paths:
+        pytest.skip("cn04 solver-v0 recording fixture not present (gitignored)")
+    recs = [
+        json.loads(line)["data"]
+        for line in paths[0].read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    frames = [r for r in recs if "frame" in r]
+    if not frames:
+        pytest.skip("cn04 recording has no frame records")
+    am = calibrate_from_recording(frames)
+    assert am.vectors == {}  # no cursor detected -> no observations
+    assert am.reliable_actions() == []  # never calibrates off a static blob

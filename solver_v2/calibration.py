@@ -236,6 +236,14 @@ class CalibrationProbe:
             a: [] for a in actions
         }
         self._prev_cursor: Optional[tuple[float, float]] = None
+        # The first cursor of any contiguous detect-chain (incl. the opening-frame
+        # cursor the caller passes first) is a COLD baseline: detected on a
+        # thin-history frame, so its centroid may be mislocated (rb-1301,
+        # g-315-191) and the displacement off it poisons the action's variance
+        # past MAX_AXIS_STDDEV. Starts True (the first detection opens a chain);
+        # quarantine that first observation. (g-315-185 approach 1 — NOT
+        # median/MAD, a no-op at k=2 per rb-1763.)
+        self._baseline_cold: bool = True
         self._pending_action: Optional[int] = None
 
     @property
@@ -265,10 +273,17 @@ class CalibrationProbe:
             self._pending_action is not None
             and self._prev_cursor is not None
             and cursor_centroid is not None
+            and not self._baseline_cold
         ):
             dr = cursor_centroid[0] - self._prev_cursor[0]
             dc = cursor_centroid[1] - self._prev_cursor[1]
             self._observations[self._pending_action].append((dr, dc))
+        # A cursor that follows a None (the opening-frame baseline on the first
+        # step, or a re-detection after the chain broke) opens a new detect-chain
+        # -> as the next baseline it is cold, so quarantine ITS first observation
+        # above. Mid-chain baselines are warm (g-315-185, same rule as
+        # calibrate_from_recording).
+        self._baseline_cold = self._prev_cursor is None and cursor_centroid is not None
         self._prev_cursor = cursor_centroid
 
         if self._idx >= len(self._schedule):
@@ -327,6 +342,13 @@ def calibrate_from_recording(
     """
     hist: deque[list[list[list[int]]]] = deque(maxlen=max(1, history_depth))
     prev_cursor: Optional[tuple[float, float]] = None
+    # Mirror CalibrationProbe._baseline_cold: quarantine the cold-baselined first
+    # observation of each contiguous detect-chain. record 0's cursor is detected
+    # on an empty-history frame (mislocated corner centroid, g-315-191), so the
+    # first displacement off it is the contaminant that poisons an action's
+    # variance past MAX_AXIS_STDDEV. Starts True (record 0 opens the first chain).
+    # (g-315-185 approach 1 — NOT median/MAD, a no-op at k=2 per rb-1763.)
+    baseline_cold = True
     observations: dict[int, list[tuple[float, float]]] = {}
     move_set = None if move_actions is None else {int(a) for a in move_actions}
 
@@ -347,7 +369,12 @@ def calibrate_from_recording(
         )
         cursor = detect_cursor_centroid(features)
 
-        if action is not None and prev_cursor is not None and cursor is not None:
+        if (
+            action is not None
+            and prev_cursor is not None
+            and cursor is not None
+            and not baseline_cold
+        ):
             a = int(action)
             keep = (
                 a in move_set
@@ -359,6 +386,10 @@ def calibrate_from_recording(
                     (cursor[0] - prev_cursor[0], cursor[1] - prev_cursor[1])
                 )
 
+        # A cursor following a None (or record 0's first detection) opens a new
+        # contiguous detect-chain -> cold baseline; quarantine its first
+        # observation above. Mid-chain baselines are warm.
+        baseline_cold = prev_cursor is None and cursor is not None
         prev_cursor = cursor
         hist.append(frame)
 
