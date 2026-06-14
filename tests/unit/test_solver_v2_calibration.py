@@ -49,9 +49,11 @@ def test_build_axis_map_reliable_consistent_mover() -> None:
 
 def test_build_axis_map_blocked_zero_displacement_is_unreliable() -> None:
     """An action whose cursor never moved (all (0,0) observations — blocked by a
-    wall) is UNRELIABLE: magnitude 0 fails the noise floor. The (0,0) entries
-    are KEPT (n=2), intentionally differing from rule 4.6's online model which
-    drops zero moves."""
+    wall) is UNRELIABLE: every sample is wall-contact, so there are NO moving
+    samples and the vector stays a zero-vector. n reports the TOTAL observation
+    count (2) so a genuine noop is still visible as 'probed but never moved'
+    (g-315-193 partitions wall-contact (0,0)s out of the mean/variance but counts
+    them toward n)."""
     am = build_axis_map({2: [(0.0, 0.0), (0.0, 0.0)]})
     v = am.vectors[2]
     assert v.n == 2
@@ -59,8 +61,9 @@ def test_build_axis_map_blocked_zero_displacement_is_unreliable() -> None:
 
 
 def test_build_axis_map_below_noise_floor_is_unreliable() -> None:
-    """A consistent but TINY mean displacement (below NOISE_FLOOR_CELLS) is not
-    real movement — unreliable even with zero variance."""
+    """A consistent but TINY per-sample displacement (below NOISE_FLOOR_CELLS) is
+    not real movement: each sample is wall-contact, so there are NO moving samples
+    and the action gates unreliable (g-315-193)."""
     delta = NOISE_FLOOR_CELLS / 2.0
     am = build_axis_map({3: [(delta, 0.0), (delta, 0.0)]})
     assert am.vectors[3].reliable is False
@@ -135,6 +138,67 @@ def test_move_actions_from_excludes_reset_and_action6() -> None:
     assert move_actions_from([0, 1, 2, 3, 4, 6]) == [1, 2, 3, 4]
     assert move_actions_from([6, 0]) == []
     assert move_actions_from([3, 1, 2, 1]) == [1, 2, 3]
+
+
+# ───────── wall-contact partition (g-315-193 / Fix B, guard-689) ──────────
+
+
+def test_build_axis_map_bimodal_wall_contact_calibrates_from_moving_samples() -> None:
+    """Fix B CORE: a column action that moves the cursor LEFT-by-5 from an open
+    cell but pins against a wall (0,0) elsewhere is BIMODAL: [(0,-5), (0,0)].
+    Pre-fix, keeping the (0,0) gave mean (0,-2.5) and stddev 2.5 > MAX_AXIS_STDDEV
+    -> gated unreliable (Problem B). The wall-contact (0,0) is the cursor not
+    moving FROM that position (guard-689), not action unreliability, so it is
+    partitioned OUT: the vector calibrates over the one moving sample -> mean
+    (0,-5), n=1, RELIABLE."""
+    am = build_axis_map({3: [(0.0, -5.0), (0.0, 0.0)]})
+    v = am.vectors[3]
+    assert (v.mean_dr, v.mean_dc, v.n) == (0.0, -5.0, 1)
+    assert v.reliable is True
+
+
+def test_build_axis_map_bimodal_wall_contact_frees_blocked_axis() -> None:
+    """Fix B at the axis-flag level: the bimodal column mover above now calibrates
+    reliable, so horizontal control is AVAILABLE from the open cells it does move
+    from -> horizontal_blocked is False (the masked axis the variance gate wrongly
+    closed pre-fix). The row axis has no mover here -> vertical_blocked True."""
+    am = build_axis_map({3: [(0.0, -5.0), (0.0, 0.0)]})
+    assert am.reliable_actions() == [3]
+    assert am.horizontal_blocked is False
+    assert am.vertical_blocked is True
+
+
+def test_build_axis_map_partition_excludes_wall_contact_from_variance() -> None:
+    """The partition operates on variance, not just the mean: a consistent +5-row
+    mover with an interleaved wall-contact (0,0) [(5,0), (0,0), (5,0)] calibrates
+    over the two MOVING samples only -> mean (5,0), zero variance, RELIABLE, n=2.
+    Keeping the (0,0) (pre-fix) gave mean 3.33 and stddev ~2.36 > MAX_AXIS_STDDEV
+    -> a false unreliable. n counts only the moving samples that formed the mean."""
+    am = build_axis_map({1: [(5.0, 0.0), (0.0, 0.0), (5.0, 0.0)]})
+    v = am.vectors[1]
+    assert (v.mean_dr, v.mean_dc, v.n) == (5.0, 0.0, 2)
+    assert v.reliable is True
+
+
+def test_build_axis_map_all_wall_contact_noop_stays_unreliable() -> None:
+    """Noop preservation: an action whose every sample is wall-contact (no moving
+    sample at all) stays UNRELIABLE — the partition must not promote a genuine
+    noop. n reports the total observations seen (3) so the action is still visible
+    as 'probed but never moved'."""
+    am = build_axis_map({4: [(0.0, 0.0), (0.0, 0.0), (0.0, 0.0)]})
+    v = am.vectors[4]
+    assert v.n == 3
+    assert v.reliable is False
+
+
+def test_build_axis_map_genuine_direction_flip_not_rescued_by_partition() -> None:
+    """Fix B must NOT rescue genuine directional inconsistency. A column action
+    that moves RIGHT-by-5 then LEFT-by-5 [(0,5), (0,-5)] has BOTH samples above the
+    noise floor, so BOTH stay in `moving` — mean (0,0), stddev 5 > MAX_AXIS_STDDEV
+    -> still UNRELIABLE. Only sub-noise-floor wall-contact (0,0)s are partitioned
+    out; a real inconsistent steering edge is still caught by the variance gate."""
+    am = build_axis_map({3: [(0.0, 5.0), (0.0, -5.0)]})
+    assert am.vectors[3].reliable is False
 
 
 # ───────────────────────── CalibrationProbe (active) ─────────────────────
@@ -422,15 +486,41 @@ def test_calibrate_142b6807_ep1_quarantine_restores_up_action() -> None:
     (vertical_blocked=False) toward goal row 21. Before the fix a single
     opening-frame no-history displacement poisoned action 1's variance, collapsing
     reliable_actions to [2] (DOWN only) and making any goal ABOVE the cursor
-    structurally unreachable (g-315-172). The column actions (3/4) stay unreliable
-    here — that is the DISTINCT wall-contact-variance sibling (Problem B), NOT
-    this fix; asserting horizontal_blocked here would be a false negative
-    (g-315-191), so this test asserts only the row (vertical) axis it restores."""
+    structurally unreachable (g-315-172). This g-315-185 test stays scoped to the
+    vertical axis it restores; when it was written the column actions (3/4) were
+    still unreliable here (their bimodal wall-contact displacements inflated the
+    variance gate — the DISTINCT Problem B sibling). g-315-193 (Fix B) since fixed
+    that, so on this same episode the columns now calibrate reliable too — the
+    real-data assertion lives in the Fix B companion test that follows."""
     ep1 = _ls20_142b6807_episode1()
     am = calibrate_from_recording(ep1)
     assert am.vectors[1].reliable is True  # UP no longer poisoned by the cold sample
     assert 1 in am.reliable_actions()
     assert am.vertical_blocked is False  # lattice gains a row (UP/DOWN) edge
+
+
+def test_calibrate_142b6807_ep1_fixB_restores_column_axis() -> None:
+    """g-315-193 (Fix B) outcome on REAL data — the horizontal counterpart to the
+    g-315-185 vertical-restoration test above (rb-1791: verify a calibration fix on
+    the axis it restores). On the same 142b6807 ls20 episode-1 frames the column
+    actions move the cursor LEFT/RIGHT-by-5 from open cells but pin (0,0) against a
+    wall on other issues — bimodal [(0,-5) x6, (0,0) x6] / [(0,5) x3, (0,0) x3].
+    Pre-fix the wall-contact (0,0)s inflated each column action's variance past
+    MAX_AXIS_STDDEV, gating BOTH unreliable and leaving horizontal_blocked=True
+    (Problem B). Fix B partitions the wall-contact samples out, so actions 3 and 4
+    calibrate reliable on their moving samples and the horizontal axis is
+    restored. n counts are not asserted (recording-dependent); reliability and the
+    axis flags are the contract."""
+    ep1 = _ls20_142b6807_episode1()
+    am = calibrate_from_recording(ep1)
+    assert am.vectors[3].reliable is True  # LEFT restored (was wall-contact-gated)
+    assert am.vectors[4].reliable is True  # RIGHT restored
+    assert {3, 4}.issubset(set(am.reliable_actions()))
+    assert am.horizontal_blocked is False  # column axis unmasked by Fix B
+    # Combined effect of g-315-185 (vertical) + g-315-193 (horizontal): the full
+    # UP/DOWN/LEFT/RIGHT lattice is reachable on this real episode (both axes free).
+    assert am.reliable_actions() == [1, 2, 3, 4]
+    assert not am.horizontal_blocked and not am.vertical_blocked
 
 
 def test_calibrate_cn04_graceful_degrades_to_empty_axis_map() -> None:

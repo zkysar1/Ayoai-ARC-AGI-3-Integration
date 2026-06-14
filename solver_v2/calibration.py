@@ -67,11 +67,16 @@ K_REPEATS: int = 2
 # environment magnitude leaks). An action's calibrated vector is RELIABLE iff:
 #   |mean displacement| > NOISE_FLOOR_CELLS   (it genuinely moves the cursor)
 #   AND per-axis sample stddev <= MAX_AXIS_STDDEV  (a consistent direction)
-# A blocked attempt (cursor did not move) is a real (0,0) observation: it lowers
-# the magnitude and raises the variance, correctly demoting an action that only
-# moves the cursor sometimes. This DIFFERS intentionally from rule 4.6's online
-# model (which DROPS zero moves to avoid poisoning a long-episode direction): the
-# probe is a controlled calibration where "did nothing from here" IS signal.
+# Both are computed over the action's MOVING samples only — a per-sample
+# displacement below NOISE_FLOOR_CELLS is a wall-contact (0,0): the cursor did
+# not move FROM that probed position, a position-dependent fact (guard-689), NOT
+# evidence the action is an unreliable steering edge. Keeping such zeros (the
+# pre-Fix-B behavior) poisoned the variance of a BIMODAL action — one that moves
+# from open cells but pins against a wall elsewhere — past MAX_AXIS_STDDEV and
+# wrongly demoted it (Problem B, g-315-193). The probe now AGREES with rule 4.6's
+# online model in dropping zero-moves from the steering vector; it differs only
+# in still counting them toward `n`, so an action with NO moving sample (a
+# genuine noop) stays unreliable rather than silently vanishing.
 NOISE_FLOOR_CELLS: float = 0.5
 MAX_AXIS_STDDEV: float = 1.0
 
@@ -82,13 +87,17 @@ class AxisVector:
 
     Attributes:
         action_id: the action this vector calibrates.
-        mean_dr: mean cursor-centroid row displacement (cells) per issue. >0 is
-            downward (increasing row), the perception/grid convention.
-        mean_dc: mean cursor-centroid column displacement (cells) per issue.
-            >0 is rightward (increasing column).
-        n: number of displacement observations contributing to the mean.
-        reliable: passed both gates (magnitude > noise floor AND low variance).
-            False when the action did not move the cursor consistently — the
+        mean_dr: mean cursor-centroid row displacement (cells) over the MOVING
+            samples. >0 is downward (increasing row), the perception/grid convention.
+        mean_dc: mean cursor-centroid column displacement (cells) over the MOVING
+            samples. >0 is rightward (increasing column).
+        n: number of MOVING samples contributing to the mean (those at/above the
+            noise floor). For an action whose samples were ALL wall-contact (0,0)s,
+            n reports the total observation count and the vector is unreliable; an
+            empty observation list yields n=0.
+        reliable: passed both gates (magnitude > noise floor AND low variance over
+            the moving samples). False when the action did not move the cursor
+            consistently, OR never moved it at all (all wall-contact) — the
             consumer SKIPS unreliable vectors and degrades to v1 for that action.
     """
 
@@ -155,10 +164,12 @@ def build_axis_map(
 
     Args:
         observations: action_id -> list of (dr, dc) cursor-centroid displacements
-            measured when that action was issued. A (0.0, 0.0) entry is a BLOCKED
-            attempt and is KEPT (it lowers magnitude / raises variance — see the
-            NOISE_FLOOR_CELLS note). An action with an empty list yields an
-            unreliable zero-vector (n=0).
+            measured when that action was issued. Per-sample displacements below
+            noise_floor are wall-contact (0,0)s and are PARTITIONED OUT of the
+            mean + variance (g-315-193 / guard-689 — see the NOISE_FLOOR_CELLS
+            note); the vector calibrates over the moving samples only. An action
+            whose samples are ALL wall-contact (or whose list is empty) yields an
+            unreliable zero-vector (n = total observations seen, or 0 for empty).
         noise_floor: min |mean displacement| (cells) to count as real movement.
         max_stddev: max per-axis sample stddev (cells) for "low variance".
 
@@ -169,19 +180,41 @@ def build_axis_map(
     """
     vectors: dict[int, AxisVector] = {}
     for action_id, obs in observations.items():
-        n = len(obs)
-        if n == 0:
+        n_total = len(obs)
+        if n_total == 0:
             vectors[action_id] = AxisVector(action_id, 0.0, 0.0, 0, False)
             continue
-        mean_dr = sum(o[0] for o in obs) / n
-        mean_dc = sum(o[1] for o in obs) / n
+        # Partition wall-contact samples from moving samples (g-315-193 / Fix B,
+        # guard-689). A per-sample displacement below the noise floor is the
+        # cursor NOT moving — "blocked FROM the probed position", a
+        # position-dependent fact, NOT evidence the action is an unreliable
+        # steering edge. Excluding these from the vector + variance lets a
+        # bimodal action (moves from open cells, wall-contact (0,0) elsewhere)
+        # calibrate to its true per-move displacement instead of being demoted
+        # unreliable by the inflated variance (the Problem-B sibling g-315-185
+        # left open). Reuses noise_floor as the per-sample threshold — no new
+        # magnitude constant (value-agnostic, Self gate 3). Genuine directional
+        # inconsistency (e.g. +5 then -5, BOTH above the floor) stays in `moving`
+        # and is still caught by the variance gate. An action with NO moving
+        # samples (all wall-contact, or a genuine noop) stays unreliable — noop
+        # detection preserved (n still reports the total observations seen).
+        moving = [
+            o for o in obs if (o[0] * o[0] + o[1] * o[1]) ** 0.5 >= noise_floor
+        ]
+        if not moving:
+            vectors[action_id] = AxisVector(action_id, 0.0, 0.0, n_total, False)
+            continue
+        m = len(moving)
+        mean_dr = sum(o[0] for o in moving) / m
+        mean_dc = sum(o[1] for o in moving) / m
         magnitude = (mean_dr * mean_dr + mean_dc * mean_dc) ** 0.5
-        # Population variance per axis (n is small — the probe issues k=2x).
-        var_dr = sum((o[0] - mean_dr) ** 2 for o in obs) / n
-        var_dc = sum((o[1] - mean_dc) ** 2 for o in obs) / n
+        # Population variance per axis over the MOVING samples (m is small — the
+        # probe issues k=2x).
+        var_dr = sum((o[0] - mean_dr) ** 2 for o in moving) / m
+        var_dc = sum((o[1] - mean_dc) ** 2 for o in moving) / m
         stddev = max(var_dr, var_dc) ** 0.5
         reliable = magnitude > noise_floor and stddev <= max_stddev
-        vectors[action_id] = AxisVector(action_id, mean_dr, mean_dc, n, reliable)
+        vectors[action_id] = AxisVector(action_id, mean_dr, mean_dc, m, reliable)
 
     horizontal_blocked = not any(
         v.reliable and abs(v.mean_dc) > noise_floor for v in vectors.values()
