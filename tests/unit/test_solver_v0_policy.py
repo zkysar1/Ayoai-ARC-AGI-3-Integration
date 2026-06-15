@@ -1296,6 +1296,102 @@ def test_planner_v1_path_never_declares_unreachable() -> None:
     assert policy._unreachable_streak == 0
 
 
+# ── g-315-199 (Phase 0): greedy-fallback wall-hammering fix ───────────────────
+# The g-315-171 BFS planner routes AROUND partial walls; the greedy fallback only
+# runs when the BFS returns None (goal fully walled off in the known-open graph,
+# or the planned first step is filtered this tick). Pre-fix the greedy loop ignored
+# self.blocked_edges and goal_declared_unreachable, so on a walled-off goal it
+# picked the distance-minimizing candidate straight INTO the known wall and hammered
+# it until PLANNER_UNREACHABLE_DECLARE_TICKS=8 finally tripped -- below v1 candidate-
+# cycling parity. These pin the two fixes: greedy skips blocked edges (returns None
+# when all are blocked), and goal_declared_unreachable short-circuits to exploration.
+
+
+def test_greedy_fallback_skips_blocked_edges_returns_none_when_all_walled() -> None:
+    """When the BFS returns None (goal walled off) and EVERY outgoing edge from the
+    cursor's lattice node is a known wall, the greedy fallback must NOT pick the
+    distance-minimizing action straight into the wall -- it skips all blocked edges
+    and returns None so choose() falls through to the exploration rules (4.5/4.7)
+    instead of hammering. goal_declared_unreachable is still False on this first
+    tick, so the None is produced by the greedy blocked-edge FILTER, not by the
+    unreachable short-circuit (asserted to isolate the two code paths)."""
+    policy = HandBuiltPolicy()
+    feats = _nav_features()  # cursor centroid (0.5, 0.5) -> lattice node (0, 0)
+    policy._lattice_origin = (0.5, 0.5)
+    # Enclose the cursor node: all four outgoing strides are known walls. The seed
+    # goal (0, 7) is far to the right, so ACTION4 is the greedy distance-reducer --
+    # the action that, pre-fix, was selected straight into the wall and hammered.
+    policy.blocked_edges = {((0, 0), 1), ((0, 0), 2), ((0, 0), 3), ((0, 0), 4)}
+    result = policy._directed_target_action(
+        feats, [1, 2, 3, 4], seed_target=(0, 7), axis_map=_AX4
+    )
+    assert result is None  # did NOT return ACTION4 (or any blocked edge)
+    assert policy.goal_declared_unreachable is False  # filter, not short-circuit
+
+
+def test_goal_declared_unreachable_short_circuits_before_greedy() -> None:
+    """With goal_declared_unreachable already True and the BFS still returning None
+    (goal walled off, so the flag is not cleared), _directed_target_action
+    short-circuits to None WITHOUT running the greedy fallback. Proven by leaving the
+    cursor's distance-reducing edge (ACTION4, toward the far-right goal) OPEN: if the
+    greedy loop ran it would return ACTION4, so a None result can only come from the
+    short-circuit. The reachable region is a 2-node dead pocket, so the BFS exhausts
+    the frontier in O(1) and never finds the goal -- keeping the flag set."""
+    policy = HandBuiltPolicy()
+    feats = _nav_features()  # cursor node (0, 0)
+    policy._lattice_origin = (0.5, 0.5)
+    # Dead 2-node pocket {(0,0),(0,1)}: from (0,0) only ACTION4 (right) is open;
+    # from (0,1) only ACTION3 (back) is open. Goal node (0,4) lies outside it, so
+    # the BFS exhausts the frontier (found=False) without clearing the flag.
+    policy.blocked_edges = {
+        ((0, 0), 1), ((0, 0), 2), ((0, 0), 3),  # start: only ACTION4 open
+        ((0, 1), 1), ((0, 1), 2), ((0, 1), 4),  # (0,1): only ACTION3 (back) open
+    }
+    policy.goal_declared_unreachable = True  # pre-declared (streak previously tripped)
+    # Goal far right (cell col 22 -> lattice node (0, 4)); ACTION4 is the greedy
+    # distance-reducer the loop WOULD return if it ran.
+    result = policy._directed_target_action(
+        feats, [1, 2, 3, 4], seed_target=(0, 22), axis_map=_AX4
+    )
+    assert result is None  # short-circuited; greedy (which would return 4) never ran
+    assert policy.goal_declared_unreachable is True  # not cleared (BFS found no path)
+
+
+def test_goal_declared_unreachable_is_read_by_a_production_path() -> None:
+    """goal_declared_unreachable was DEAD CODE (set by _note_planner_unreachable,
+    read by no production consumer -- only unit tests). This pins it as READ: with
+    the SAME walled-off-but-ACTION4-open state, flipping ONLY the flag flips the
+    production output of _directed_target_action -- flag False yields the greedy
+    ACTION4 (the open distance-reducer), flag True yields None (short-circuit). If a
+    future edit reverts the wiring to dead code, the flag stops gating the output
+    and this differential fails -- the guard the Phase 0 verification asks for."""
+    def _walled_policy() -> HandBuiltPolicy:
+        p = HandBuiltPolicy()
+        p._lattice_origin = (0.5, 0.5)
+        p.blocked_edges = {
+            ((0, 0), 1), ((0, 0), 2), ((0, 0), 3),  # start: only ACTION4 open
+            ((0, 1), 1), ((0, 1), 2), ((0, 1), 4),  # (0,1): only ACTION3 open
+        }
+        return p
+
+    feats = _nav_features()
+    # Flag False: the greedy fallback runs and returns the open distance-reducer.
+    p_false = _walled_policy()
+    p_false.goal_declared_unreachable = False
+    r_false = p_false._directed_target_action(
+        feats, [1, 2, 3, 4], seed_target=(0, 22), axis_map=_AX4
+    )
+    # Flag True: identical state, but the flag short-circuits to exploration.
+    p_true = _walled_policy()
+    p_true.goal_declared_unreachable = True
+    r_true = p_true._directed_target_action(
+        feats, [1, 2, 3, 4], seed_target=(0, 22), axis_map=_AX4
+    )
+    assert r_false == 4  # production RAN the greedy fallback (flag did not gate)
+    assert r_true is None  # production READ the flag and short-circuited
+    assert r_false != r_true  # the flag's value provably changes production output
+
+
 # ── g-315-194: unidirectional-axis tentative return edge ─────────────────────
 # A calibrated axis can be reliable in only ONE direction (a one-way conveyor /
 # ratchet): DOWN (action2) reliable, UP (action1) reachable only via a noisy /

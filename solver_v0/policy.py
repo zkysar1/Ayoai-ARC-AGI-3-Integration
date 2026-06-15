@@ -1130,14 +1130,51 @@ class HandBuiltPolicy:
             planned = self._seeded_plan_action(cursor, live, candidates, axis_map)
             if planned is not None:
                 return planned
+            # g-315-199 (Phase 0): wire goal_declared_unreachable. The planner call
+            # above SETS it (via _note_planner_unreachable) once the BFS has
+            # converged on the goal being walled off in the known-open graph for
+            # PLANNER_UNREACHABLE_DECLARE_TICKS stable ticks, and CLEARS it the
+            # moment a path reappears -- which is WHY this check sits AFTER the call,
+            # not before (a pre-call short-circuit would latch the flag forever once
+            # set, since the clearing path would never run again). When it is still
+            # set here, the greedy fallback below would pick the distance-minimizing
+            # candidate -- usually the action straight INTO the known wall -- and
+            # hammer it until the streak re-trips (below-v1 candidate-cycling
+            # parity). Short-circuit to None so choose() falls through to the
+            # exploration rules (4.5 palette-novelty / 4.7 systematic coverage)
+            # immediately. seed_target-gated: v1 never sets the flag, so this is a
+            # strict superset (byte-identical v1 behavior).
+            if self.goal_declared_unreachable:
+                return None
         cur_dist = min(abs(cursor[0] - t[0]) + abs(cursor[1] - t[1]) for t in live)
         # Prefer the candidate whose mean learned displacement most reduces the
         # predicted distance. Unknown-displacement candidates are skipped here
         # (rule 4.5/4.7 issue them, training the model). Lowest-id tiebreak via
         # sorted iteration + strict-greater test.
+        # g-315-199 (Phase 0): resolve the current lattice node ONCE so the greedy
+        # loop can skip candidates whose (current_node, action) is a known wall.
+        # Mirrors _record_blocked_edge's node computation EXACTLY (single source of
+        # truth for the (node, action) key shape) -- using the live cursor where it
+        # uses prev_cursor. Meaningful only on the v2 seeded path with a calibrated
+        # lattice; None otherwise -> no filtering -> v1 byte-identical. Computed
+        # before the loop (one _lattice_step + _to_node per tick), so per-candidate
+        # cost stays a single O(1) set membership (guard-629 hot-loop discipline).
+        blocked_node: Optional[tuple[int, int]] = None
+        if seed_target is not None:
+            _stride_row, _stride_col, _ = self._lattice_step(axis_map)
+            if _stride_row is not None and self._lattice_origin is not None:
+                blocked_node = self._to_node(cursor, _stride_row, _stride_col)
         best_a: Optional[int] = None
         best_improve = DIRECTED_MIN_IMPROVEMENT
         for a in sorted(set(candidates)):
+            # g-315-199 (Phase 0): never steer INTO a known wall. The greedy rule
+            # picks the distance-minimizing candidate, which when the goal is walled
+            # off is usually the action straight into the blocked edge the BFS
+            # already learned -- the cursor then hammers it. Skip blocked edges; if
+            # ALL candidates are blocked best_a stays None and we return None so the
+            # exploration rules fire instead of hammering.
+            if blocked_node is not None and (blocked_node, a) in self.blocked_edges:
+                continue
             disp = self._action_mean_displacement(a, axis_map)
             if disp is None:
                 continue
