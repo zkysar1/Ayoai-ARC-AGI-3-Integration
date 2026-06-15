@@ -31,18 +31,29 @@ realistic history transitions and the steady-state (no-boundary) per-tick path.
 
 Measured baseline (g-315-196 microbench, single Windows 10 dev box, Python
 3.12.10, fixed seed=42, 64x64 grid, history maxlen=8, pool=8, N=500):
-  solver_v2.choose_action   58.2 ms/tick wallclock, 100.5 KiB tracemalloc peak
+  solver_v2.choose_action   ~52-58 ms/tick wallclock (run-to-run variance:
+  58.2 ms and 51.6 ms across two runs), 100.5 KiB tracemalloc peak
 
-HOTSPOT: perception.extract dominates BOTH axes. The v0 test measures
-extract alone at ~54.4 ms / ~98 KiB (post-g-315-100 history-sweep refactor);
-v2's choose_action adds only ~4 ms and ~3 KiB of per-tick decision overhead
-(episode-boundary detection + per-episode seed/route on boundaries +
-executor/policy decision). The directed-steering Fix B/C path is NOT a
-per-tick budget concern — extract is. Optimisation effort, if ever needed,
-belongs in perception.extract, and a regression there is already double-
-covered (this file + test_solver_v0_envelope.py).
+HOTSPOT (memory): perception.extract dominates the per-tick memory peak. The
+v0 test, re-measured this session (test_solver_v0_envelope.py), puts extract
+alone at 34.27 ms / 97.7 KiB -- i.e. extract is ~97% of choose_action's
+100.5 KiB peak, and v2's added decision work (episode-boundary detection +
+per-episode seed/route on boundaries + executor/policy decision) costs only
+~2.8 KiB. The directed-steering Fix B/C path is NOT a per-tick budget concern.
+Optimisation effort, if ever needed, belongs in perception.extract, and a
+regression there is already double-covered (this file +
+test_solver_v0_envelope.py).
 
-ENVELOPE FIT: 58 ms/tick at ARC's sub-Hz tick rate is negligible CPU, and a
+  Wallclock caveat: extract is the dominant single component on wallclock too,
+  but a precise "+N ms" decision-overhead figure is NOT robust -- v2 cycles a
+  deeper history (deque maxlen=8) than the v0 wallclock test (history=5), so
+  extract itself costs more here; do not subtract the two means to attribute
+  decision overhead. (An earlier draft cited a stale v0 baseline of 54.4 ms /
+  479.7 KiB read from the v0 file comment; g-315-97 (commit 160d7ef) had since
+  restructured extract to flat parallel arrays -- a 4.9x peak-memory cut -- but
+  the comment and the 2x-OLD guard-rail never surfaced it -- rb-1822.)
+
+ENVELOPE FIT: ~50 ms/tick at ARC's sub-Hz tick rate is negligible CPU, and a
 100 KiB peak is trivial against the ~8 GB box. solver_v2 fits the tiny-compute
 design envelope with multiple orders of magnitude of headroom. No overrun.
 """
@@ -74,14 +85,15 @@ PLAYABLE_ACTIONS = [
 ]
 
 # Envelope upper bounds (per-tick). choose_action's dominant cost is the SAME
-# perception.extract() the v0 test measures (~54 ms / 480 KiB baseline) plus the
-# v2-specific overhead (episode-boundary detection, per-episode seed+route on
-# boundaries, executor/policy decision). Guard-rails sit ~2x above the measured
-# v2 baseline; they are regression guards, not the 8 GB / 2 vCPU design
-# envelope (which has GiB / sub-Hz-tick headroom). Guard-rails are ~2x the
-# measured v2 baseline (58.2 ms / 100.5 KiB — see module docstring). Crossing
-# one means a regression to investigate, not a design-envelope breach.
-CHOOSE_ACTION_WALLCLOCK_MS_MAX = 120.0   # ~2x measured 58.2 ms (also == v0 extract guard)
+# perception.extract() the v0 test measures (34.27 ms / 97.7 KiB, re-measured
+# g-315-196) plus the v2-specific overhead (episode-boundary detection,
+# per-episode seed+route on boundaries, executor/policy decision; ~2.8 KiB).
+# Guard-rails sit ~2x above the measured v2 baseline; they are regression
+# guards, not the 8 GB / 2 vCPU design envelope (which has GiB / sub-Hz-tick
+# headroom). Guard-rails are ~2x the measured v2 baseline (~52-58 ms / 100.5
+# KiB -- see module docstring). Crossing one means a regression to
+# investigate, not a design-envelope breach.
+CHOOSE_ACTION_WALLCLOCK_MS_MAX = 120.0   # ~2x measured ~52-58 ms; == v0 extract wallclock guard
 CHOOSE_ACTION_PEAK_KIB_MAX = 256.0       # ~2.5x measured 100.5 KiB
 
 
