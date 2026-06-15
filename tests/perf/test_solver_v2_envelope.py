@@ -31,8 +31,9 @@ realistic history transitions and the steady-state (no-boundary) per-tick path.
 
 Measured baseline (g-315-196 microbench, single Windows 10 dev box, Python
 3.12.10, fixed seed=42, 64x64 grid, history maxlen=8, pool=8, N=500):
-  solver_v2.choose_action   ~52-58 ms/tick wallclock (run-to-run variance:
-  58.2 ms and 51.6 ms across two runs), 100.5 KiB tracemalloc peak
+  solver_v2.choose_action   ~42-58 ms/tick wallclock (run-to-run variance:
+  58.2 / 51.6 / 42.4 ms across g-315-196 + g-315-197 runs), 100.5 KiB
+  tracemalloc peak (stable across all three runs)
 
 HOTSPOT (memory): perception.extract dominates the per-tick memory peak. The
 v0 test, re-measured this session (test_solver_v0_envelope.py), puts extract
@@ -94,7 +95,7 @@ PLAYABLE_ACTIONS = [
 # KiB -- see module docstring). Crossing one means a regression to
 # investigate, not a design-envelope breach.
 CHOOSE_ACTION_WALLCLOCK_MS_MAX = 120.0   # ~2x measured ~52-58 ms; == v0 extract wallclock guard
-CHOOSE_ACTION_PEAK_KIB_MAX = 256.0       # ~2.5x measured 100.5 KiB
+CHOOSE_ACTION_PEAK_KIB_MAX = 210.0       # ~2x measured 100.5 KiB (g-315-197: tightened from 256/2.5x to a true ~2x; a guard far above baseline is a one-way ratchet, rb-1822)
 
 
 def _random_layered_grid() -> list[list[list[int]]]:

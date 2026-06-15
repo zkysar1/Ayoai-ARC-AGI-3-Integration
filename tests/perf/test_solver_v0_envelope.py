@@ -41,20 +41,27 @@ N_ITERATIONS = 1000
 #
 # Measured baseline (g-315-92 microbench, 2026-05-22, single Windows 10 dev
 # box, Python 3.12.10, fixed seed=42, 64x64 grid, history=5):
-#   perception.extract      54.4 ms wallclock, 479.7 KiB tracemalloc peak
+#   perception.extract      ~29-34 ms wallclock, 97.7 KiB tracemalloc peak
+#     (post-g-315-97 flat parallel arrays, commit 160d7ef: a 4.9x memory cut
+#     from the pre-restructure 54.4 ms / 479.7 KiB. Re-measured 34.27 ms /
+#     97.7 KiB (g-315-196) and 29.06 ms / 97.6 KiB (g-315-197): the memory
+#     peak is stable + robust; wallclock varies run-to-run, so memory is the
+#     regression signal, not wallclock. rb-1822.)
 #   signatures.filter_actions    10.0 us wallclock
 #   policy.choose                19.4 us wallclock
 #   policy.decide (ACTION6 path)  904 us wallclock (g-315-104, 2026-05-23):
 #     choose() + the _target_cell flat roles/churns scan over the full 64x64
 #     grid (4096 cells). The scan, not choose(), dominates this path.
 #
-# DIVERGENCE: design/integration-design.md Part 11 section 11.4 claimed
-# "<= 16 KiB per FrameFeatures" -- the actual measurement is 480 KiB
-# (~30x the documented claim). The cell-attribute dataclass at 4096
-# CellAttribute instances dominates; the input grid is small. Follow-up
-# goal files an Investigate.
-PERCEPTION_PEAK_KIB_MAX = 1024.0  # 2x measured 480 KiB; tiny-compute box has GiB headroom
-PERCEPTION_WALLCLOCK_MS_MAX = 120.0  # 2x measured 54 ms; ARC tick rate is sub-Hz
+# DIVERGENCE (reconciled post-g-315-97, g-315-197): design/integration-design.md
+# Part 11 section 11.4 claimed "<= 16 KiB per FrameFeatures" -- the live
+# measurement is 97.7 KiB (~6x the documented claim, down from the pre-g-315-97
+# 480 KiB / ~30x). g-315-97 (commit 160d7ef) replaced the 4096-instance
+# CellAttribute dataclass with flat parallel arrays (a 4.9x memory cut),
+# closing most of the gap; the residual ~6x is the flat arrays themselves over
+# 4096 cells. The 16 KiB doc claim is still optimistic but no longer ~30x off.
+PERCEPTION_PEAK_KIB_MAX = 200.0  # ~2x live 97.7 KiB (g-315-197). Was 1024 = 2x the PRE-g-315-97 480 KiB -- a one-way ratchet that no longer caught a 4.9x regression back toward 480 (rb-1822). Tiny-compute box has GiB headroom; this guards the flat-array baseline.
+PERCEPTION_WALLCLOCK_MS_MAX = 120.0  # ~3.5x live ~30 ms (g-315-197); kept deliberately loose -- wallclock varies run-to-run (29-34 ms across g-315-196/197) while memory is the robust regression signal (rb-1822). ARC tick rate is sub-Hz.
 SIGNATURES_WALLCLOCK_US_MAX = 100.0  # 10x measured 10 us
 POLICY_WALLCLOCK_US_MAX = 100.0  # 5x measured 19 us
 # decide() under ACTION6 selection runs choose() PLUS the _target_cell flat
