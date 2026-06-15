@@ -141,6 +141,22 @@ class AxisMap:
         gates — the actions directed steering can actually trust to move."""
         return sorted(a for a, v in self.vectors.items() if v.reliable)
 
+    def is_usable(self) -> bool:
+        """True iff AT LEAST ONE calibrated action is reliable — the minimum a
+        directed-steering policy needs (one trustworthy direction lets rule 4.6
+        steer toward any goal reachable on that axis). Phase 5 full-degrade gate
+        (g-315-200): when this is False the whole calibration is noise and the
+        streaming adapter degrades the episode to the DeterministicExecutor
+        rather than steering on it.
+
+        Deliberately does NOT consult horizontal_blocked / vertical_blocked:
+        those flag PER-AXIS unavailability (a goal needing the blocked axis), not
+        FULL-episode degrade. A map reliable on only one axis is still usable
+        (guard-689: axis-blocked is position-dependent, not a permanent capability
+        loss). `any()` over empty vectors is False, so an empty AxisMap is
+        correctly unusable."""
+        return any(v.reliable for v in self.vectors.values())
+
 
 def move_actions_from(available: Iterable[int]) -> list[int]:
     """The simple move-actions to calibrate: available ids minus RESET and

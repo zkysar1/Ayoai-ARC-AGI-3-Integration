@@ -367,9 +367,16 @@ class SolverV2StreamingAdapter:
                 # THIS tick. _calibrating flips False inside on the transition
                 # tick, so re-read it for the provenance label.
                 decision = self._decide_via_calibration(frame, features)
-                executor_name = (
-                    "CalibrationProbe" if self._calibrating else "HandBuiltPolicy"
-                )
+                # g-315-200 (Phase 5): _decide_via_calibration may degrade the
+                # episode mid-tick (unusable axis_map or a probe exception),
+                # flipping _use_policy False and returning a DeterministicExecutor
+                # decision. Label it honestly so the recording shows the degrade.
+                if not self._use_policy:
+                    executor_name = "DeterministicExecutor"
+                elif self._calibrating:
+                    executor_name = "CalibrationProbe"
+                else:
+                    executor_name = "HandBuiltPolicy"
             else:
                 decision = self._decide_via_policy(frame, features)
                 executor_name = "HandBuiltPolicy"
@@ -532,9 +539,11 @@ class SolverV2StreamingAdapter:
 
     def _decide_via_calibration(
         self, frame: FrameData, features: FrameFeatures
-    ) -> PolicyDecision:
+    ) -> ExecutorDecision | PolicyDecision:
         """Drive the episode-start CalibrationProbe one tick, or finalize it and
-        steer (g-315-148, Apply 2b).
+        steer (g-315-148, Apply 2b). May return an ExecutorDecision when Phase 5
+        (g-315-200) degrades the episode to the DeterministicExecutor on an
+        unusable AxisMap or a probe exception.
 
         Deferred-observe (mirrors the probe's driver contract): pass THIS tick's
         cursor centroid to probe.step(), which records the previous probe
@@ -557,25 +566,60 @@ class SolverV2StreamingAdapter:
                 f"solver-v2 calibration route missing probe/policy "
                 f"(tick {self._tick})"
             )
-        next_action = probe.step(detect_cursor_centroid(features))
-        if next_action is not None:
-            # Still calibrating: issue the probe's move-action this tick. Probe
-            # actions are simple moves, so no spatial coordinates.
-            return PolicyDecision(action=next_action, x=None, y=None)
-        # Schedule drained -> finalize and supersede the online steering basis.
-        axis = probe.result()
-        policy.axis_map = axis.policy_axis_map()
+        # g-315-200 (Phase 5) exception-hardening: the probe interaction
+        # (probe.step / detect_cursor_centroid / probe.result) had NO try/except,
+        # unlike the sibling _decide_via_policy which wraps policy.decide. A throw
+        # here propagated uncaught and aborted the play. Wrap it; on failure log at
+        # exception level (never swallow silently) and degrade the episode to the
+        # DeterministicExecutor -- the same v1 fallback as the is_usable() gate.
+        try:
+            next_action = probe.step(detect_cursor_centroid(features))
+            if next_action is not None:
+                # Still calibrating: issue the probe's move-action this tick. Probe
+                # actions are simple moves, so no spatial coordinates.
+                return PolicyDecision(action=next_action, x=None, y=None)
+            # Schedule drained -> finalize the calibrated axis_map.
+            axis = probe.result()
+        except Exception:
+            logger.exception(
+                "solver-v2 calibration probe failed (tick %d) -- degrading "
+                "episode to DeterministicExecutor",
+                self._tick,
+            )
+            self._calibrating = False
+            self._probe = None
+            self._use_policy = False
+            return self._executor.execute(
+                self._episode_prior, features, self._tick_in_episode
+            )
+        # Calibration finished cleanly. Bookkeeping that runs regardless of
+        # usability: stop calibrating, drop the probe, and stash the finalized
+        # AxisMap so choose_action stamps it into THIS tick's decision_provenance
+        # (rb-1668 axis_map half -- without it an axis-collapse g-315-172 is only
+        # diagnosable by offline re-replay). Stamping it EVEN WHEN unusable makes
+        # the degrade reason visible in the recording.
         self._calibrating = False
         self._probe = None
-        # rb-1668 (axis_map half): stash the finalized AxisMap so choose_action
-        # stamps it into THIS tick's decision_provenance (one-shot). Without this
-        # the calibrated reliable_actions / per-action vectors are NOT in the
-        # recording, so an axis-collapse (g-315-172) is only diagnosable by
-        # offline re-replay, not from the recording alone.
         self._finalized_axis_map = axis
-        # Steer THIS tick with the calibrated policy (do not burn the tick). The
-        # deferred-observe linkage was reset at the boundary and never set during
+        # g-315-200 (Phase 5) full-degrade quality gate: a fully unreliable AxisMap
+        # (no action passed the reliability gates) would run the policy on noise.
+        # Degrade the whole episode to the DeterministicExecutor instead. is_usable()
+        # is True iff AT LEAST ONE calibrated action is reliable.
+        if not axis.is_usable():
+            logger.warning(
+                "solver-v2 calibration fully unreliable (tick %d) -- falling back "
+                "to DeterministicExecutor for the episode",
+                self._tick,
+            )
+            self._use_policy = False
+            return self._executor.execute(
+                self._episode_prior, features, self._tick_in_episode
+            )
+        # Usable calibration: supersede the online steering basis and steer THIS
+        # tick with the calibrated policy (do not burn the tick). The deferred-
+        # observe linkage was reset at the boundary and never set during
         # calibration, so _decide_via_policy correctly skips its first observe().
+        policy.axis_map = axis.policy_axis_map()
         return self._decide_via_policy(frame, features)
 
     def _decide_via_policy(

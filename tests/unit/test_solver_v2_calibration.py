@@ -140,6 +140,49 @@ def test_move_actions_from_excludes_reset_and_action6() -> None:
     assert move_actions_from([3, 1, 2, 1]) == [1, 2, 3]
 
 
+# ───────── is_usable full-degrade gate (g-315-200, Phase 5) ──────────
+
+
+def test_axis_map_is_usable_false_when_all_unreliable() -> None:
+    """is_usable() is False when EVERY calibrated vector is unreliable — the
+    full-degrade trigger. A map with no trustworthy direction is noise, so the
+    streaming adapter must fall back to the DeterministicExecutor rather than
+    steer on garbage (g-315-200, design Phase 5)."""
+    am = AxisMap(
+        vectors={
+            1: AxisVector(1, 0.0, 0.0, 2, False),
+            2: AxisVector(2, 0.0, 0.0, 2, False),
+        },
+        horizontal_blocked=True,
+        vertical_blocked=True,
+    )
+    assert am.is_usable() is False
+
+
+def test_axis_map_is_usable_false_on_empty_vectors() -> None:
+    """An AxisMap with no vectors at all (calibration produced nothing) is
+    unusable — any() over an empty dict is False (g-315-200)."""
+    am = AxisMap(vectors={}, horizontal_blocked=True, vertical_blocked=True)
+    assert am.is_usable() is False
+
+
+def test_axis_map_is_usable_true_when_some_reliable() -> None:
+    """A single reliable vector is enough: one trustworthy direction lets directed
+    steering pursue any goal reachable on that axis, so is_usable() is True even
+    when the other axis is blocked. is_usable() deliberately ignores the
+    axis-blocked flags — per-axis unavailability is NOT full-episode degrade
+    (guard-689)."""
+    am = AxisMap(
+        vectors={
+            1: AxisVector(1, 5.0, 0.0, 2, True),
+            2: AxisVector(2, 0.0, 0.0, 2, False),
+        },
+        horizontal_blocked=True,
+        vertical_blocked=False,
+    )
+    assert am.is_usable() is True
+
+
 # ───────── wall-contact partition (g-315-193 / Fix B, guard-689) ──────────
 
 

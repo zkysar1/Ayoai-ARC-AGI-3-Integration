@@ -7,10 +7,11 @@ the seed-once-per-episode behavior, and solver-v2 provenance integrity.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 
 from solver_v0.policy import HandBuiltPolicy
-from solver_v2.calibration import K_REPEATS
+from solver_v2.calibration import K_REPEATS, build_axis_map
 from solver_v2.episode import (
     OBJECTIVE_REACH_CELL,
     OBJECTIVE_TOGGLE_AT_CELL,
@@ -81,6 +82,23 @@ class _ScriptedSeedProvider(SeedProvider):
         prior = self._priors[min(self._i, len(self._priors) - 1)]
         self._i += 1
         return replace(prior, episode_id=context.episode_id)
+
+
+def _force_usable_calibration(adapter: SolverV2StreamingAdapter) -> None:
+    """Make the live CalibrationProbe finalize a USABLE AxisMap.
+
+    The shared `_strategic()` frame has a static (non-moving) cursor, so a real
+    probe over it produces an all-unreliable AxisMap — which the g-315-200
+    full-degrade gate (correctly) routes to the DeterministicExecutor. Tests that
+    exercise the calibration-COMPLETE -> HandBuiltPolicy steering transition need
+    the map to be usable, so monkeypatch the probe's result() to return a
+    single-reliable-axis map (ACTION1 moves +1 row consistently). step() is left
+    intact, so the probe still drives its full move-action schedule; only the
+    finalized map is forced usable. Call AFTER the probe exists (after the first
+    choose_action)."""
+    probe = adapter.probe
+    assert probe is not None
+    probe.result = lambda: build_axis_map({1: [(1.0, 0.0), (1.0, 0.0)]})
 
 
 def test_reset_short_circuit_does_not_seed_or_tick() -> None:
@@ -321,6 +339,11 @@ def test_policy_deferred_observe_accumulates_history() -> None:
     assert first.provenance["executor"] == "CalibrationProbe"
     probe = adapter.probe
     assert probe is not None
+    # The static _strategic() frame's cursor never moves -> a real probe yields an
+    # all-unreliable AxisMap, which the g-315-200 gate routes to the
+    # DeterministicExecutor. Force a usable calibration so the HandBuiltPolicy
+    # steering transition (the behavior under test here) is reached.
+    _force_usable_calibration(adapter)
     budget = probe.budget
     # Ticks 1..budget: the budget-th call is the transition (probe drained) and
     # steers via HandBuiltPolicy. observe() is skipped during calibration.
@@ -409,6 +432,9 @@ def test_axis_map_recorded_in_provenance_on_calibration_complete_tick() -> None:
     assert "axis_map" not in first.provenance  # boundary/calibrating: not yet
     probe = adapter.probe
     assert probe is not None
+    # Force a usable calibration (static frame -> unreliable; would degrade and
+    # never stamp the steering-path axis_map this test asserts on). g-315-200.
+    _force_usable_calibration(adapter)
     budget = probe.budget
     last = first
     for _ in range(budget):
@@ -499,6 +525,10 @@ def test_calibration_completes_and_sets_axis_map() -> None:
     assert probe is not None
     budget = probe.budget
     assert budget == 5 * K_REPEATS  # ls20: 5 move-actions (ACTION1-5)
+    # Force a usable calibration so the finalize-and-steer path (axis_map set,
+    # HandBuiltPolicy active) is reached; the static frame alone would degrade
+    # to the DeterministicExecutor under the g-315-200 gate.
+    _force_usable_calibration(adapter)
     last = first
     for _ in range(budget):
         last = adapter.choose_action(_strategic(score=0))
@@ -508,6 +538,71 @@ def test_calibration_completes_and_sets_axis_map() -> None:
     assert adapter.policy is not None
     assert adapter.policy.axis_map is not None
     assert last.provenance["executor"] == "HandBuiltPolicy"
+
+
+# ── g-315-200 (Phase 5): full-degrade gate + exception-hardening ───────────
+
+
+def test_unusable_calibration_degrades_to_deterministic() -> None:
+    # The shared _strategic() frame's cursor never moves, so the real probe
+    # finalizes an all-unreliable AxisMap. The g-315-200 full-degrade gate routes
+    # the WHOLE episode to the DeterministicExecutor rather than steer the
+    # HandBuiltPolicy on noise. (No _force_usable_calibration: the unreliable map
+    # IS the condition under test.)
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_REACH_CELL, goal_cell=(0, 3), confidence=0.5)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    first = adapter.choose_action(_strategic(score=0))
+    assert first.provenance["executor"] == "CalibrationProbe"
+    probe = adapter.probe
+    assert probe is not None
+    budget = probe.budget
+    last = first
+    for _ in range(budget):
+        last = adapter.choose_action(_strategic(score=0))
+    # Transition tick: unusable map -> DeterministicExecutor, not HandBuiltPolicy.
+    assert last.provenance["executor"] == "DeterministicExecutor"
+    assert adapter.calibrating is False
+    assert adapter.use_policy is False
+    # The unreliable map is STILL stamped so the degrade is diagnosable offline
+    # from the recording alone (no reliable actions -> empty list).
+    assert last.provenance["axis_map"]["reliable_actions"] == []
+    # The episode STAYS degraded on subsequent ticks (episode-level decision).
+    nxt = adapter.choose_action(_strategic(score=1))
+    assert nxt.provenance["executor"] == "DeterministicExecutor"
+
+
+def test_calibration_probe_exception_degrades_and_logs(caplog) -> None:
+    # If the probe raises mid-calibration (a malformed frame in
+    # detect_cursor_centroid or probe.step), the episode degrades to the
+    # DeterministicExecutor and the exception is LOGGED — never propagated to
+    # abort the play. Mirrors the sibling _decide_via_policy hardening.
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_REACH_CELL, goal_cell=(0, 3), confidence=0.5)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    first = adapter.choose_action(_strategic(score=0))
+    assert first.provenance["executor"] == "CalibrationProbe"
+    probe = adapter.probe
+    assert probe is not None
+
+    def _boom(_centroid: object) -> int:
+        raise RuntimeError("probe step boom")
+
+    probe.step = _boom
+    with caplog.at_level(logging.ERROR, logger="solver_v2.streaming_adapter"):
+        decision = adapter.choose_action(_strategic(score=1))
+    # No propagation; the episode degraded to the DeterministicExecutor.
+    assert decision.provenance["executor"] == "DeterministicExecutor"
+    assert adapter.calibrating is False
+    assert adapter.probe is None
+    assert adapter.use_policy is False
+    assert "calibration probe failed" in caplog.text
 
 
 def test_calibration_issues_scheduled_move_actions() -> None:
