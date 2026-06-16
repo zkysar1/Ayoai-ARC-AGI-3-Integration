@@ -68,6 +68,7 @@ from solver_v2.episode import (
 )
 from solver_v2.executor import DeterministicExecutor, ExecutorDecision
 from solver_v2.seed_provider import DeterministicOracleSeedProvider, SeedProvider
+from solver_v2.toggle_probe import ToggleProbe, cell_under_cursor, toggle_candidates
 from structs import FrameData, GameAction, GameState
 
 logger = logging.getLogger(__name__)
@@ -197,6 +198,26 @@ class SolverV2StreamingAdapter:
         self._episode_axis_key: Optional[tuple[str, frozenset[int]]] = None
         self._axis_map_source: Optional[str] = None
         self._cached_zero_streak: int = 0
+
+        # g-315-206 ToggleProbe state (Phase 3). A TRUSTED toggle_at_cell whose
+        # action set lacks ACTION6 (movement-class) takes the steering route AND
+        # runs a ToggleProbe AFTER calibration to DISCOVER a non-movement action
+        # that toggles the cell under the cursor; the discovered action becomes
+        # the arrival action (instead of the ACTION6 click). _toggle_no_action6
+        # marks this episode as the no-ACTION6 toggle route (read by the arrival
+        # override); _toggle_pending means "still need to START the probe once the
+        # axis_map is decided"; _toggle_probe/_toggling drive the per-tick probe
+        # phase; _toggle_action_id holds the discovered action (None until the
+        # probe drains, and None means "no toggle found -> arrival degrades to the
+        # DeterministicExecutor"); _episode_available is the boundary's action set
+        # (the probe candidate source, needed after calibration). Reset at every
+        # boundary in _route_episode (no stale cross-episode toggle state).
+        self._toggle_probe: Optional[ToggleProbe] = None
+        self._toggling: bool = False
+        self._toggle_pending: bool = False
+        self._toggle_no_action6: bool = False
+        self._toggle_action_id: Optional[int] = None
+        self._episode_available: list[int] = []
 
         self._episode_prior: Optional[EpisodePrior] = None
         self._episode_id = 0
@@ -407,10 +428,28 @@ class SolverV2StreamingAdapter:
                 # episode mid-tick (unusable axis_map or a probe exception),
                 # flipping _use_policy False and returning a DeterministicExecutor
                 # decision. Label it honestly so the recording shows the degrade.
+                # g-315-206: a no-ACTION6 toggle episode transitions calibration ->
+                # ToggleProbe on the finalize tick (_toggling flips True), so check
+                # it before the HandBuiltPolicy fall-through.
                 if not self._use_policy:
                     executor_name = "DeterministicExecutor"
                 elif self._calibrating:
                     executor_name = "CalibrationProbe"
+                elif self._toggling:
+                    executor_name = "ToggleProbe"
+                else:
+                    executor_name = "HandBuiltPolicy"
+            elif self._toggling and self._toggle_probe is not None:
+                # g-315-206 ToggleProbe phase: issue each non-movement candidate
+                # once and read the cell-under-cursor change (deferred-observe).
+                # Drains to the discovered _toggle_action_id (or None), then steers
+                # THIS tick via the policy. _toggling flips False on drain, so the
+                # post-drain steer labels HandBuiltPolicy (mirrors calibration).
+                decision = self._decide_via_toggle(frame, features)
+                if not self._use_policy:
+                    executor_name = "DeterministicExecutor"
+                elif self._toggling:
+                    executor_name = "ToggleProbe"
                 else:
                     executor_name = "HandBuiltPolicy"
             else:
@@ -552,22 +591,27 @@ class SolverV2StreamingAdapter:
         self._episode_axis_key = None
         self._axis_map_source = None
         self._cached_zero_streak = 0
-        # A trusted toggle_at_cell navigates exactly like reach_cell, but if it
-        # cannot issue its arrival click (ACTION6 absent from the action set) it
-        # must NOT take the steering route -- it would reach the goal with no way
-        # to toggle. Fall through to the DeterministicExecutor (Phase 3's
-        # ToggleProbe handles the movement-class no-ACTION6 toggle); warn so the
-        # degrade is visible in the recording.
-        toggle_blocked_no_action6 = (
+        # g-315-206: reset per-episode ToggleProbe state (no stale cross-episode
+        # toggle carryover). The toggle branch below re-arms _toggle_pending /
+        # _toggle_no_action6 when this episode is a trusted no-ACTION6 toggle.
+        self._toggle_probe = None
+        self._toggling = False
+        self._toggle_pending = False
+        self._toggle_no_action6 = False
+        self._toggle_action_id = None
+        self._episode_available = list(available_action_ids)
+        # A trusted toggle_at_cell navigates exactly like reach_cell. With ACTION6
+        # available, _decide_via_policy issues an ACTION6 click on arrival. WITHOUT
+        # ACTION6 (movement-class), there is no obvious arrival action -- so this
+        # episode takes the steering route AND runs a ToggleProbe (g-315-206) after
+        # calibration to DISCOVER a non-movement action that toggles the cell under
+        # the cursor; that discovered action becomes the arrival action. (Pre-Phase-3,
+        # the no-ACTION6 toggle degraded straight to the DeterministicExecutor.)
+        toggle_needs_probe = (
             prior is not None
             and prior.objective == OBJECTIVE_TOGGLE_AT_CELL
             and _ACTION6_ID not in available_action_ids
         )
-        if toggle_blocked_no_action6:
-            logger.warning(
-                "toggle_at_cell arrival without ACTION6 -- falling back to "
-                "DeterministicExecutor; Phase 3 ToggleProbe needed."
-            )
         if (
             prior is not None
             and prior.objective in (
@@ -577,7 +621,6 @@ class SolverV2StreamingAdapter:
                 OBJECTIVE_AVOID,
             )
             and prior.is_trusted()
-            and not toggle_blocked_no_action6
         ):
             self._use_policy = True
             self._policy = (
@@ -611,6 +654,14 @@ class SolverV2StreamingAdapter:
                 self._policy.goal_predicate = (
                     lambda s, g: s[0] == g[0] or s[1] == g[1]
                 )
+            # g-315-206: arm the ToggleProbe for a trusted no-ACTION6 toggle. The
+            # probe STARTS once the axis_map is decided below (cache hit / no-move-
+            # actions degrade here; or the calibration-complete finalize in
+            # _decide_via_calibration). _toggle_no_action6 persists for the episode
+            # so the _decide_via_policy arrival override issues the discovered
+            # action (not an ACTION6 click). reach/align/avoid leave both False.
+            self._toggle_pending = toggle_needs_probe
+            self._toggle_no_action6 = toggle_needs_probe
             # g-315-205: cross-episode AxisMap reuse. Key on (game_class, the
             # episode's full available-action set). On a hit whose cached map
             # is_usable(), skip the CalibrationProbe entirely -- set
@@ -642,6 +693,11 @@ class SolverV2StreamingAdapter:
                 self._axis_map_source = "cached"
                 self._probe = None
                 self._calibrating = False
+                # g-315-206: cache hit -> axis_map decided NOW (no calibration
+                # phase). Start the ToggleProbe this boundary so the dispatch
+                # drives it next; candidates come from the cached map's movers.
+                if self._toggle_pending:
+                    self._start_toggle_probe(cached)
             else:
                 # Cache miss (or unusable cached map): build the episode-start
                 # CalibrationProbe over the move-actions available now (g-315-148,
@@ -658,6 +714,12 @@ class SolverV2StreamingAdapter:
                 else:
                     self._probe = None
                     self._calibrating = False
+                    # g-315-206: no move-actions -> no calibration phase, axis_map
+                    # stays None (online basis). Start the ToggleProbe now with a
+                    # None axis_map (every non-RESET/non-ACTION6 action is a
+                    # candidate -- nothing was proven to move).
+                    if self._toggle_pending:
+                        self._start_toggle_probe(None)
         else:
             self._use_policy = False
             self._probe = None
@@ -758,6 +820,93 @@ class SolverV2StreamingAdapter:
         # observe linkage was reset at the boundary and never set during
         # calibration, so _decide_via_policy correctly skips its first observe().
         policy.axis_map = axis.policy_axis_map()
+        # g-315-206: a no-ACTION6 toggle episode now runs the ToggleProbe over the
+        # NON-movement actions (those this axis_map did NOT mark reliable) to
+        # discover the toggle action BEFORE steering. Start it and drive its first
+        # candidate THIS tick (do not burn the finalize tick).
+        if self._toggle_pending:
+            self._start_toggle_probe(axis)
+            return self._decide_via_toggle(frame, features)
+        return self._decide_via_policy(frame, features)
+
+    def _start_toggle_probe(self, axis_map: Optional[AxisMap]) -> None:
+        """g-315-206: build this episode's ToggleProbe once the calibrated AxisMap
+        is decided (cache hit, no-move-actions degrade, or calibration complete).
+        Candidates are the NON-movement actions (the episode's available ids minus
+        RESET/ACTION6 minus the axis_map's reliable movers); with axis_map None
+        every non-RESET/non-ACTION6 action is a candidate (nothing was proven to
+        move). Flips _toggling on so choose_action's dispatch drives the probe
+        next, and clears _toggle_pending (one-shot start)."""
+        self._toggle_probe = ToggleProbe(
+            toggle_candidates(self._episode_available, axis_map)
+        )
+        self._toggling = True
+        self._toggle_pending = False
+
+    def _decide_via_toggle(
+        self, frame: FrameData, features: FrameFeatures
+    ) -> PolicyDecision:
+        """Drive the episode's ToggleProbe one tick, or finalize it and steer
+        (g-315-206). Mirrors _decide_via_calibration's structure.
+
+        Deferred-observe: pass THIS tick's cell-under-cursor value to
+        probe.step(), which reads whether the PREVIOUS probe candidate changed
+        that cell and returns the next candidate to issue. While the schedule has
+        candidates, return that candidate as a simple action (x=y=None). When
+        step() returns None the schedule is drained (or a toggle was found first):
+        record the discovered _toggle_action_id (None when nothing toggled), flip
+        _toggling off, and steer THIS tick via _decide_via_policy so the
+        transition tick is not wasted. The discovered action is consumed by the
+        toggle arrival override in _decide_via_policy; None there degrades the
+        arrival to the DeterministicExecutor.
+
+        guard-629 sibling: the probe runs only during this episode-start window,
+        never as per-tick instrumentation on the steady-state steering path.
+        """
+        probe = self._toggle_probe
+        policy = self._policy
+        if probe is None or policy is None:
+            raise AyoaiStreamingError(
+                f"solver-v2 toggle route missing probe/policy (tick {self._tick})"
+            )
+        # Exception-hardening (mirrors _decide_via_calibration, g-315-200): a throw
+        # in cursor detection / cell read / probe.step must not abort the play. On
+        # failure, log and end the toggle phase with no discovered action (arrival
+        # then falls to the DeterministicExecutor).
+        try:
+            cell = cell_under_cursor(features, detect_cursor_centroid(features))
+            next_action = probe.step(cell)
+        except Exception:
+            logger.exception(
+                "solver-v2 toggle probe failed (tick %d) -- ending toggle phase "
+                "with no discovered action",
+                self._tick,
+            )
+            self._toggling = False
+            self._toggle_probe = None
+            self._toggle_action_id = None
+            return self._decide_via_policy(frame, features)
+        if next_action is not None:
+            # Still discovering: issue the candidate this tick. Candidates are
+            # simple (non-ACTION6) actions, so they carry no spatial coordinates.
+            return PolicyDecision(action=next_action, x=None, y=None)
+        # Schedule drained (or first-match short-circuit): record the discovered
+        # toggle action and transition to steering THIS tick.
+        self._toggle_action_id = probe.result()
+        self._toggling = False
+        self._toggle_probe = None
+        if self._toggle_action_id is not None:
+            logger.info(
+                "solver-v2 toggle action discovered: action_id=%d (tick %d)",
+                self._toggle_action_id,
+                self._tick,
+            )
+        else:
+            logger.warning(
+                "solver-v2 toggle probe found no grid-change action (tick %d) -- "
+                "arrival will degrade to DeterministicExecutor",
+                self._tick,
+            )
         return self._decide_via_policy(frame, features)
 
     def _decide_via_policy(
@@ -783,6 +932,11 @@ class SolverV2StreamingAdapter:
             raise AyoaiStreamingError(
                 f"solver-v2 movement route has no policy (tick {self._tick})"
             )
+        # _episode_prior is non-None on any steering tick: choose_action guards it
+        # before dispatch AND the movement route requires a trusted prior. Assert it
+        # so mypy narrows EpisodePrior|None for the executor degrade fallbacks below
+        # (the align-stop and the g-315-206 toggle-arrival-with-no-toggle paths).
+        assert self._episode_prior is not None
         if (
             self._previous_policy_action is not None
             and self._previous_frame is not None
@@ -840,10 +994,37 @@ class SolverV2StreamingAdapter:
                     abs(cursor[0] - goal[0]) < NOISE_FLOOR_CELLS
                     and abs(cursor[1] - goal[1]) < NOISE_FLOOR_CELLS
                 ):
-                    pd = PolicyDecision(
-                        action=_ACTION6_ID, x=goal[1], y=goal[0]
-                    )
-                    self._use_policy = False
+                    if self._toggle_no_action6:
+                        # g-315-206: movement-class toggle (no ACTION6). Issue the
+                        # probe-discovered toggle action (a simple action, no
+                        # coords) on arrival. When the probe found none
+                        # (_toggle_action_id is None) there is nothing to issue, so
+                        # degrade the arrival to the DeterministicExecutor (the same
+                        # one-shot terminal pattern as align_to_cell).
+                        self._use_policy = False
+                        if self._toggle_action_id is not None:
+                            pd = PolicyDecision(
+                                action=self._toggle_action_id, x=None, y=None
+                            )
+                        else:
+                            try:
+                                ed = self._executor.execute(
+                                    self._episode_prior,
+                                    features,
+                                    self._tick_in_episode,
+                                )
+                            except Exception as e:
+                                raise AyoaiStreamingError(
+                                    "solver-v2 toggle-arrival executor failed "
+                                    f"(tick {self._tick}): {e}"
+                                ) from e
+                            pd = PolicyDecision(action=ed.action, x=ed.x, y=ed.y)
+                    else:
+                        # Phase 1a (g-315-201) ACTION6 click AT the goal cell.
+                        pd = PolicyDecision(
+                            action=_ACTION6_ID, x=goal[1], y=goal[0]
+                        )
+                        self._use_policy = False
         # Phase 1b (g-315-202) align_to_cell arrival override. When steering an
         # ALIGN objective and the cursor shares a row OR column with the goal
         # cell (within NOISE_FLOOR_CELLS on EITHER axis -- the CORRECTED stop:

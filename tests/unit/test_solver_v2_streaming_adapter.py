@@ -276,9 +276,14 @@ def test_movement_reach_cell_routes_to_policy() -> None:
     assert decision.action in LS20_AVAILABLE
 
 
-def test_click_toggle_routes_to_deterministic() -> None:
+def test_untrusted_toggle_no_action6_falls_to_deterministic() -> None:
+    # g-315-206: the no-ACTION6 ToggleProbe route is gated on TRUST. An UNTRUSTED
+    # toggle (confidence < SEED_TRUST_MIN) still degrades to the DeterministicExecutor
+    # regardless of ACTION6 presence -- the probe is never armed for an untrusted
+    # seed. (A TRUSTED no-ACTION6 toggle now routes to policy + ToggleProbe; see
+    # test_trusted_toggle_without_action6_routes_to_policy_and_arms_probe.)
     seed = _ScriptedSeedProvider(
-        _prior(OBJECTIVE_TOGGLE_AT_CELL, goal_cell=(0, 1), confidence=0.5)
+        _prior(OBJECTIVE_TOGGLE_AT_CELL, goal_cell=(0, 1), confidence=0.3)
     )
     adapter = SolverV2StreamingAdapter(
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
@@ -286,6 +291,7 @@ def test_click_toggle_routes_to_deterministic() -> None:
     decision = adapter.choose_action(_strategic())
     assert adapter.use_policy is False
     assert adapter.policy is None
+    assert adapter._toggle_no_action6 is False  # untrusted -> probe not armed
     assert decision.provenance["executor"] == "DeterministicExecutor"
 
 
@@ -354,21 +360,116 @@ def test_toggle_arrival_fires_action6_with_coords(monkeypatch) -> None:
     assert adapter.use_policy is False
 
 
-def test_trusted_toggle_without_action6_falls_to_deterministic(caplog) -> None:
-    # A TRUSTED toggle_at_cell whose action set lacks ACTION6 (movement-class)
-    # cannot issue the arrival click -> fall through to the DeterministicExecutor
-    # and log a warning (Phase 3's ToggleProbe handles this no-ACTION6 case).
+def test_trusted_toggle_without_action6_routes_to_policy_and_arms_probe() -> None:
+    # g-315-206 Phase 3: a TRUSTED toggle_at_cell whose action set lacks ACTION6
+    # (movement-class) NO LONGER degrades straight to the DeterministicExecutor.
+    # It takes the steering route, calibrates the move-actions, and ARMS the
+    # ToggleProbe (which runs after calibration to discover the non-movement
+    # toggle action). _strategic exposes ACTION1-5 (move actions), so calibration
+    # starts first on this boundary tick and the probe is pending (not yet started).
     seed = _ScriptedSeedProvider(
         _prior(OBJECTIVE_TOGGLE_AT_CELL, goal_cell=(0, 1), confidence=0.9)
     )
     adapter = SolverV2StreamingAdapter(
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
     )
-    with caplog.at_level(logging.WARNING, logger="solver_v2.streaming_adapter"):
-        decision = adapter.choose_action(_strategic())  # LS20: no ACTION6
-    assert adapter.use_policy is False
+    decision = adapter.choose_action(_strategic())  # LS20: no ACTION6
+    assert adapter.use_policy is True                 # steering route, not fallthrough
+    assert adapter.policy is not None
+    assert adapter.policy.seed_target == (0, 1)
+    assert adapter._toggle_no_action6 is True         # no-ACTION6 toggle arrival route
+    assert adapter._toggle_pending is True            # probe armed; starts after calibration
+    assert adapter._toggling is False                 # calibration runs first
+    assert adapter.calibrating is True                # move-actions present -> calibrate first
+    assert decision.provenance["executor"] == "CalibrationProbe"
+
+
+def test_trusted_toggle_with_action6_does_not_arm_probe() -> None:
+    # g-315-206 (TEST 3 — ACTION6 present so probe skipped): when ACTION6 IS
+    # available, the existing Phase 1a ACTION6 arrival click handles the toggle;
+    # the discovery ToggleProbe is the no-ACTION6 case ONLY, so it is never armed.
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_TOGGLE_AT_CELL, goal_cell=(5, 5), confidence=0.9)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    adapter.choose_action(_click_frame())  # ACTION6 available
+    assert adapter.use_policy is True          # trusted toggle + ACTION6 -> steering
+    assert adapter._toggle_no_action6 is False  # ACTION6 present -> not the probe route
+    assert adapter._toggle_pending is False
+    assert adapter._toggling is False
+    assert adapter._toggle_probe is None
+
+
+def test_toggle_no_action6_discovers_and_issues_on_arrival(monkeypatch) -> None:
+    # g-315-206 (TEST 1 at the adapter level — correct toggle identification + the
+    # discovered action issued on arrival). A no-ACTION6 toggle, primed cache so
+    # calibration is skipped and the ToggleProbe starts at the boundary. Candidates
+    # are [2,3,4,5] (LS20 minus RESET/ACTION6 minus the reliable mover ACTION1).
+    # The cell under the (pinned) cursor changes the tick AFTER ACTION3 is issued,
+    # so the probe attributes the grid-change to ACTION3, then steers and (cursor
+    # already at goal) issues the discovered ACTION3 on arrival.
+    goal = (0, 1)
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_TOGGLE_AT_CELL, goal_cell=goal, confidence=0.9)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    key = (adapter._game_class, frozenset({0, 1, 2, 3, 4, 5}))
+    adapter._axis_map_cache[key] = build_axis_map({1: [(1.0, 0.0), (1.0, 0.0)]})
+    monkeypatch.setattr(
+        "solver_v2.streaming_adapter.detect_cursor_centroid",
+        lambda features: (float(goal[0]), float(goal[1])),
+    )
+    unchanged = FrameData(
+        game_id="ls20-test", frame=[[[4, 4, 3, 8], [4, 3, 4, 8]]],
+        state=GameState.NOT_FINISHED, score=0, guid="play-1",
+        available_actions=LS20_AVAILABLE,
+    )
+    changed = FrameData(
+        game_id="ls20-test", frame=[[[4, 9, 3, 8], [4, 3, 4, 8]]],  # cell (0,1): 4 -> 9
+        state=GameState.NOT_FINISHED, score=0, guid="play-1",
+        available_actions=LS20_AVAILABLE,
+    )
+    adapter.choose_action(unchanged)            # tick1: issue ACTION2 (1st candidate)
+    assert adapter._toggling is True            # ToggleProbe phase (no calibration)
+    adapter.choose_action(unchanged)            # tick2: observe-2 (no change), issue ACTION3
+    decision = adapter.choose_action(changed)   # tick3: observe-3 (CHANGED) -> toggle=3, arrive
+    assert adapter._toggle_action_id == 3       # ACTION3 identified as the toggle action
+    assert adapter.use_policy is False          # one-shot toggle arrival fired
+    assert decision.action == GameAction.ACTION3
+    assert decision.x is None and decision.y is None  # simple action, no spatial coords
+
+
+def test_toggle_no_action6_no_toggle_found_arrival_degrades(monkeypatch) -> None:
+    # g-315-206 (TEST 2 — no-toggle -> None -> DeterministicExecutor). Same setup,
+    # but the cell under the cursor NEVER changes, so the ToggleProbe finds no
+    # toggle action (_toggle_action_id stays None). On arrival there is nothing to
+    # issue, so the toggle degrades to the DeterministicExecutor (one-shot terminal).
+    goal = (0, 1)
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_TOGGLE_AT_CELL, goal_cell=goal, confidence=0.9)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    key = (adapter._game_class, frozenset({0, 1, 2, 3, 4, 5}))
+    adapter._axis_map_cache[key] = build_axis_map({1: [(1.0, 0.0), (1.0, 0.0)]})
+    monkeypatch.setattr(
+        "solver_v2.streaming_adapter.detect_cursor_centroid",
+        lambda features: (float(goal[0]), float(goal[1])),
+    )
+    decision = None
+    for _ in range(8):  # drain the 4-candidate probe, then steer + arrive
+        decision = adapter.choose_action(_strategic())  # static frame: cell never changes
+        if not adapter.use_policy:  # arrival degrade ends the directed route
+            break
+    assert adapter._toggle_no_action6 is True
+    assert adapter._toggle_action_id is None        # probe found no grid-change action
+    assert adapter.use_policy is False              # arrival degraded
     assert decision.provenance["executor"] == "DeterministicExecutor"
-    assert "toggle_at_cell arrival without ACTION6" in caplog.text
 
 
 def test_objective_updates_across_episode_transition() -> None:
@@ -690,12 +791,15 @@ def test_axis_map_recorded_in_provenance_on_calibration_complete_tick() -> None:
 
 def test_per_episode_routing_switches_executor() -> None:
     # Episode 1 movement (REACH_CELL) opens in CalibrationProbe (g-315-148);
-    # episode 2 click (TOGGLE, via a guid-rotation boundary) -> DeterministicExecutor.
+    # episode 2 UNTRUSTED toggle (via a guid-rotation boundary) -> DeterministicExecutor.
     # The route is fixed per EPISODE at the boundary, not re-decided per tick; the
     # episode-2 boundary resets the (interrupted) episode-1 calibration state.
+    # (Episode 2 is untrusted on purpose: a TRUSTED no-ACTION6 toggle now routes to
+    # policy + ToggleProbe per g-315-206, so untrusted keeps the switch-to-executor
+    # demonstration this test is about.)
     seed = _ScriptedSeedProvider(
         _prior(OBJECTIVE_REACH_CELL, goal_cell=(0, 3), confidence=0.5),
-        _prior(OBJECTIVE_TOGGLE_AT_CELL, goal_cell=(0, 1), confidence=0.5),
+        _prior(OBJECTIVE_TOGGLE_AT_CELL, goal_cell=(0, 1), confidence=0.3),
     )
     adapter = SolverV2StreamingAdapter(
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
