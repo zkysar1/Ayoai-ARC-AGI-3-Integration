@@ -58,6 +58,7 @@ from solver_v2.calibration import (
 )
 from solver_v2.episode import (
     OBJECTIVE_ALIGN_TO_CELL,
+    OBJECTIVE_AVOID,
     OBJECTIVE_REACH_CELL,
     OBJECTIVE_TOGGLE_AT_CELL,
     EpisodeBoundaryDetector,
@@ -540,6 +541,7 @@ class SolverV2StreamingAdapter:
                 OBJECTIVE_REACH_CELL,
                 OBJECTIVE_TOGGLE_AT_CELL,
                 OBJECTIVE_ALIGN_TO_CELL,
+                OBJECTIVE_AVOID,
             )
             and prior.is_trusted()
             and not toggle_blocked_no_action6
@@ -554,7 +556,17 @@ class SolverV2StreamingAdapter:
             # target. axis_map starts None (the 2a online model is the interim
             # basis); the CalibrationProbe below replaces it before directed
             # steering begins.
-            self._policy.seed_target = prior.goal_cell
+            # Phase 1c (g-315-203): an `avoid` episode flees the goal_cell, so it
+            # sets avoid_target (NOT seed_target) -- policy rule 4.6 then inverts
+            # its greedy comparator. Leaving seed_target None keeps the BFS
+            # planner + lattice-target replacement skipped (the SEEK machinery);
+            # avoid steers purely greedily away. reach / toggle / align set
+            # seed_target as before (byte-identical). Exactly one of the pair is
+            # ever set per episode (mutually exclusive seek-vs-flee).
+            if prior.objective == OBJECTIVE_AVOID:
+                self._policy.avoid_target = prior.goal_cell
+            else:
+                self._policy.seed_target = prior.goal_cell
             self._policy.axis_map = None
             # Phase 1b (g-315-202): an align_to_cell episode terminates on a
             # row-OR-column share with the goal, not exact arrival. Set the

@@ -14,6 +14,7 @@ from solver_v0.policy import HandBuiltPolicy
 from solver_v2.calibration import K_REPEATS, build_axis_map
 from solver_v2.episode import (
     OBJECTIVE_ALIGN_TO_CELL,
+    OBJECTIVE_AVOID,
     OBJECTIVE_REACH_CELL,
     OBJECTIVE_TOGGLE_AT_CELL,
     OBJECTIVE_UNKNOWN,
@@ -455,6 +456,45 @@ def test_untrusted_align_falls_to_deterministic() -> None:
     # reach_cell / toggle_at_cell. No policy is constructed.
     seed = _ScriptedSeedProvider(
         _prior(OBJECTIVE_ALIGN_TO_CELL, goal_cell=(0, 1), confidence=0.3)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    decision = adapter.choose_action(_strategic())
+    assert adapter.use_policy is False
+    assert adapter.policy is None
+    assert decision.provenance["executor"] == "DeterministicExecutor"
+
+
+def test_trusted_avoid_routes_to_policy_with_avoid_target() -> None:
+    # g-315-203 (Phase 1c): a TRUSTED avoid joins the directed-steering route but
+    # FLEES the goal_cell -- it sets avoid_target (NOT seed_target), so the policy
+    # inverts its greedy comparator. seed_target stays None, keeping the BFS
+    # planner + lattice-target replacement (the SEEK machinery) skipped.
+    # _click_frame has no move-actions -> calibration skipped, policy steers from
+    # tick 0 (provenance HandBuiltPolicy); this asserts ROUTING + avoid_target
+    # wiring (the away-steering behavior is unit-tested in the policy suite).
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_AVOID, goal_cell=(5, 5), confidence=0.9)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    decision = adapter.choose_action(_click_frame())
+    assert adapter.use_policy is True
+    assert adapter.policy is not None
+    assert adapter.policy.avoid_target == (5, 5)   # flees this cell
+    assert adapter.policy.seed_target is None      # NOT a seek -> no seed_target
+    assert adapter.policy.goal_predicate is None   # avoid is not align
+    assert decision.provenance["executor"] == "HandBuiltPolicy"
+
+
+def test_untrusted_avoid_falls_to_deterministic() -> None:
+    # An avoid whose confidence is below SEED_TRUST_MIN (0.5) is NOT trusted ->
+    # degrade to the DeterministicExecutor, exactly like an untrusted reach /
+    # toggle / align. No policy is constructed (avoid_target never set).
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_AVOID, goal_cell=(0, 1), confidence=0.3)
     )
     adapter = SolverV2StreamingAdapter(
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed

@@ -1576,3 +1576,79 @@ def test_directed_target_align_aligned_cursor_returns_none_no_overshoot() -> Non
         )
         == 4
     )  # reach steers right toward the exact cell
+
+
+# ── g-315-203 (Phase 1c): avoid_target inverted-comparator steering ─────────
+# The mirror of reach: avoid sets avoid_target (NOT seed_target), so the BFS
+# planner + lattice-target replacement stay skipped and rule 4.6's greedy
+# comparator is INVERTED to maximize the cursor->avoid_target Manhattan
+# distance. CalibrationProbe-supplied axis_map (_AX4) is the steering basis.
+
+
+def test_avoid_open_grid_increases_distance() -> None:
+    """Open 4-way grid, no walls: with avoid_target set the inverted comparator
+    picks a step that INCREASES the cursor->avoid_target Manhattan distance. The
+    cursor centroid is (0.5,0.5); avoid_target (5.5,5.5) is down-right, so a
+    step-away is UP (1) or LEFT (3) -- never DOWN/RIGHT (toward). Lowest-id
+    tiebreak (sorted) -> action 1. The chosen step strictly increases distance."""
+    policy = HandBuiltPolicy()
+    policy.avoid_target = (5.5, 5.5)
+    av = policy.avoid_target
+    result = policy._directed_target_action(
+        _nav_features(), [1, 2, 3, 4], axis_map=_AX4
+    )
+    assert result in (1, 3)  # a step AWAY from the down-right target
+    assert result == 1  # up wins the up/left tie via lowest-id sorted iteration
+    cur_dist = abs(0.5 - av[0]) + abs(0.5 - av[1])
+    mdr, mdc = _AX4[result][0], _AX4[result][1]
+    new_dist = abs(0.5 + mdr - av[0]) + abs(0.5 + mdc - av[1])
+    assert new_dist > cur_dist  # the move strictly increases distance
+
+
+def test_avoid_wall_adjacent_falls_to_perpendicular() -> None:
+    """g-315-199 interaction: when the direct step-away direction is a known wall,
+    the blocked-edge filter skips it and the cursor falls to a perpendicular
+    distance-increasing move instead of hammering the wall. avoid_target (8.5,0.5)
+    is straight DOWN, so the direct step-away is UP (1); block (node(0,0), 1).
+    The cursor then takes LEFT (3) -- perpendicular, still increasing distance --
+    NOT the walled UP, NOT DOWN (toward). Requires the widened lattice-anchor +
+    blocked-edge gates (the avoid path now keys the filter on lattice nodes)."""
+    policy = HandBuiltPolicy()
+    policy.avoid_target = (8.5, 0.5)
+    policy._lattice_origin = (0.5, 0.5)  # cursor (0.5,0.5) -> node (0,0)
+    policy.blocked_edges.add(((0, 0), 1))  # UP from node (0,0) is a wall
+    result = policy._directed_target_action(
+        _nav_features(), [1, 2, 3, 4], axis_map=_AX4
+    )
+    assert result != 1  # never steer into the known wall (no hammering)
+    assert result == 3  # perpendicular LEFT wins (lowest-id among 3/4 step-aways)
+
+
+def test_avoid_cursor_on_target_moves_off() -> None:
+    """Edge case (cursor on avoid_target): cur_dist is 0, so EVERY calibrated move
+    increases the distance -- the inverted comparator returns a real step-off
+    action rather than None. avoid_target == the (0.5,0.5) cursor centroid."""
+    policy = HandBuiltPolicy()
+    policy.avoid_target = (0.5, 0.5)
+    result = policy._directed_target_action(
+        _nav_features(), [1, 2, 3, 4], axis_map=_AX4
+    )
+    assert result is not None  # a move-off action, not a stall
+    mdr, mdc = _AX4[result][0], _AX4[result][1]
+    assert abs(0.5 + mdr - 0.5) + abs(0.5 + mdc - 0.5) > 0  # strictly off-target
+
+
+def test_avoid_all_step_away_blocked_returns_none() -> None:
+    """Edge case (all directions walled): when every candidate edge from the
+    cursor node is blocked, the avoid loop skips them all and returns None -- the
+    caller falls through to the exploration rules (4.5/4.7) instead of hammering a
+    wall, mirroring the seeded greedy path's all-blocked -> None behavior."""
+    policy = HandBuiltPolicy()
+    policy.avoid_target = (8.5, 0.5)
+    policy._lattice_origin = (0.5, 0.5)
+    for a in (1, 2, 3, 4):
+        policy.blocked_edges.add(((0, 0), a))
+    result = policy._directed_target_action(
+        _nav_features(), [1, 2, 3, 4], axis_map=_AX4
+    )
+    assert result is None  # every step-away walled -> yield to exploration

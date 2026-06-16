@@ -328,6 +328,16 @@ class HandBuiltPolicy:
     # rounded integer indices _to_node yields), NOT raw float centroids, so the
     # comparison is exact-integer clean.
     goal_predicate: Optional[Callable[[tuple, tuple], bool]] = None
+    # g-315-203 (Phase 1c): avoid steering target. When set (a TRUSTED `avoid`
+    # episode), _directed_target_action inverts rule 4.6's greedy comparator to
+    # prefer the candidate that most INCREASES the cursor -> avoid_target
+    # Manhattan distance. Set INSTEAD of seed_target (mutually exclusive per
+    # episode): seed_target seeks the goal_cell, avoid_target flees it. None
+    # (reach / toggle / align / v1) -> the comparator stays distance-MINIMIZING,
+    # byte-identical to pre-g-315-203 (the strict-superset guarantee, Self
+    # gate 3). Like goal_predicate, read directly off self inside
+    # _directed_target_action (not threaded as a param).
+    avoid_target: Optional[tuple[int, int]] = None
     # g-315-171: v2 seeded-path obstacle-aware planner state. BOTH are touched
     # ONLY when seed_target is set (the v2 trusted path), so v1 (seed_target
     # None) is byte-identical — the strict-superset guarantee extends to the
@@ -520,7 +530,15 @@ class HandBuiltPolicy:
         # byte-identical to the pre-g-315-134-b `if stagnant` gate (strict
         # superset). `stagnant` itself is unchanged, so rule 4.7 below is
         # unaffected.
-        if stagnant or self.seed_target is not None:
+        # g-315-203 (Phase 1c): a trusted `avoid` episode sets self.avoid_target
+        # (never seed_target) and likewise fires rule 4.6 from tick 0 -- the seed
+        # named the cell to FLEE plus supplied a calibrated axis_map, the same
+        # no-bootstrap-gap rationale. avoid_target None -> byte-identical.
+        if (
+            stagnant
+            or self.seed_target is not None
+            or self.avoid_target is not None
+        ):
             directed = self._directed_target_action(
                 features,
                 candidates,
@@ -1082,7 +1100,12 @@ class HandBuiltPolicy:
         # integer*stride, so any observed position serves as origin; the first
         # one is set once and reused. seed_target None in v1 -> never set ->
         # planner never runs -> byte-identical.
-        if seed_target is not None and self._lattice_origin is None:
+        # g-315-203 (Phase 1c): avoid also anchors the lattice -- its blocked-edge
+        # wall-skip filter (below) keys on lattice nodes, so the avoid path needs
+        # _lattice_origin set even though it never runs the BFS planner.
+        if (
+            seed_target is not None or self.avoid_target is not None
+        ) and self._lattice_origin is None:
             self._lattice_origin = cursor
         # Online action->displacement update from the previous tick's move.
         if self._prev_cursor_centroid is not None and self.history:
@@ -1097,16 +1120,72 @@ class HandBuiltPolicy:
                     acc[0] += dr
                     acc[1] += dc
                     acc[2] += 1
-            elif seed_target is not None:
-                # g-315-171 (v2 seeded path only): a ZERO move from the issued
+            elif seed_target is not None or self.avoid_target is not None:
+                # g-315-171 (v2 seeded path): a ZERO move from the issued
                 # directional stride is a BLOCKED lattice edge (a wall). Record
                 # (prev_lattice_node, last_action) so the planner routes AROUND
-                # it. v1 (seed_target None) skips this branch -> the zero-move
-                # stays a pure no-op, byte-identical to pre-g-315-171.
+                # it. g-315-203 (Phase 1c): avoid records too -- its wall-skip
+                # filter consumes blocked_edges so a walled step-away direction
+                # falls to a perpendicular distance-increasing move instead of
+                # hammering the wall. v1 (both None) skips this branch -> the
+                # zero-move stays a pure no-op, byte-identical to pre-g-315-171.
                 self._record_blocked_edge(
                     self._prev_cursor_centroid, last_a, axis_map
                 )
         self._prev_cursor_centroid = cursor
+        # g-315-203 (Phase 1c): avoid steering. A trusted `avoid` episode sets
+        # self.avoid_target (NOT seed_target), so the seed-gated lattice-target
+        # replacement + optimistic-BFS planner below stay correctly skipped --
+        # those are the SEEK machinery. Avoid is the inverse: prefer the
+        # candidate whose calibrated displacement most INCREASES the cursor ->
+        # avoid_target Manhattan distance. Reuses the blocked-edge filter (the
+        # lattice anchor + _record_blocked_edge above are widened to the avoid
+        # path) so a walled step-away direction is skipped and the cursor falls
+        # through to a perpendicular distance-increasing move instead of hammering
+        # the wall (g-315-199 Phase-0 interaction). No terminal stop: avoid steers
+        # away for the whole episode (design OD-2 / Phase 1c). avoid_target None
+        # (reach / toggle / align) skips this entirely -> byte-identical (the
+        # strict-superset guarantee, Self gate 3).
+        if self.avoid_target is not None:
+            # Wall-skip node (mirrors the seeded greedy filter's blocked_node):
+            # only meaningful with a calibrated lattice; None -> no filtering.
+            avoid_blocked_node: Optional[tuple[int, int]] = None
+            _sr, _sc, _ = self._lattice_step(axis_map)
+            if _sr is not None and self._lattice_origin is not None:
+                avoid_blocked_node = self._to_node(cursor, _sr, _sc)
+            cur_dist = abs(cursor[0] - self.avoid_target[0]) + abs(
+                cursor[1] - self.avoid_target[1]
+            )
+            best_avoid_a: Optional[int] = None
+            best_avoid_improve = DIRECTED_MIN_IMPROVEMENT
+            for a in sorted(set(candidates)):
+                # Never steer INTO a known wall, even when it nominally increases
+                # distance -- that is the hammer-the-wall failure the filter
+                # prevents (g-315-199); the next-best perpendicular move wins.
+                if (
+                    avoid_blocked_node is not None
+                    and (avoid_blocked_node, a) in self.blocked_edges
+                ):
+                    continue
+                disp = self._action_mean_displacement(a, axis_map)
+                if disp is None:
+                    continue
+                mdr, mdc = disp
+                pr = cursor[0] + mdr
+                pc = cursor[1] + mdc
+                pred = abs(pr - self.avoid_target[0]) + abs(
+                    pc - self.avoid_target[1]
+                )
+                # INVERTED vs reach: maximize the distance INCREASE (pred -
+                # cur_dist), the mirror of reach's cur_dist - pred. Same
+                # DIRECTED_MIN_IMPROVEMENT floor, so a sub-threshold wiggle is
+                # ignored exactly as in the seek path; lowest-id tiebreak via
+                # sorted iteration + strict-greater test.
+                improve = pred - cur_dist
+                if improve > best_avoid_improve:
+                    best_avoid_improve = improve
+                    best_avoid_a = a
+            return best_avoid_a
         # v2 seeded path (g-315-134-b): a TRUSTED seed labels the ONE goal cell,
         # so the detected (often over-identified) target set is replaced with a
         # single-element candidate set. The cursor is still re-detected each tick
