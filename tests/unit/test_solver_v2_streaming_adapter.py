@@ -784,9 +784,15 @@ def test_axis_map_recorded_in_provenance_on_calibration_complete_tick() -> None:
     # reliable) — what an offline axis-collapse diagnosis needs.
     for vec in am["vectors"].values():
         assert set(vec) == {"mean_dr", "mean_dc", "n", "reliable"}
-    # One-shot: the next steering tick does NOT re-stamp the immutable axis_map.
+    # g-315-207: the cardinal-direction move_mapping is stamped alongside the
+    # wire axis_map on the same calibration-complete tick (reliable movers ->
+    # UP/DOWN/LEFT/RIGHT, ambiguous diagonals excluded).
+    assert isinstance(last.provenance["move_mapping"], dict)
+    # One-shot: the next steering tick does NOT re-stamp the immutable axis_map
+    # (nor its move_mapping).
     nxt = adapter.choose_action(_strategic(score=1, guid="play-1"))
     assert "axis_map" not in nxt.provenance
+    assert "move_mapping" not in nxt.provenance  # g-315-207: also one-shot
 
 
 def test_per_episode_routing_switches_executor() -> None:

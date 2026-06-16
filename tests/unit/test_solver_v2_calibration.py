@@ -592,3 +592,76 @@ def test_calibrate_cn04_graceful_degrades_to_empty_axis_map() -> None:
     am = calibrate_from_recording(frames)
     assert am.vectors == {}  # no cursor detected -> no observations
     assert am.reliable_actions() == []  # never calibrates off a static blob
+
+
+# ─────────────── to_wire_dict / to_move_mapping (g-315-207) ───────────────
+
+
+def test_to_wire_dict_json_round_trips_and_matches_provenance_shape() -> None:
+    """to_wire_dict() is JSON-serializable and round-trips byte-for-byte through
+    json.dumps/loads, reproducing the per-action vector shape the streaming
+    adapter stamps into recording provenance (mean_dr/mean_dc/n/reliable, str
+    action-id keys) plus the reliable_actions list and both axis-blocked flags
+    (g-315-207, rb-1668). The wire dict is complete enough to reconstruct the
+    map offline; `source` is NOT included (it is adapter state, added by the
+    streaming adapter, not an AxisMap property)."""
+    am = build_axis_map({1: [(2.0, 0.0), (2.0, 0.0)], 2: [(0.0, 0.0), (0.0, 0.0)]})
+    wire = am.to_wire_dict()
+    # Survives a JSON round-trip unchanged (the recording path).
+    assert json.loads(json.dumps(wire)) == wire
+    # Exact top-level shape (the provenance contract the adapter test asserts on).
+    assert set(wire) == {
+        "reliable_actions",
+        "horizontal_blocked",
+        "vertical_blocked",
+        "vectors",
+    }
+    assert wire["reliable_actions"] == [1]  # action 2 never moved -> unreliable
+    assert wire["vertical_blocked"] is False  # action 1 moves the row axis
+    assert wire["horizontal_blocked"] is True  # nothing moves the column axis
+    assert set(wire["vectors"]) == {"1", "2"}  # str(action_id) JSON-object keys
+    assert wire["vectors"]["1"] == {
+        "mean_dr": 2.0,
+        "mean_dc": 0.0,
+        "n": 2,
+        "reliable": True,
+    }
+    assert wire["vectors"]["2"]["reliable"] is False
+
+
+def test_to_move_mapping_classifies_cardinal_directions() -> None:
+    """to_move_mapping() classifies each reliable vector by its DOMINANT axis +
+    sign into UP/DOWN/LEFT/RIGHT, using the grid convention (mean_dr>0 down / <0
+    up; mean_dc>0 right / <0 left — see AxisVector). Four clean single-axis
+    movers map to all four cardinals; the result is keyed by int action_id
+    (g-315-207)."""
+    am = build_axis_map(
+        {
+            1: [(-3.0, 0.0), (-3.0, 0.0)],  # row axis, negative -> UP
+            2: [(3.0, 0.0), (3.0, 0.0)],  # row axis, positive -> DOWN
+            3: [(0.0, -3.0), (0.0, -3.0)],  # col axis, negative -> LEFT
+            4: [(0.0, 3.0), (0.0, 3.0)],  # col axis, positive -> RIGHT
+        }
+    )
+    assert am.to_move_mapping() == {1: "UP", 2: "DOWN", 3: "LEFT", 4: "RIGHT"}
+
+
+def test_to_move_mapping_excludes_ambiguous_and_unreliable() -> None:
+    """to_move_mapping() excludes a vector with NO dominant axis: a reliable
+    45-degree diagonal mover (|mean_dr| == |mean_dc|, both above the floor) has
+    no single cardinal direction, so it is dropped rather than mis-assigned
+    (g-315-207). The exclusion is purely about ambiguity — the diagonal IS in
+    reliable_actions(), just not in the cardinal mapping. Unreliable vectors
+    (never moved) are skipped too."""
+    am = build_axis_map(
+        {
+            1: [(3.0, 0.0), (3.0, 0.0)],  # clean DOWN -> kept
+            2: [(2.0, 2.0), (2.0, 2.0)],  # reliable diagonal -> ambiguous, dropped
+            3: [(0.0, 0.0), (0.0, 0.0)],  # never moved -> unreliable, dropped
+        }
+    )
+    mapping = am.to_move_mapping()
+    assert mapping == {1: "DOWN"}
+    assert 2 in am.reliable_actions()  # reliable, but excluded for ambiguity
+    assert 2 not in mapping  # diagonal has no dominant axis
+    assert 3 not in mapping  # unreliable

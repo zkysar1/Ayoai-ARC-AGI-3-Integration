@@ -157,6 +157,60 @@ class AxisMap:
         correctly unusable."""
         return any(v.reliable for v in self.vectors.values())
 
+    def to_wire_dict(self) -> dict[str, Any]:
+        """JSON-ready serialization of the full calibration result — the single
+        source of the wire shape the streaming adapter stamps into recording
+        provenance on the calibration-complete tick (rb-1668, g-315-207). Pure
+        over AxisMap state: the adapter prepends its own `source` label (cached
+        vs probed, g-315-205), which is adapter state, not an AxisMap property.
+        Vector keys are str(action_id) so the result is a valid JSON object; the
+        schema is complete enough to reconstruct the map offline (g-315-172
+        axis-collapse diagnosis from the recording alone)."""
+        return {
+            "reliable_actions": self.reliable_actions(),
+            "horizontal_blocked": self.horizontal_blocked,
+            "vertical_blocked": self.vertical_blocked,
+            "vectors": {
+                str(a): {
+                    "mean_dr": v.mean_dr,
+                    "mean_dc": v.mean_dc,
+                    "n": v.n,
+                    "reliable": v.reliable,
+                }
+                for a, v in self.vectors.items()
+            },
+        }
+
+    def to_move_mapping(
+        self, *, noise_floor: float = NOISE_FLOOR_CELLS
+    ) -> dict[int, str]:
+        """Classify each RELIABLE vector into one cardinal direction
+        (UP/DOWN/LEFT/RIGHT) — the documented bridge to the server's toActionId
+        map (NOT WIRED: nothing consumes this to drive a live play yet; g-315-207).
+
+        Direction follows the perception/grid convention (mean_dr>0 down / <0 up;
+        mean_dc>0 right / <0 left — see AxisVector). An axis DOMINATES only when
+        its |mean| exceeds the other axis's |mean| by more than noise_floor; a
+        vector whose two axes move comparably (a diagonal) has no unambiguous
+        cardinal direction and is EXCLUDED. Reuses NOISE_FLOOR_CELLS as the margin
+        — no new magnitude constant (value-agnostic, Self gate 3). Unreliable
+        vectors are skipped. Keyed by int action_id (the policy_axis_map /
+        reliable_actions API convention), so two actions sharing a direction is
+        lossless."""
+        mapping: dict[int, str] = {}
+        for action_id, v in self.vectors.items():
+            if not v.reliable:
+                continue
+            adr = abs(v.mean_dr)
+            adc = abs(v.mean_dc)
+            if adr - adc > noise_floor:
+                mapping[action_id] = "DOWN" if v.mean_dr > 0.0 else "UP"
+            elif adc - adr > noise_floor:
+                mapping[action_id] = "RIGHT" if v.mean_dc > 0.0 else "LEFT"
+            # else: neither axis dominates by the noise-floor margin -> ambiguous
+            # (diagonal / no clear dominant axis); excluded from the mapping.
+        return mapping
+
 
 def move_actions_from(available: Iterable[int]) -> list[int]:
     """The simple move-actions to calibrate: available ids minus RESET and

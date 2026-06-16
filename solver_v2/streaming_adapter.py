@@ -513,24 +513,23 @@ class SolverV2StreamingAdapter:
         # tick carries it — keeps steady-state steering records lean).
         if self._finalized_axis_map is not None:
             am = self._finalized_axis_map
+            # g-315-207: the axis_map wire shape is now AxisMap.to_wire_dict()
+            # (single source of the serialized shape, replacing the formerly
+            # inlined dict). The adapter prepends its adapter-state `source`
+            # label — cached (reused from a prior episode of this
+            # game_class+action-set) vs probed (freshly calibrated); null on the
+            # rare unusable-degrade stamp before a route source was set
+            # (g-315-205). `source` is not an AxisMap property, so it stays here.
             provenance["axis_map"] = {
-                # g-315-205: cached (reused from a prior episode of this
-                # game_class+action-set) vs probed (freshly calibrated). null on
-                # the rare unusable-degrade stamp before a route source was set.
                 "source": self._axis_map_source,
-                "reliable_actions": am.reliable_actions(),
-                "horizontal_blocked": am.horizontal_blocked,
-                "vertical_blocked": am.vertical_blocked,
-                "vectors": {
-                    str(a): {
-                        "mean_dr": v.mean_dr,
-                        "mean_dc": v.mean_dc,
-                        "n": v.n,
-                        "reliable": v.reliable,
-                    }
-                    for a, v in am.vectors.items()
-                },
+                **am.to_wire_dict(),
             }
+            # g-315-207: cardinal-direction mapping (reliable movers ->
+            # UP/DOWN/LEFT/RIGHT, ambiguous diagonals excluded) — the documented,
+            # not-yet-wired bridge to the server's toActionId map. Recorded
+            # alongside the wire dict so the offline recording shows which
+            # direction each calibrated action steers.
+            provenance["move_mapping"] = am.to_move_mapping()
             self._finalized_axis_map = None
         if decision.x is not None and decision.y is not None:
             provenance["action6_target"] = {"x": decision.x, "y": decision.y}
