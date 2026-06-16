@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 
-from solver_v0.policy import HandBuiltPolicy
+from solver_v0.policy import HandBuiltPolicy, PolicyDecision
 from solver_v2.calibration import K_REPEATS, build_axis_map
 from solver_v2.episode import (
     OBJECTIVE_ALIGN_TO_CELL,
@@ -23,6 +23,7 @@ from solver_v2.episode import (
 )
 from solver_v2.seed_provider import SeedProvider
 from solver_v2.streaming_adapter import (
+    CACHE_PREDICTION_FAIL_LIMIT,
     DECIDED_BY_SOLVER_V2,
     SolverV2StreamingAdapter,
 )
@@ -887,3 +888,116 @@ def test_no_move_actions_skips_calibration() -> None:
     assert adapter.policy is not None
     assert adapter.policy.axis_map is None  # 2a online-model degrade
     assert decision.provenance["executor"] == "HandBuiltPolicy"
+
+
+# ---------- g-315-205: cross-episode AxisMap caching ---------- #
+
+
+class _FixedReliablePolicy:
+    """Stub policy for the prediction-failure test: always issues ACTION1 (the
+    single reliable action in the primed cached map) so the cached-axis
+    zero-displacement streak builds deterministically, independent of
+    HandBuiltPolicy's steering heuristics. Duck-types the attributes/methods the
+    adapter touches on a REACH_CELL movement route."""
+
+    def __init__(self) -> None:
+        self.axis_map = None
+        self.seed_target = None
+        self.avoid_target = None
+        self.goal_predicate = None
+
+    def observe(self, *args, **kwargs) -> None:  # best-effort, no-op
+        return None
+
+    def decide(self, features) -> PolicyDecision:
+        return PolicyDecision(action=1, x=None, y=None)
+
+
+def test_cache_hit_skips_calibration() -> None:
+    """A primed cache entry for this (game_class, available_actions) whose map
+    is_usable() makes a movement episode SKIP the CalibrationProbe and steer
+    from tick 0 via HandBuiltPolicy; provenance records source=cached."""
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_REACH_CELL, goal_cell=(0, 3), confidence=0.9)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    key = (adapter._game_class, frozenset({0, 1, 2, 3, 4, 5}))
+    adapter._axis_map_cache[key] = build_axis_map({1: [(1.0, 0.0), (1.0, 0.0)]})
+    decision = adapter.choose_action(_strategic())
+    assert adapter.calibrating is False  # probe skipped
+    assert adapter.probe is None
+    assert adapter.policy is not None
+    assert adapter.policy.axis_map is not None  # set from cache
+    assert decision.provenance["executor"] == "HandBuiltPolicy"
+    assert decision.provenance["axis_map"]["source"] == "cached"
+
+
+def test_cache_miss_falls_through_to_calibration_probe() -> None:
+    """With an empty cache a movement episode probes as before (CalibrationProbe
+    startup, axis_map None until the probe finalizes) -- the miss path is
+    byte-identical to pre-g-315-205 behavior."""
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_REACH_CELL, goal_cell=(0, 3), confidence=0.9)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    assert adapter._axis_map_cache == {}
+    decision = adapter.choose_action(_strategic())
+    assert adapter.calibrating is True
+    assert adapter.probe is not None
+    assert adapter.policy is not None
+    assert adapter.policy.axis_map is None
+    assert decision.provenance["executor"] == "CalibrationProbe"
+
+
+def test_game_class_change_invalidates_cache() -> None:
+    """A cache entry under a DIFFERENT game_class is not served: the
+    (game_class, actions) key isolates per class, so this episode misses and
+    probes. Proves game_class is part of the key (no cross-class contamination)."""
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_REACH_CELL, goal_cell=(0, 3), confidence=0.9)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    # Prime under a foreign game_class but THIS episode's action-set.
+    foreign_key = ("foreign-class", frozenset({0, 1, 2, 3, 4, 5}))
+    adapter._axis_map_cache[foreign_key] = build_axis_map(
+        {1: [(1.0, 0.0), (1.0, 0.0)]}
+    )
+    assert adapter._game_class != "foreign-class"
+    decision = adapter.choose_action(_strategic())
+    assert adapter.calibrating is True  # miss: foreign-class entry not served
+    assert decision.provenance["executor"] == "CalibrationProbe"
+
+
+def test_prediction_failure_invalidates_cache() -> None:
+    """When steering from a cached map, CACHE_PREDICTION_FAIL_LIMIT consecutive
+    zero-displacement ticks on a reliable action evict the cache entry and
+    degrade the policy to the online basis (axis_map None)."""
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_REACH_CELL, goal_cell=(0, 3), confidence=0.9)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card",
+        arc_game_id="ls20-test",
+        seed_provider=seed,
+        policy_factory=_FixedReliablePolicy,
+    )
+    key = (adapter._game_class, frozenset({0, 1, 2, 3, 4, 5}))
+    adapter._axis_map_cache[key] = build_axis_map({1: [(1.0, 0.0), (1.0, 0.0)]})
+    # Boundary tick: cache hit, steer from tick 0 (prev action None -> no streak
+    # check yet). Then drive identical frames (frame unchanged => zero
+    # displacement) until the streak crosses the limit.
+    adapter.choose_action(_strategic())
+    assert adapter._axis_map_source == "cached"
+    assert key in adapter._axis_map_cache
+    for _ in range(CACHE_PREDICTION_FAIL_LIMIT):
+        adapter.choose_action(_strategic())
+    assert key not in adapter._axis_map_cache  # evicted as stale
+    assert adapter.policy is not None
+    assert adapter.policy.axis_map is None  # degraded to online basis
+    assert adapter._axis_map_source == "cached-invalidated"

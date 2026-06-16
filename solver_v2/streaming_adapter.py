@@ -77,6 +77,12 @@ DECIDED_BY_SOLVER_V2 = "solver-v2"
 # Frame-history window for perception.extract() (matches solver_v0).
 DEFAULT_HISTORY_DEPTH = 8
 
+# g-315-205: consecutive zero-displacement ticks on a REUSED (cached) axis_map's
+# reliable actions before the cache entry is evicted as stale. A SINGLE zero is
+# tolerated (guard-689: wall-contact zero-displacement is position-dependent, not
+# a wrong map); only a sustained streak invalidates a reused calibration.
+CACHE_PREDICTION_FAIL_LIMIT = 3
+
 
 class SolverV2StreamingAdapter:
     """Local-decision adapter conforming to AyoaiStreamingClient public surface.
@@ -174,6 +180,23 @@ class SolverV2StreamingAdapter:
         # boundary tick). choose_action consumes + clears it, so only the
         # transition tick records the axis_map (it is immutable thereafter).
         self._finalized_axis_map: Optional[AxisMap] = None
+
+        # g-315-205 cross-episode AxisMap cache. Keyed by (game_class,
+        # frozenset(available_actions)) -- both structural features (no
+        # game-specific coordinates / eval structure), so reuse is skill-transfer
+        # within a class, not memorization. Populated when a CalibrationProbe
+        # finalizes a usable map; consumed at the next episode boundary of the
+        # same class+action-set to skip calibration and steer from tick 0.
+        # Per-adapter (one game session) -- never persisted across games.
+        # _episode_axis_key is THIS episode's key (None when game_class is
+        # unknown -> never cache, the game_class-keyed isolation that prevents
+        # cross-class contamination); _axis_map_source records
+        # cached|probed|cached-invalidated for provenance; _cached_zero_streak
+        # drives the prediction-failure eviction.
+        self._axis_map_cache: dict[tuple[str, frozenset[int]], AxisMap] = {}
+        self._episode_axis_key: Optional[tuple[str, frozenset[int]]] = None
+        self._axis_map_source: Optional[str] = None
+        self._cached_zero_streak: int = 0
 
         self._episode_prior: Optional[EpisodePrior] = None
         self._episode_id = 0
@@ -452,6 +475,10 @@ class SolverV2StreamingAdapter:
         if self._finalized_axis_map is not None:
             am = self._finalized_axis_map
             provenance["axis_map"] = {
+                # g-315-205: cached (reused from a prior episode of this
+                # game_class+action-set) vs probed (freshly calibrated). null on
+                # the rare unusable-degrade stamp before a route source was set.
+                "source": self._axis_map_source,
                 "reliable_actions": am.reliable_actions(),
                 "horizontal_blocked": am.horizontal_blocked,
                 "vertical_blocked": am.vertical_blocked,
@@ -519,6 +546,12 @@ class SolverV2StreamingAdapter:
         # Phase 1a (g-315-201): record the episode objective so _decide_via_policy
         # can fire the toggle_at_cell arrival override; None when no prior.
         self._objective = prior.objective if prior is not None else None
+        # g-315-205: reset per-episode cache state. The movement branch below
+        # sets _episode_axis_key/_axis_map_source on a cached hit or a probed
+        # miss; non-movement routes leave them cleared (no axis_map this episode).
+        self._episode_axis_key = None
+        self._axis_map_source = None
+        self._cached_zero_streak = 0
         # A trusted toggle_at_cell navigates exactly like reach_cell, but if it
         # cannot issue its arrival click (ACTION6 absent from the action set) it
         # must NOT take the steering route -- it would reach the goal with no way
@@ -578,19 +611,53 @@ class SolverV2StreamingAdapter:
                 self._policy.goal_predicate = (
                     lambda s, g: s[0] == g[0] or s[1] == g[1]
                 )
-            # g-315-148 (Apply 2b): build the episode-start CalibrationProbe over
-            # the move-actions available now. The probe drives the first <=
-            # budget ticks (k * |move_actions|); _decide_via_calibration then
-            # finalizes the calibrated axis_map onto the policy. With no
-            # move-actions to calibrate, skip the probe and keep the 2a online
-            # model (axis_map None) as the degrade basis.
-            move_acts = move_actions_from(available_action_ids)
-            if move_acts:
-                self._probe = CalibrationProbe(move_acts)
-                self._calibrating = True
-            else:
+            # g-315-205: cross-episode AxisMap reuse. Key on (game_class, the
+            # episode's full available-action set). On a hit whose cached map
+            # is_usable(), skip the CalibrationProbe entirely -- set
+            # policy.axis_map from the cache and steer from tick 0. is_usable()
+            # is position-independent (guard-689: it gates on action reliability,
+            # a game_class property, NOT the position-dependent
+            # horizontal/vertical_blocked flags), and policy_axis_map() exposes
+            # only the per-action displacement vectors, so a reused map never
+            # leaks a stale position-blocked verdict into a fresh episode. Cache
+            # only when game_class is known (None -> cannot identify the class ->
+            # always probe, never cache: game_class-keyed isolation is what
+            # prevents cross-class contamination).
+            if self._game_class is not None:
+                self._episode_axis_key = (
+                    self._game_class,
+                    frozenset(available_action_ids),
+                )
+            cached = (
+                self._axis_map_cache.get(self._episode_axis_key)
+                if self._episode_axis_key is not None
+                else None
+            )
+            if cached is not None and cached.is_usable():
+                # Cache hit: reuse the calibrated map, skip the probe, steer now.
+                self._policy.axis_map = cached.policy_axis_map()
+                # Stamp the reused map into THIS (boundary) tick's provenance
+                # (rb-1668 axis_map half) -- choose_action consumes + clears it.
+                self._finalized_axis_map = cached
+                self._axis_map_source = "cached"
                 self._probe = None
                 self._calibrating = False
+            else:
+                # Cache miss (or unusable cached map): build the episode-start
+                # CalibrationProbe over the move-actions available now (g-315-148,
+                # Apply 2b). The probe drives the first <= budget ticks
+                # (k * |move_actions|); _decide_via_calibration then finalizes the
+                # calibrated axis_map onto the policy AND caches it. With no
+                # move-actions to calibrate, skip the probe and keep the 2a online
+                # model (axis_map None) as the degrade basis.
+                move_acts = move_actions_from(available_action_ids)
+                if move_acts:
+                    self._probe = CalibrationProbe(move_acts)
+                    self._calibrating = True
+                    self._axis_map_source = "probed"
+                else:
+                    self._probe = None
+                    self._calibrating = False
         else:
             self._use_policy = False
             self._probe = None
@@ -678,6 +745,14 @@ class SolverV2StreamingAdapter:
             return self._executor.execute(
                 self._episode_prior, features, self._tick_in_episode
             )
+        # g-315-205: cache the freshly probed usable axis_map for cross-episode
+        # reuse (keyed by _route_episode on this episode's (game_class,
+        # available_actions)). The next episode of the same class+action-set
+        # skips calibration. Only usable maps are cached -- the is_usable() gate
+        # above already returned for unusable ones. _axis_map_source stays
+        # "probed" (set in _route_episode) for this episode's provenance.
+        if self._episode_axis_key is not None:
+            self._axis_map_cache[self._episode_axis_key] = axis
         # Usable calibration: supersede the online steering basis and steer THIS
         # tick with the calibrated policy (do not burn the tick). The deferred-
         # observe linkage was reset at the boundary and never set during
@@ -732,6 +807,12 @@ class SolverV2StreamingAdapter:
                 logger.exception(
                     "solver-v2 policy.observe() failed (tick %d)", self._tick
                 )
+            # g-315-205: cached-axis-map prediction-failure invalidation. Reuses
+            # the frame_changed just computed for the deferred-observe. No-op
+            # unless this episode is steering from a REUSED (cached) map -- the
+            # source guard keeps probed/online episodes byte-identical.
+            if self._axis_map_source == "cached":
+                self._note_cached_axis_outcome(frame_changed)
         try:
             pd: PolicyDecision = policy.decide(features)
         except Exception as e:
@@ -801,6 +882,46 @@ class SolverV2StreamingAdapter:
         self._previous_policy_action = pd.action
         self._previous_policy_score = frame.score
         return pd
+
+    def _note_cached_axis_outcome(self, frame_changed: bool) -> None:
+        """g-315-205: track zero-displacement on a REUSED (cached) axis_map and
+        evict it when stale. The previous tick's action was reliable per the
+        cached map but produced no frame change -> an unexpected zero-
+        displacement. A single zero is tolerated (guard-689: wall-contact zero-
+        displacement is position-dependent, not a wrong map); after
+        CACHE_PREDICTION_FAIL_LIMIT CONSECUTIVE such ticks the cached calibration
+        does not hold for this episode, so evict the cache entry and drop
+        policy.axis_map to None (rule 4.6 degrades to the online basis; the NEXT
+        episode of this class+action-set re-probes fresh). Only reached when
+        steering from a cached map (caller guards on _axis_map_source)."""
+        policy = self._policy
+        prev = self._previous_policy_action
+        cached_reliable = (
+            policy is not None
+            and policy.axis_map is not None
+            and prev is not None
+            and prev in policy.axis_map
+            # policy_axis_map tuple is (mean_dr, mean_dc, n, reliable).
+            and policy.axis_map[prev][3]
+        )
+        if cached_reliable and not frame_changed:
+            self._cached_zero_streak += 1
+        else:
+            self._cached_zero_streak = 0
+        if self._cached_zero_streak >= CACHE_PREDICTION_FAIL_LIMIT:
+            if self._episode_axis_key is not None:
+                self._axis_map_cache.pop(self._episode_axis_key, None)
+            if policy is not None:
+                policy.axis_map = None
+            self._axis_map_source = "cached-invalidated"
+            self._cached_zero_streak = 0
+            logger.warning(
+                "solver-v2 cached axis_map invalidated (tick %d) -- %d "
+                "consecutive zero-displacement ticks on reliable actions; "
+                "evicted cache entry + degraded to online basis",
+                self._tick,
+                CACHE_PREDICTION_FAIL_LIMIT,
+            )
 
     def send_add(self, frame: FrameData) -> None:
         """No-op for remote registration (local solver). Seeds _frame_history
