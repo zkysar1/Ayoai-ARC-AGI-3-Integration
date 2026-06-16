@@ -57,6 +57,7 @@ from solver_v2.calibration import (
     move_actions_from,
 )
 from solver_v2.episode import (
+    OBJECTIVE_ALIGN_TO_CELL,
     OBJECTIVE_REACH_CELL,
     OBJECTIVE_TOGGLE_AT_CELL,
     EpisodeBoundaryDetector,
@@ -535,7 +536,11 @@ class SolverV2StreamingAdapter:
             )
         if (
             prior is not None
-            and prior.objective in (OBJECTIVE_REACH_CELL, OBJECTIVE_TOGGLE_AT_CELL)
+            and prior.objective in (
+                OBJECTIVE_REACH_CELL,
+                OBJECTIVE_TOGGLE_AT_CELL,
+                OBJECTIVE_ALIGN_TO_CELL,
+            )
             and prior.is_trusted()
             and not toggle_blocked_no_action6
         ):
@@ -551,6 +556,16 @@ class SolverV2StreamingAdapter:
             # steering begins.
             self._policy.seed_target = prior.goal_cell
             self._policy.axis_map = None
+            # Phase 1b (g-315-202): an align_to_cell episode terminates on a
+            # row-OR-column share with the goal, not exact arrival. Set the
+            # policy's goal_predicate so _seeded_plan_action's BFS stops at the
+            # first aligned lattice node and _directed_target_action's greedy
+            # fallback cannot overshoot toward the exact cell. reach_cell and
+            # toggle_at_cell leave it None (exact-match, byte-identical).
+            if prior.objective == OBJECTIVE_ALIGN_TO_CELL:
+                self._policy.goal_predicate = (
+                    lambda s, g: s[0] == g[0] or s[1] == g[1]
+                )
             # g-315-148 (Apply 2b): build the episode-start CalibrationProbe over
             # the move-actions available now. The probe drives the first <=
             # budget ticks (k * |move_actions|); _decide_via_calibration then
@@ -736,6 +751,41 @@ class SolverV2StreamingAdapter:
                         action=_ACTION6_ID, x=goal[1], y=goal[0]
                     )
                     self._use_policy = False
+        # Phase 1b (g-315-202) align_to_cell arrival override. When steering an
+        # ALIGN objective and the cursor shares a row OR column with the goal
+        # cell (within NOISE_FLOOR_CELLS on EITHER axis -- the CORRECTED stop:
+        # the original draft's "the greedy fallback also returns None" was wrong;
+        # the greedy loop reduces distance to the EXACT cell, is blind to
+        # goal_predicate, and OVERSHOOTS the alignment), END the directed route
+        # (_use_policy=False, terminal per OD-7, identical one-shot pattern to
+        # toggle_at_cell) and route THIS tick through the proven
+        # DeterministicExecutor instead of the policy's overshooting pd. elif (not
+        # a second if) because the objective is exactly one value. Placed BEFORE
+        # the _previous_policy_action assignment so the deferred-observe loop
+        # records the action ACTUALLY issued (the executor's), not the discarded
+        # policy move.
+        elif (
+            self._objective == OBJECTIVE_ALIGN_TO_CELL
+            and policy.seed_target is not None
+        ):
+            cursor = detect_cursor_centroid(features)
+            if cursor is not None:
+                goal = policy.seed_target
+                if (
+                    abs(cursor[0] - goal[0]) < NOISE_FLOOR_CELLS
+                    or abs(cursor[1] - goal[1]) < NOISE_FLOOR_CELLS
+                ):
+                    self._use_policy = False
+                    try:
+                        ed = self._executor.execute(
+                            self._episode_prior, features, self._tick_in_episode
+                        )
+                    except Exception as e:
+                        raise AyoaiStreamingError(
+                            "solver-v2 align-stop executor failed "
+                            f"(tick {self._tick}): {e}"
+                        ) from e
+                    pd = PolicyDecision(action=ed.action, x=ed.x, y=ed.y)
         self._previous_policy_action = pd.action
         self._previous_policy_score = frame.score
         return pd

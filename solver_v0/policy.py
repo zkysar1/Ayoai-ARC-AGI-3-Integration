@@ -68,7 +68,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from solver_v0.perception import FrameFeatures
 from solver_v0.signatures import filter_actions
@@ -317,6 +317,17 @@ class HandBuiltPolicy:
     #     decoupled from the calibration module.
     seed_target: Optional[tuple[int, int]] = None
     axis_map: Optional[dict[int, tuple[float, float, int, bool]]] = None
+    # g-315-202 (Phase 1b): pluggable goal-match predicate for the seeded BFS
+    # planner (_seeded_plan_action) and the greedy-fallback overshoot guard
+    # (_directed_target_action). None -> exact match (node == goal), the
+    # reach_cell / toggle_at_cell behavior, byte-identical to pre-g-315-202 (the
+    # strict-superset guarantee). align_to_cell sets it to a row-OR-column match
+    # (lambda s, g: s[0] == g[0] or s[1] == g[1]) so the planner terminates at
+    # the FIRST lattice node sharing the goal's row or column and the greedy loop
+    # cannot overshoot toward the EXACT cell. Operates on lattice NODES (the
+    # rounded integer indices _to_node yields), NOT raw float centroids, so the
+    # comparison is exact-integer clean.
+    goal_predicate: Optional[Callable[[tuple, tuple], bool]] = None
     # g-315-171: v2 seeded-path obstacle-aware planner state. BOTH are touched
     # ONLY when seed_target is set (the v2 trusted path), so v1 (seed_target
     # None) is byte-identical — the strict-superset guarantee extends to the
@@ -1114,6 +1125,29 @@ class HandBuiltPolicy:
         if not live:
             self.reached_targets.clear()
             live = targets
+        # g-315-202 (Phase 1b) align defense-in-depth: when a goal_predicate is
+        # set (align_to_cell) and the cursor ALREADY satisfies it for a live
+        # target (shares a lattice row/column), return None NOW -- do not enter
+        # the planner/greedy chain below. The greedy fallback reduces distance to
+        # the EXACT cell, is blind to goal_predicate, and would OVERSHOOT the
+        # alignment within the same tick alignment is first reached. The primary
+        # terminal stop is streaming_adapter._decide_via_policy; this is the
+        # second layer (and the only guard when a v0 caller sets goal_predicate
+        # directly without the v2 adapter). Compares on lattice NODES via the
+        # same _lattice_step/_to_node rounding the BFS uses, so a float centroid
+        # sharing a row/col matches cleanly. goal_predicate None
+        # (reach/toggle/avoid) skips this -> exact-match behavior unchanged
+        # (strict superset); an uncalibrated lattice (stride None) also skips and
+        # falls through to the planner exactly as before.
+        if self.goal_predicate is not None and self._lattice_origin is not None:
+            _sr, _sc, _adelta = self._lattice_step(axis_map)
+            if _sr is not None and _sc is not None:
+                cursor_node = self._to_node(cursor, _sr, _sc)
+                if any(
+                    self.goal_predicate(cursor_node, self._to_node(t, _sr, _sc))
+                    for t in live
+                ):
+                    return None
         # g-315-171 (v2 seeded path): replace the greedy 1-step rule below with an
         # optimistic-BFS planner over the online-discovered stride-lattice with
         # blocked-edge memory. The greedy loop requires every step to REDUCE
@@ -1331,8 +1365,10 @@ class HandBuiltPolicy:
             return None
         start = self._to_node(cursor, stride_row, stride_col)
         goal = self._to_node(targets[0], stride_row, stride_col)
-        if start == goal:
-            # At the lattice cell nearest the goal — fixed strides cannot land
+        if (self.goal_predicate or (lambda s, g: s == g))(start, goal):
+            # Predicate satisfied at the start node already. reach/toggle
+            # (goal_predicate None -> exact match) means the cursor sits at the
+            # lattice cell nearest the goal — fixed strides cannot land
             # closer to an off-lattice goal_cell (b2-iv). Nothing to steer.
             # g-315-173: the goal node is reached, so it is by definition NOT
             # unreachable — clear any in-progress frontier-exhaustion streak.
@@ -1347,7 +1383,7 @@ class HandBuiltPolicy:
         found = False
         while frontier:
             node = frontier.popleft()
-            if node == goal:
+            if (self.goal_predicate or (lambda s, g: s == g))(node, goal):
                 found = True
                 break
             if len(came_from) > PLANNER_MAX_NODES:
@@ -1379,8 +1415,14 @@ class HandBuiltPolicy:
         # (the situation changed: the cursor moved or an open route appeared).
         self._unreachable_streak = 0
         self.goal_declared_unreachable = False
-        # Backtrack goal -> start; keep the action issued FROM start.
-        node = goal
+        # Backtrack reached -> start; keep the action issued FROM start. `node`
+        # still holds the node the BFS stopped at -- for a goal_predicate
+        # (align_to_cell) that is the FIRST node sharing the goal's row/col, NOT
+        # the goal node itself (the BFS never reached it, so came_from has no
+        # entry to backtrack from). For exact-match (reach_cell / toggle_at_cell,
+        # goal_predicate None) the stop node IS goal, so this is byte-identical.
+        # The prior `node = goal` KeyError'd on the align steer-toward path
+        # (g-315-202).
         first_action: Optional[int] = None
         while came_from[node][0] is not None:
             prev, act = came_from[node]

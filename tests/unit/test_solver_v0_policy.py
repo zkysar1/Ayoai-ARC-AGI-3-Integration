@@ -1479,3 +1479,100 @@ def test_seeded_planner_routes_up_unidirectional_return_axis() -> None:
         (45.5, 21.0), [(40.5, 21.0)], [1, 2, 3, 4], _AX_UNIDIR
     )
     assert result == 1  # the tentative UP action (action1), now a lattice edge
+
+
+# ── g-315-202 (Phase 1b): align_to_cell goal_predicate routing ──────────────
+# align_to_cell steers until the cursor shares a ROW OR COLUMN with the goal
+# cell, then STOPS (one-shot terminal per OD-7). The row-or-col predicate is the
+# stop condition; goal_predicate=None preserves exact-match (reach_cell /
+# toggle_at_cell) as a strict superset. These pin the planner-level behavior:
+# the BFS terminates at the FIRST lattice node satisfying the predicate (row
+# match; column match), the None default does NOT terminate at a merely
+# row-aligned start, and the _directed_target_action defense-in-depth early
+# return prevents the greedy fallback from overshooting an already-aligned
+# cursor toward the exact cell.
+
+
+def _align_pred(s: tuple, g: tuple) -> bool:
+    """Row-or-column alignment predicate — the align_to_cell stop condition
+    (mirrors the lambda streaming_adapter sets on the policy at the episode
+    boundary). Operates on lattice NODES (rounded ints), not float centroids."""
+    return s[0] == g[0] or s[1] == g[1]
+
+
+def test_seeded_planner_align_terminates_on_row_match() -> None:
+    """align_to_cell: the BFS stops at the first lattice node sharing the goal's
+    ROW (not the exact cell). Cursor at node (1,0), goal at node (0,4): the
+    nearest predicate-satisfying node is (0,0) — the goal's ROW 0 — one ACTION1
+    (up) step away, so the first planned step is ACTION1, NOT the rightward steer
+    toward the exact column the reach_cell planner would take."""
+    policy = HandBuiltPolicy(goal_predicate=_align_pred)
+    policy._lattice_origin = (45.5, 21.0)
+    # cursor (50.5,21.0) -> node (1,0); goal (45.5,41.0) -> node (0,4).
+    result = policy._seeded_plan_action(
+        (50.5, 21.0), [(45.5, 41.0)], [1, 2, 3, 4], _AX4
+    )
+    assert result == 1  # ACTION1 up: (1,0) -> (0,0) shares goal row 0
+
+
+def test_seeded_planner_align_terminates_on_column_match() -> None:
+    """align_to_cell: symmetric to the row case — the BFS stops at the first node
+    sharing the goal's COLUMN. Cursor at node (0,1), goal at node (3,0): the
+    nearest predicate-satisfying node is (0,0) — the goal's COLUMN 0 — one ACTION3
+    (left) step away, so the first planned step is ACTION3."""
+    policy = HandBuiltPolicy(goal_predicate=_align_pred)
+    policy._lattice_origin = (45.5, 21.0)
+    # cursor (45.5,26.0) -> node (0,1); goal (60.5,21.0) -> node (3,0).
+    result = policy._seeded_plan_action(
+        (45.5, 26.0), [(60.5, 21.0)], [1, 2, 3, 4], _AX4
+    )
+    assert result == 3  # ACTION3 left: (0,1) -> (0,0) shares goal col 0
+
+
+def test_seeded_planner_none_predicate_preserves_exact_match_for_reach() -> None:
+    """Strict-superset guard: goal_predicate=None (reach_cell / toggle_at_cell)
+    keeps exact-match BFS. Same setup, two predicates, OPPOSITE outcomes — proves
+    align is purely additive. Cursor node (0,0) already shares the goal's ROW
+    (goal node (0,4)), so the align predicate terminates immediately (None), but
+    the None default does NOT — it steers ACTION4 (right) toward the exact
+    column."""
+    cursor_cell, goal_cell = (45.5, 21.0), (45.5, 41.0)  # nodes (0,0) and (0,4)
+    reach = HandBuiltPolicy()  # goal_predicate None -> exact match
+    reach._lattice_origin = (45.5, 21.0)
+    assert (
+        reach._seeded_plan_action(cursor_cell, [goal_cell], [1, 2, 3, 4], _AX4)
+        == 4
+    )  # row-sharing start does NOT terminate; steers to the exact column
+    align = HandBuiltPolicy(goal_predicate=_align_pred)
+    align._lattice_origin = (45.5, 21.0)
+    assert (
+        align._seeded_plan_action(cursor_cell, [goal_cell], [1, 2, 3, 4], _AX4)
+        is None
+    )  # row-aligned at the start node -> nothing to steer
+
+
+def test_directed_target_align_aligned_cursor_returns_none_no_overshoot() -> None:
+    """Defense-in-depth (the align early-return in _directed_target_action): when
+    goal_predicate is set and the cursor already shares a row/col with a live
+    target, the method returns None BEFORE the greedy fallback runs. The greedy
+    fallback reduces distance to the EXACT cell, is blind to the predicate, and
+    would OVERSHOOT the alignment within the tick it is first reached. With
+    _nav_features the cursor centroid is (0.5,0.5) -> node (0,0); seed (0,7) ->
+    node (0,1): the two share ROW 0, so align returns None. The None-predicate
+    reach policy on the identical inputs steers ACTION4 toward the exact cell
+    (the g-315-171 integration behavior, unchanged)."""
+    feats = _nav_features()
+    align = HandBuiltPolicy(goal_predicate=_align_pred)
+    assert (
+        align._directed_target_action(
+            feats, [1, 2, 3, 4], seed_target=(0, 7), axis_map=_AX4
+        )
+        is None
+    )  # row-aligned cursor -> no overshoot toward exact (0,7)
+    reach = HandBuiltPolicy()
+    assert (
+        reach._directed_target_action(
+            feats, [1, 2, 3, 4], seed_target=(0, 7), axis_map=_AX4
+        )
+        == 4
+    )  # reach steers right toward the exact cell

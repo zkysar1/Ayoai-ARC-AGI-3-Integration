@@ -13,6 +13,7 @@ from dataclasses import replace
 from solver_v0.policy import HandBuiltPolicy
 from solver_v2.calibration import K_REPEATS, build_axis_map
 from solver_v2.episode import (
+    OBJECTIVE_ALIGN_TO_CELL,
     OBJECTIVE_REACH_CELL,
     OBJECTIVE_TOGGLE_AT_CELL,
     OBJECTIVE_UNKNOWN,
@@ -387,6 +388,81 @@ def test_objective_updates_across_episode_transition() -> None:
     assert adapter.use_policy is True          # trusted toggle + ACTION6 -> policy
     assert adapter.policy is not ep1_policy     # fresh policy at the boundary
     assert adapter.policy.seed_target == (5, 5)
+
+
+# ── g-315-202 Phase 1b: trusted align_to_cell routing + terminal alignment ────
+
+
+def test_trusted_align_routes_to_policy_with_predicate() -> None:
+    # A TRUSTED align_to_cell joins the directed-steering route (navigates like
+    # reach_cell) and carries a row-OR-column goal_predicate so the planner stops
+    # at the first aligned lattice node. goal_cell is off-grid so the alignment
+    # stop does NOT fire on this first tick -- this asserts ROUTING + predicate
+    # wiring, not arrival. _click_frame has no move-actions -> calibration is
+    # skipped and the policy steers from tick 0 (provenance HandBuiltPolicy).
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_ALIGN_TO_CELL, goal_cell=(5, 5), confidence=0.9)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    decision = adapter.choose_action(_click_frame())
+    assert adapter.use_policy is True
+    assert adapter.policy is not None
+    assert adapter.policy.seed_target == (5, 5)
+    assert adapter.calibrating is False
+    assert decision.provenance["executor"] == "HandBuiltPolicy"
+    # The wired predicate is row-OR-column alignment over lattice nodes.
+    pred = adapter.policy.goal_predicate
+    assert pred is not None
+    assert pred((5, 3), (5, 7)) is True   # shares row 5
+    assert pred((2, 7), (5, 7)) is True   # shares column 7
+    assert pred((2, 3), (5, 7)) is False  # shares neither
+
+
+def test_align_arrival_ends_route_terminal(monkeypatch) -> None:
+    # On alignment (cursor within NOISE_FLOOR_CELLS of the goal on EITHER axis --
+    # the row-OR-col stop, contrast toggle's BOTH-axis arrival), align_to_cell is
+    # one-shot TERMINAL (OD-7): _use_policy flips False and THIS tick routes
+    # through the DeterministicExecutor (no ACTION6 click -- align is not a
+    # toggle). The d1 provenance is still HandBuiltPolicy (the decision came via
+    # _decide_via_policy); the NEXT tick (use_policy False) routes via the
+    # DeterministicExecutor directly.
+    goal = (2, 5)  # (row, col)
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_ALIGN_TO_CELL, goal_cell=goal, confidence=0.9)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    # Cursor shares the goal's ROW (row==goal[0]) but NOT its column -> the
+    # EITHER-axis stop fires, isolating the terminal drop from cursor-detection
+    # details (covered by the solver_v0 perception tests).
+    monkeypatch.setattr(
+        "solver_v2.streaming_adapter.detect_cursor_centroid",
+        lambda features: (float(goal[0]), 0.0),
+    )
+    d1 = adapter.choose_action(_click_frame())
+    assert adapter.use_policy is False                       # terminal one-shot
+    assert d1.provenance["executor"] == "HandBuiltPolicy"    # decided via policy
+    d2 = adapter.choose_action(_click_frame())               # same episode/guid
+    assert d2.provenance["executor"] == "DeterministicExecutor"
+
+
+def test_untrusted_align_falls_to_deterministic() -> None:
+    # An align_to_cell whose confidence is below SEED_TRUST_MIN (0.5) is NOT
+    # trusted -> degrade to the DeterministicExecutor, exactly like an untrusted
+    # reach_cell / toggle_at_cell. No policy is constructed.
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_ALIGN_TO_CELL, goal_cell=(0, 1), confidence=0.3)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    decision = adapter.choose_action(_strategic())
+    assert adapter.use_policy is False
+    assert adapter.policy is None
+    assert decision.provenance["executor"] == "DeterministicExecutor"
 
 
 def test_unknown_routes_to_deterministic() -> None:
