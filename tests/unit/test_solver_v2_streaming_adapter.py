@@ -49,6 +49,20 @@ def _strategic(score: int = 0, guid: str = "play-1") -> FrameData:
     )
 
 
+def _click_frame(score: int = 0, guid: str = "play-1") -> FrameData:
+    """A click-class frame: ACTION6 available, NO move-actions. A routed
+    toggle_at_cell skips calibration (move_actions_from is empty) and steers
+    from tick 0 — used by the Phase 1a (g-315-201) toggle routing tests."""
+    return FrameData(
+        game_id="ls20-test",
+        frame=[[[4, 4, 3, 8], [4, 3, 4, 8]]],
+        state=GameState.NOT_FINISHED,
+        score=score,
+        guid=guid,
+        available_actions=ACTION6_AVAILABLE,
+    )
+
+
 def _prior(
     objective: str,
     *,
@@ -270,6 +284,109 @@ def test_click_toggle_routes_to_deterministic() -> None:
     assert adapter.use_policy is False
     assert adapter.policy is None
     assert decision.provenance["executor"] == "DeterministicExecutor"
+
+
+# ── g-315-201 Phase 1a: trusted toggle_at_cell routing + ACTION6 arrival ──────
+
+
+def test_trusted_toggle_with_action6_routes_to_policy() -> None:
+    # A TRUSTED toggle_at_cell with ACTION6 available joins the directed-steering
+    # route (navigates identically to reach_cell); the arrival click is applied in
+    # _decide_via_policy. goal_cell is off-grid so the arrival override does NOT
+    # fire on this first tick — this asserts ROUTING, not arrival.
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_TOGGLE_AT_CELL, goal_cell=(5, 5), confidence=0.9)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    decision = adapter.choose_action(_click_frame())
+    assert adapter.use_policy is True
+    assert adapter.policy is not None
+    assert adapter.policy.seed_target == (5, 5)
+    # ACTION6_AVAILABLE has no move-actions -> calibration skipped, HandBuiltPolicy
+    # steering from tick 0.
+    assert adapter.calibrating is False
+    assert decision.provenance["executor"] == "HandBuiltPolicy"
+
+
+def test_untrusted_toggle_falls_to_deterministic() -> None:
+    # A toggle_at_cell whose confidence is below SEED_TRUST_MIN (0.5) is NOT
+    # trusted -> degrade to the DeterministicExecutor (the existing
+    # confidence-gated click path), exactly like an untrusted reach_cell.
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_TOGGLE_AT_CELL, goal_cell=(0, 1), confidence=0.3)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    decision = adapter.choose_action(_click_frame())
+    assert adapter.use_policy is False
+    assert adapter.policy is None
+    assert decision.provenance["executor"] == "DeterministicExecutor"
+
+
+def test_toggle_arrival_fires_action6_with_coords(monkeypatch) -> None:
+    # On arrival (cursor within NOISE_FLOOR_CELLS of the goal on BOTH axes), the
+    # policy's move is overridden with ACTION6 AT the goal cell: x=col, y=row
+    # (matching executor.py:120). After the click, _use_policy is False so the
+    # one-shot toggle completes and remaining ticks fall through to the executor.
+    goal = (2, 5)  # (row, col)
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_TOGGLE_AT_CELL, goal_cell=goal, confidence=0.9)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    # Pin the cursor centroid AT the goal cell so the arrival override fires
+    # deterministically, isolating it from cursor-detection details (covered by
+    # the solver_v0 perception tests).
+    monkeypatch.setattr(
+        "solver_v2.streaming_adapter.detect_cursor_centroid",
+        lambda features: (float(goal[0]), float(goal[1])),
+    )
+    decision = adapter.choose_action(_click_frame())
+    assert decision.action == GameAction.ACTION6
+    assert decision.provenance["action6_target"] == {"x": goal[1], "y": goal[0]}
+    assert adapter.use_policy is False
+
+
+def test_trusted_toggle_without_action6_falls_to_deterministic(caplog) -> None:
+    # A TRUSTED toggle_at_cell whose action set lacks ACTION6 (movement-class)
+    # cannot issue the arrival click -> fall through to the DeterministicExecutor
+    # and log a warning (Phase 3's ToggleProbe handles this no-ACTION6 case).
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_TOGGLE_AT_CELL, goal_cell=(0, 1), confidence=0.9)
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    with caplog.at_level(logging.WARNING, logger="solver_v2.streaming_adapter"):
+        decision = adapter.choose_action(_strategic())  # LS20: no ACTION6
+    assert adapter.use_policy is False
+    assert decision.provenance["executor"] == "DeterministicExecutor"
+    assert "toggle_at_cell arrival without ACTION6" in caplog.text
+
+
+def test_objective_updates_across_episode_transition() -> None:
+    # _objective tracks the per-episode seed objective. Episode 1 reach_cell ->
+    # _objective REACH_CELL; episode 2 toggle_at_cell (guid-rotation boundary,
+    # ACTION6 present) -> _objective TOGGLE_AT_CELL on a FRESH policy.
+    seed = _ScriptedSeedProvider(
+        _prior(OBJECTIVE_REACH_CELL, goal_cell=(0, 3), confidence=0.9),
+        _prior(OBJECTIVE_TOGGLE_AT_CELL, goal_cell=(5, 5), confidence=0.9),
+    )
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    adapter.choose_action(_strategic(guid="play-1"))
+    assert adapter._objective == OBJECTIVE_REACH_CELL
+    ep1_policy = adapter.policy
+    adapter.choose_action(_click_frame(guid="play-2"))
+    assert adapter._objective == OBJECTIVE_TOGGLE_AT_CELL
+    assert adapter.use_policy is True          # trusted toggle + ACTION6 -> policy
+    assert adapter.policy is not ep1_policy     # fresh policy at the boundary
+    assert adapter.policy.seed_target == (5, 5)
 
 
 def test_unknown_routes_to_deterministic() -> None:

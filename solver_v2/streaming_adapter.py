@@ -49,9 +49,16 @@ from solver_v0.policy import (
     PolicyDecision,
     detect_cursor_centroid,
 )
-from solver_v2.calibration import AxisMap, CalibrationProbe, move_actions_from
+from solver_v2.calibration import (
+    _ACTION6_ID,
+    NOISE_FLOOR_CELLS,
+    AxisMap,
+    CalibrationProbe,
+    move_actions_from,
+)
 from solver_v2.episode import (
     OBJECTIVE_REACH_CELL,
+    OBJECTIVE_TOGGLE_AT_CELL,
     EpisodeBoundaryDetector,
     EpisodeContext,
     EpisodePrior,
@@ -143,6 +150,10 @@ class SolverV2StreamingAdapter:
         self._use_policy: bool = False
         self._previous_policy_action: Optional[int] = None
         self._previous_policy_score: Optional[int] = None
+        # Phase 1a (g-315-201): the current episode's objective, set by
+        # _route_episode from the seed prior. _decide_via_policy reads it to fire
+        # the toggle_at_cell arrival override (ACTION6 click at the goal cell).
+        self._objective: Optional[str] = None
 
         # g-315-148 per-EPISODE calibration startup (Apply 2b). For a movement
         # episode, _route_episode() also builds a fresh CalibrationProbe and sets
@@ -487,10 +498,15 @@ class SolverV2StreamingAdapter:
         HandBuiltPolicy's documented per-episode state contract (visit_counts /
         cursor model / online axis model all reset at the boundary).
 
-        Click/toggle and unknown episodes keep the DeterministicExecutor — the
-        proven confidence-gated goal_cell click path (g-315-138/139/142). The
-        DeterministicExecutor is NOT extended with a duplicate rule 4.6
-        (implementation-discipline: reuse Half B, do not reimplement).
+        A TRUSTED toggle_at_cell with ACTION6 available joins the steering route
+        (Phase 1a, g-315-201): it navigates identically to reach_cell, and
+        _decide_via_policy issues an ACTION6 click AT the goal on arrival. A
+        trusted toggle WITHOUT ACTION6 (movement-class — Phase 3's ToggleProbe),
+        plus all click/align/avoid/unknown episodes, keep the
+        DeterministicExecutor — the proven confidence-gated goal_cell click path
+        (g-315-138/139/142). The DeterministicExecutor is NOT extended with a
+        duplicate rule 4.6 (implementation-discipline: reuse Half B, do not
+        reimplement).
 
         Degrade-safe: an untrusted seed, an absent goal_cell, or any non-REACH
         objective falls through to the DeterministicExecutor — byte-identical to
@@ -498,10 +514,30 @@ class SolverV2StreamingAdapter:
         is gated behind g-315-98 + g-315-134-d).
         """
         prior = self._episode_prior
+        # Phase 1a (g-315-201): record the episode objective so _decide_via_policy
+        # can fire the toggle_at_cell arrival override; None when no prior.
+        self._objective = prior.objective if prior is not None else None
+        # A trusted toggle_at_cell navigates exactly like reach_cell, but if it
+        # cannot issue its arrival click (ACTION6 absent from the action set) it
+        # must NOT take the steering route -- it would reach the goal with no way
+        # to toggle. Fall through to the DeterministicExecutor (Phase 3's
+        # ToggleProbe handles the movement-class no-ACTION6 toggle); warn so the
+        # degrade is visible in the recording.
+        toggle_blocked_no_action6 = (
+            prior is not None
+            and prior.objective == OBJECTIVE_TOGGLE_AT_CELL
+            and _ACTION6_ID not in available_action_ids
+        )
+        if toggle_blocked_no_action6:
+            logger.warning(
+                "toggle_at_cell arrival without ACTION6 -- falling back to "
+                "DeterministicExecutor; Phase 3 ToggleProbe needed."
+            )
         if (
             prior is not None
-            and prior.objective == OBJECTIVE_REACH_CELL
+            and prior.objective in (OBJECTIVE_REACH_CELL, OBJECTIVE_TOGGLE_AT_CELL)
             and prior.is_trusted()
+            and not toggle_blocked_no_action6
         ):
             self._use_policy = True
             self._policy = (
@@ -675,6 +711,31 @@ class SolverV2StreamingAdapter:
             raise AyoaiStreamingError(
                 f"solver-v2 policy.decide failed (tick {self._tick}): {e}"
             ) from e
+        # Phase 1a (g-315-201) toggle_at_cell arrival override. When steering a
+        # TOGGLE objective and the cursor has arrived within NOISE_FLOOR_CELLS of
+        # the goal cell on BOTH axes, replace the policy's next move with the
+        # ACTION6 click AT the goal (x=col, y=row -- matching executor.py:120 and
+        # the DeterministicExecutor toggle path) and END the directed route
+        # (_use_policy=False, so remaining ticks fall through to the
+        # DeterministicExecutor -- the toggle task is one-shot complete). Placed
+        # BEFORE the _previous_policy_action assignment so the deferred-observe
+        # loop records the action ACTUALLY ISSUED this tick (the ACTION6
+        # override), not the discarded move.
+        if (
+            self._objective == OBJECTIVE_TOGGLE_AT_CELL
+            and policy.seed_target is not None
+        ):
+            cursor = detect_cursor_centroid(features)
+            if cursor is not None:
+                goal = policy.seed_target
+                if (
+                    abs(cursor[0] - goal[0]) < NOISE_FLOOR_CELLS
+                    and abs(cursor[1] - goal[1]) < NOISE_FLOOR_CELLS
+                ):
+                    pd = PolicyDecision(
+                        action=_ACTION6_ID, x=goal[1], y=goal[0]
+                    )
+                    self._use_policy = False
         self._previous_policy_action = pd.action
         self._previous_policy_score = frame.score
         return pd
