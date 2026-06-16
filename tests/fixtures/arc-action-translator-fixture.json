@@ -1,0 +1,39 @@
+{
+  "_doc": "Cross-language oracle fixture for the ARC greedy move policy + objective normalizer. CANONICAL COPY lives here (Ayoai-Environment-Server/src/test/resources/). The client (Ayoai-ARC-AGI-3-Integration) keeps a byte-identical fallback at tests/fixtures/arc-action-translator-fixture.json, resolved at test time via the ARC_FIXTURE_PATH env var; tests/test_fixture_in_sync.py guards against drift. decide_cases pin ArcActionTranslator.decide() == greedy_decide() (Python port); objective_normalization pins ArcEpisodeSeedService.normalizeObjective() == solver_v2.episode.normalize_objective(). Axis: dr=goalR-curR (>0 goal below), dc=goalC-curC (>0 goal right); stepToward/stepAway break |dr|==|dc| ties toward the row axis. See design/arc-task-action-boundary.md Phase 4 (g-315-204).",
+  "decide_cases": [
+    {"objective": "reach_cell", "curR": 0, "curC": 0, "goalR": 3, "goalC": 4, "expected": "RIGHT", "note": "|dc|>|dr| -> col toward"},
+    {"objective": "reach_cell", "curR": 0, "curC": 0, "goalR": 3, "goalC": 2, "expected": "DOWN", "note": "|dr|>|dc| -> row toward"},
+    {"objective": "reach_cell", "curR": 0, "curC": 0, "goalR": 2, "goalC": 2, "expected": "DOWN", "note": "tie |dr|==|dc| -> row wins"},
+    {"objective": "reach_cell", "curR": 5, "curC": 0, "goalR": 1, "goalC": 0, "expected": "UP", "note": "row up"},
+    {"objective": "reach_cell", "curR": 0, "curC": 5, "goalR": 0, "goalC": 1, "expected": "LEFT", "note": "col left"},
+    {"objective": "reach_cell", "curR": 2, "curC": 2, "goalR": 2, "goalC": 2, "expected": "NONE", "note": "cursor at goal"},
+    {"objective": "reach_cell", "curR": 0, "curC": 0, "goalR": 0, "goalC": 0, "expected": "NONE", "note": "at goal, origin boundary"},
+    {"objective": "reach_cell", "curR": 0, "curC": 0, "goalR": 63, "goalC": 63, "expected": "DOWN", "note": "max boundary, tie -> row"},
+    {"objective": "reach_cell", "curR": 63, "curC": 63, "goalR": 0, "goalC": 0, "expected": "UP", "note": "from max boundary, tie -> row"},
+    {"objective": "toggle_at_cell", "curR": 0, "curC": 0, "goalR": 0, "goalC": 3, "expected": "RIGHT", "note": "step toward before toggle"},
+    {"objective": "toggle_at_cell", "curR": 4, "curC": 4, "goalR": 4, "goalC": 4, "expected": "TOGGLE", "note": "cursor at goal -> toggle"},
+    {"objective": "toggle_at_cell", "curR": 0, "curC": 0, "goalR": 2, "goalC": 2, "expected": "DOWN", "note": "tie -> row toward"},
+    {"objective": "toggle_at_cell", "curR": 3, "curC": 3, "goalR": 0, "goalC": 3, "expected": "UP", "note": "row up toward"},
+    {"objective": "align_to_cell", "curR": 0, "curC": 0, "goalR": 3, "goalC": 4, "expected": "DOWN", "note": "|dr|<=|dc| -> zero row axis"},
+    {"objective": "align_to_cell", "curR": 0, "curC": 0, "goalR": 4, "goalC": 3, "expected": "RIGHT", "note": "|dc|<|dr| -> zero col axis"},
+    {"objective": "align_to_cell", "curR": 0, "curC": 0, "goalR": 2, "goalC": 2, "expected": "DOWN", "note": "tie, align uses <= -> row"},
+    {"objective": "align_to_cell", "curR": 2, "curC": 5, "goalR": 2, "goalC": 9, "expected": "NONE", "note": "already same row"},
+    {"objective": "align_to_cell", "curR": 5, "curC": 2, "goalR": 9, "goalC": 2, "expected": "NONE", "note": "already same col"},
+    {"objective": "align_to_cell", "curR": 3, "curC": 3, "goalR": 3, "goalC": 3, "expected": "NONE", "note": "on cell -> aligned"},
+    {"objective": "avoid", "curR": 2, "curC": 2, "goalR": 5, "goalC": 5, "expected": "UP", "note": "off target, tie -> row away (dr>=0 -> UP)"},
+    {"objective": "avoid", "curR": 5, "curC": 5, "goalR": 2, "goalC": 2, "expected": "DOWN", "note": "goal above-left, row away -> DOWN"},
+    {"objective": "avoid", "curR": 4, "curC": 4, "goalR": 4, "goalC": 4, "expected": "UP", "note": "on target -> step off (UP)"},
+    {"objective": "avoid", "curR": 3, "curC": 3, "goalR": 3, "goalC": 8, "expected": "LEFT", "note": "goal right, col away -> LEFT"},
+    {"objective": "avoid", "curR": 3, "curC": 8, "goalR": 3, "goalC": 3, "expected": "RIGHT", "note": "goal left, col away -> RIGHT"},
+    {"objective": "avoid", "curR": 5, "curC": 0, "goalR": 2, "goalC": 0, "expected": "DOWN", "note": "goal above, row away -> DOWN"}
+  ],
+  "objective_normalization": [
+    {"raw": "reach_6", "expected": "reach_cell"},
+    {"raw": "align-to-7", "expected": "align_to_cell"},
+    {"raw": "toggle", "expected": "toggle_at_cell"},
+    {"raw": "avoid_zone", "expected": "avoid"},
+    {"raw": "unknown", "expected": "unknown"},
+    {"raw": "12345", "expected": "unknown"},
+    {"raw": "REACH_CELL", "expected": "reach_cell"}
+  ]
+}
