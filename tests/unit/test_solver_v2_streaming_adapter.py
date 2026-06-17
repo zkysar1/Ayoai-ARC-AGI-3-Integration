@@ -276,11 +276,13 @@ def test_movement_reach_cell_routes_to_policy() -> None:
     assert decision.action in LS20_AVAILABLE
 
 
-def test_untrusted_toggle_no_action6_falls_to_deterministic() -> None:
-    # g-315-206: the no-ACTION6 ToggleProbe route is gated on TRUST. An UNTRUSTED
-    # toggle (confidence < SEED_TRUST_MIN) still degrades to the DeterministicExecutor
-    # regardless of ACTION6 presence -- the probe is never armed for an untrusted
-    # seed. (A TRUSTED no-ACTION6 toggle now routes to policy + ToggleProbe; see
+def test_untrusted_toggle_no_action6_movement_routes_to_v1_explorer() -> None:
+    # g-315-206 + g-315-213: the no-ACTION6 ToggleProbe route is gated on TRUST,
+    # so an UNTRUSTED toggle never arms the probe (_toggle_no_action6 False). On a
+    # MOVEMENT-class frame (LS20_AVAILABLE, no ACTION6) it now routes to the
+    # HandBuiltPolicy v1 explorer (seed_target None) instead of the blind
+    # DeterministicExecutor round-robin. (A TRUSTED no-ACTION6 toggle routes to
+    # policy + ToggleProbe; see
     # test_trusted_toggle_without_action6_routes_to_policy_and_arms_probe.)
     seed = _ScriptedSeedProvider(
         _prior(OBJECTIVE_TOGGLE_AT_CELL, goal_cell=(0, 1), confidence=0.3)
@@ -289,10 +291,11 @@ def test_untrusted_toggle_no_action6_falls_to_deterministic() -> None:
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
     )
     decision = adapter.choose_action(_strategic())
-    assert adapter.use_policy is False
-    assert adapter.policy is None
+    assert adapter.use_policy is True
+    assert adapter.policy is not None
+    assert adapter.policy.seed_target is None
     assert adapter._toggle_no_action6 is False  # untrusted -> probe not armed
-    assert decision.provenance["executor"] == "DeterministicExecutor"
+    assert decision.provenance["executor"] == "HandBuiltPolicy"
 
 
 # ── g-315-201 Phase 1a: trusted toggle_at_cell routing + ACTION6 arrival ──────
@@ -552,10 +555,12 @@ def test_align_arrival_ends_route_terminal(monkeypatch) -> None:
     assert d2.provenance["executor"] == "DeterministicExecutor"
 
 
-def test_untrusted_align_falls_to_deterministic() -> None:
-    # An align_to_cell whose confidence is below SEED_TRUST_MIN (0.5) is NOT
-    # trusted -> degrade to the DeterministicExecutor, exactly like an untrusted
-    # reach_cell / toggle_at_cell. No policy is constructed.
+def test_untrusted_align_movement_routes_to_v1_explorer() -> None:
+    # g-315-213: an align_to_cell below SEED_TRUST_MIN (0.5) is NOT trusted. On a
+    # MOVEMENT-class frame (LS20_AVAILABLE, no ACTION6) it now routes to the
+    # HandBuiltPolicy v1 explorer (seed_target None) instead of the blind
+    # DeterministicExecutor round-robin. avoid_target stays None (not an
+    # avoid-steer); goal_predicate stays None (set only on the TRUSTED align path).
     seed = _ScriptedSeedProvider(
         _prior(OBJECTIVE_ALIGN_TO_CELL, goal_cell=(0, 1), confidence=0.3)
     )
@@ -563,9 +568,11 @@ def test_untrusted_align_falls_to_deterministic() -> None:
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
     )
     decision = adapter.choose_action(_strategic())
-    assert adapter.use_policy is False
-    assert adapter.policy is None
-    assert decision.provenance["executor"] == "DeterministicExecutor"
+    assert adapter.use_policy is True
+    assert adapter.policy is not None
+    assert adapter.policy.seed_target is None
+    assert adapter.policy.avoid_target is None
+    assert decision.provenance["executor"] == "HandBuiltPolicy"
 
 
 def test_trusted_avoid_routes_to_policy_with_avoid_target() -> None:
@@ -591,10 +598,12 @@ def test_trusted_avoid_routes_to_policy_with_avoid_target() -> None:
     assert decision.provenance["executor"] == "HandBuiltPolicy"
 
 
-def test_untrusted_avoid_falls_to_deterministic() -> None:
-    # An avoid whose confidence is below SEED_TRUST_MIN (0.5) is NOT trusted ->
-    # degrade to the DeterministicExecutor, exactly like an untrusted reach /
-    # toggle / align. No policy is constructed (avoid_target never set).
+def test_untrusted_avoid_movement_routes_to_v1_explorer() -> None:
+    # g-315-213: an avoid below SEED_TRUST_MIN (0.5) is NOT trusted. On a
+    # MOVEMENT-class frame it now routes to the HandBuiltPolicy v1 explorer
+    # (seed_target None) instead of the blind DeterministicExecutor round-robin.
+    # avoid_target stays None: an UNTRUSTED avoid does NOT flee a guessed cell
+    # (the goal_cell is unreliable) -- it explores to discover the layout first.
     seed = _ScriptedSeedProvider(
         _prior(OBJECTIVE_AVOID, goal_cell=(0, 1), confidence=0.3)
     )
@@ -602,24 +611,33 @@ def test_untrusted_avoid_falls_to_deterministic() -> None:
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
     )
     decision = adapter.choose_action(_strategic())
-    assert adapter.use_policy is False
-    assert adapter.policy is None
-    assert decision.provenance["executor"] == "DeterministicExecutor"
+    assert adapter.use_policy is True
+    assert adapter.policy is not None
+    assert adapter.policy.seed_target is None
+    assert adapter.policy.avoid_target is None
+    assert decision.provenance["executor"] == "HandBuiltPolicy"
 
 
-def test_unknown_routes_to_deterministic() -> None:
+def test_unknown_movement_routes_to_v1_explorer() -> None:
+    # g-315-213: an UNKNOWN-objective seed (the dominant ls20 live case, rb-1759:
+    # 5/7 runs untrusted) on a MOVEMENT-class frame now routes to the HandBuiltPolicy
+    # v1 explorer instead of the blind DeterministicExecutor round-robin.
     seed = _ScriptedSeedProvider(_prior(OBJECTIVE_UNKNOWN))
     adapter = SolverV2StreamingAdapter(
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
     )
     decision = adapter.choose_action(_strategic())
-    assert adapter.use_policy is False
-    assert decision.provenance["executor"] == "DeterministicExecutor"
+    assert adapter.use_policy is True
+    assert adapter.policy is not None
+    assert adapter.policy.seed_target is None
+    assert decision.provenance["executor"] == "HandBuiltPolicy"
 
 
-def test_untrusted_reach_cell_degrades_to_deterministic() -> None:
-    # REACH_CELL but confidence below SEED_TRUST_MIN (0.5) -> is_trusted False ->
-    # degrade-safe to the DeterministicExecutor (byte-identical pre-seed path).
+def test_untrusted_reach_cell_movement_routes_to_v1_explorer() -> None:
+    # g-315-213: REACH_CELL but confidence below SEED_TRUST_MIN (0.5) -> is_trusted
+    # False. On a MOVEMENT-class frame it now routes to the HandBuiltPolicy v1
+    # explorer (seed_target None -> no greedy steering toward the untrusted cell;
+    # rb-1690-safe) instead of the blind DeterministicExecutor round-robin.
     seed = _ScriptedSeedProvider(
         _prior(OBJECTIVE_REACH_CELL, goal_cell=(0, 3), confidence=0.49)
     )
@@ -627,12 +645,17 @@ def test_untrusted_reach_cell_degrades_to_deterministic() -> None:
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
     )
     decision = adapter.choose_action(_strategic())
-    assert adapter.use_policy is False
-    assert decision.provenance["executor"] == "DeterministicExecutor"
+    assert adapter.use_policy is True
+    assert adapter.policy is not None
+    assert adapter.policy.seed_target is None
+    assert decision.provenance["executor"] == "HandBuiltPolicy"
 
 
-def test_reach_cell_without_goal_cell_degrades_to_deterministic() -> None:
-    # REACH_CELL, high confidence, but no goal_cell -> is_trusted False.
+def test_reach_cell_without_goal_cell_movement_routes_to_v1_explorer() -> None:
+    # g-315-213: REACH_CELL, high confidence, but no goal_cell -> is_trusted False.
+    # On a MOVEMENT-class frame it now routes to the HandBuiltPolicy v1 explorer
+    # (seed_target None) instead of the blind DeterministicExecutor round-robin --
+    # with no goal_cell there is nothing to steer toward, so exploration is right.
     seed = _ScriptedSeedProvider(
         _prior(OBJECTIVE_REACH_CELL, goal_cell=None, confidence=0.9)
     )
@@ -640,22 +663,50 @@ def test_reach_cell_without_goal_cell_degrades_to_deterministic() -> None:
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
     )
     decision = adapter.choose_action(_strategic())
+    assert adapter.use_policy is True
+    assert adapter.policy is not None
+    assert adapter.policy.seed_target is None
+    assert decision.provenance["executor"] == "HandBuiltPolicy"
+
+
+def test_untrusted_click_class_still_routes_to_deterministic() -> None:
+    # g-315-213 BOUNDARY: the untrusted -> v1-explorer reroute is gated on
+    # MOVEMENT-class (ACTION6 absent + move-actions present). A CLICK-class frame
+    # (ACTION6_AVAILABLE = [RESET, ACTION6], no move-actions) with an untrusted
+    # seed MUST still degrade to the DeterministicExecutor -- the proven
+    # g-315-138/139/142 click path. Pins the boundary so a future broadening of
+    # the routing condition cannot silently reroute click games into movement
+    # exploration.
+    seed = _ScriptedSeedProvider(_prior(OBJECTIVE_UNKNOWN))
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="su15-test", seed_provider=seed
+    )
+    decision = adapter.choose_action(_click_frame())
     assert adapter.use_policy is False
+    assert adapter.policy is None
     assert decision.provenance["executor"] == "DeterministicExecutor"
 
 
-def test_unknown_seed_plan_cycles_via_deterministic() -> None:
-    # Preserves the pre-g-315-147 plan-cycle assertion on the path that STILL
-    # uses the DeterministicExecutor: an UNKNOWN seed (degrade) cycles the
-    # injected action_plan (1, 2, ...) -> ACTION1 then ACTION2.
+def test_unknown_seed_movement_explores_via_policy_not_round_robin() -> None:
+    # g-315-213: an UNKNOWN (untrusted) seed on a MOVEMENT-class frame now routes
+    # to the HandBuiltPolicy v1 explorer, NOT the DeterministicExecutor blind
+    # plan-cycle. The pre-g-315-213 path cycled the injected action_plan
+    # (ACTION1, ACTION2, ...) which, on a movement game, OSCILLATES in place
+    # (up/down + left/right cancel) and never explores -> score 0 (live ls20
+    # g-315-154 2026-06-17). The v1 explorer (seed_target None) drives curiosity +
+    # coverage instead. The DeterministicExecutor's own plan-cycle is still
+    # unit-tested directly in test_solver_v2_executor.py.
     seed = _ScriptedSeedProvider(_prior(OBJECTIVE_UNKNOWN))
     adapter = SolverV2StreamingAdapter(
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
     )
     d0 = adapter.choose_action(_strategic(score=0))
     d1 = adapter.choose_action(_strategic(score=1))
-    assert d0.action == GameAction.ACTION1
-    assert d1.action == GameAction.ACTION2
+    assert adapter.use_policy is True
+    assert adapter.policy is not None
+    assert adapter.policy.seed_target is None
+    assert d0.provenance["executor"] == "HandBuiltPolicy"
+    assert d1.provenance["executor"] == "HandBuiltPolicy"
 
 
 def test_policy_deferred_observe_accumulates_history() -> None:
@@ -796,13 +847,14 @@ def test_axis_map_recorded_in_provenance_on_calibration_complete_tick() -> None:
 
 
 def test_per_episode_routing_switches_executor() -> None:
-    # Episode 1 movement (REACH_CELL) opens in CalibrationProbe (g-315-148);
-    # episode 2 UNTRUSTED toggle (via a guid-rotation boundary) -> DeterministicExecutor.
-    # The route is fixed per EPISODE at the boundary, not re-decided per tick; the
-    # episode-2 boundary resets the (interrupted) episode-1 calibration state.
-    # (Episode 2 is untrusted on purpose: a TRUSTED no-ACTION6 toggle now routes to
-    # policy + ToggleProbe per g-315-206, so untrusted keeps the switch-to-executor
-    # demonstration this test is about.)
+    # Episode 1 movement (REACH_CELL, trusted) opens in CalibrationProbe
+    # (g-315-148); episode 2 UNTRUSTED toggle (via a guid-rotation boundary) is a
+    # MOVEMENT-class frame, so per g-315-213 it routes to the HandBuiltPolicy v1
+    # explorer (NOT the DeterministicExecutor). The route is fixed per EPISODE at
+    # the boundary, not re-decided per tick; the episode-2 boundary resets the
+    # (interrupted) episode-1 calibration state. The point of this test -- the
+    # per-episode route SWITCHES at the boundary -- still holds (CalibrationProbe
+    # -> HandBuiltPolicy-v1-explore).
     seed = _ScriptedSeedProvider(
         _prior(OBJECTIVE_REACH_CELL, goal_cell=(0, 3), confidence=0.5),
         _prior(OBJECTIVE_TOGGLE_AT_CELL, goal_cell=(0, 1), confidence=0.3),
@@ -816,10 +868,13 @@ def test_per_episode_routing_switches_executor() -> None:
     assert d1.provenance["executor"] == "CalibrationProbe"
     d2 = adapter.choose_action(_strategic(guid="play-2"))
     assert adapter.episode_id == 2
-    assert adapter.use_policy is False
+    # g-315-213: untrusted toggle on a movement frame -> v1 explorer, not executor.
+    assert adapter.use_policy is True
     assert adapter.calibrating is False
     assert adapter.probe is None
-    assert d2.provenance["executor"] == "DeterministicExecutor"
+    assert adapter.policy is not None
+    assert adapter.policy.seed_target is None
+    assert d2.provenance["executor"] == "HandBuiltPolicy"
 
 
 def test_policy_factory_injection_constructs_per_episode() -> None:

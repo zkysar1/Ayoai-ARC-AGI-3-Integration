@@ -576,9 +576,14 @@ class SolverV2StreamingAdapter:
         reimplement).
 
         Degrade-safe: an untrusted seed, an absent goal_cell, or any non-REACH
-        objective falls through to the DeterministicExecutor — byte-identical to
-        the pre-g-315-147 behavior (guard-660: this wires the path; live reward
-        is gated behind g-315-98 + g-315-134-d).
+        objective on a CLICK-class episode (ACTION6 available) falls through to
+        the DeterministicExecutor — byte-identical to the pre-g-315-147 behavior.
+        A MOVEMENT-class episode (no ACTION6, move-actions present) carrying such
+        a seed routes instead to the HandBuiltPolicy v1 explorer (g-315-213): the
+        DeterministicExecutor's blind ACTION1-4 round-robin OSCILLATES in place on
+        a movement game (up/down + left/right cancel), so v1 curiosity+coverage is
+        a strict improvement (guard-660: this wires the path; live score measured
+        per g-315-154).
         """
         prior = self._episode_prior
         # Phase 1a (g-315-201): record the episode objective so _decide_via_policy
@@ -719,6 +724,45 @@ class SolverV2StreamingAdapter:
                     # candidate -- nothing was proven to move).
                     if self._toggle_pending:
                         self._start_toggle_probe(None)
+        elif (
+            prior is not None
+            and _ACTION6_ID not in available_action_ids
+            and move_actions_from(available_action_ids)
+        ):
+            # g-315-213: an UNTRUSTED (or non-steering) seed on a MOVEMENT-class
+            # episode (no ACTION6, move-actions present, e.g. ls20). The
+            # DeterministicExecutor would blind-cycle sorted(legal) =
+            # ACTION1->2->3->4 round-robin, which on a movement game OSCILLATES IN
+            # PLACE (up/down and left/right cancel) -> never explores -> score 0
+            # (verified live ls20 g-315-154 2026-06-17, recording caee2ad5: 81
+            # ticks of ACTION1-4 round-robin, NOT_FINISHED). Route instead to the
+            # HandBuiltPolicy v1 explorer (seed_target stays None): no-op
+            # suppression + score-delta preference (rule 4) + palette-novelty
+            # curiosity (rule 4.5) + stagnation-triggered systematic coverage
+            # (rule 4.7) DISCOVER the goal through interaction. This is the
+            # documented "untrusted -> v1 candidate-cycling" path (episode.py
+            # is_trusted() docstring) that _route_episode previously never wired
+            # for movement-class -- it degraded straight to the blind executor.
+            # rb-1759: the untrusted path is the MAJORITY case (5/7 runs), so this
+            # is the dominant ls20 regime, not an edge. No CalibrationProbe/axis_map
+            # (v1 rules 4/4.5/4.7 do not steer toward a target; rule 4.6 greedy is
+            # dormant with seed_target None -- rb-1690-safe: no greedy-1-step
+            # maze-stall). No guard-787 widening: seed_target stays None (the plain
+            # v1 path), NOT a new mutually-exclusive steering field. Click-class
+            # untrusted (ACTION6 available) keeps the DeterministicExecutor click
+            # path below (g-315-138/139/142). A fresh policy per episode matches
+            # HandBuiltPolicy's per-episode state contract (visit_counts reset).
+            self._use_policy = True
+            self._policy = (
+                self._policy_factory()
+                if self._policy_factory is not None
+                else HandBuiltPolicy(game_class=self._game_class)
+            )
+            # seed_target left None -> pure v1 exploration. axis_map None: the
+            # explorer rules do not consume it, and the deferred-observe loop in
+            # _decide_via_policy still accumulates frame-changed/score-delta signal.
+            self._probe = None
+            self._calibrating = False
         else:
             self._use_policy = False
             self._probe = None
@@ -932,7 +976,9 @@ class SolverV2StreamingAdapter:
                 f"solver-v2 movement route has no policy (tick {self._tick})"
             )
         # _episode_prior is non-None on any steering tick: choose_action guards it
-        # before dispatch AND the movement route requires a trusted prior. Assert it
+        # before dispatch AND _route_episode engages the policy only with a prior
+        # present (trusted steering, OR the g-315-213 untrusted-movement explorer
+        # where seed_target is None). Assert it
         # so mypy narrows EpisodePrior|None for the executor degrade fallbacks below
         # (the align-stop and the g-315-206 toggle-arrival-with-no-toggle paths).
         assert self._episode_prior is not None
