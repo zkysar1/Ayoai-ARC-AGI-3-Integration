@@ -661,12 +661,30 @@ def main() -> None:
                 "status_log": ayoai_session.status_log,
             })
         else:
+            # g-315-211: note text reflects the ACTUAL reason ayoai_session is
+            # None. --use-solver-v0 routes decisions locally (no live session
+            # by design) — distinct from --mock-url (mock streaming). The prior
+            # single "--mock-url set" text mislabeled the v0 case and caused the
+            # scorecard-key conflation (the v0 plays' ayo_server_key was read as
+            # an ARC card_id). kind kept stable for downstream recording parsers.
+            if args.use_solver_v0:
+                _open_note = (
+                    "no live AyoAI session-open: --use-solver-v0 routes "
+                    "decisions locally via SolverV0StreamingAdapter (by design)"
+                )
+            elif args.mock_url:
+                _open_note = (
+                    "live AyoAI session-open skipped (--mock-url set); "
+                    "g-315-04 outcome 2 (live recording) still gated by g-315-11"
+                )
+            else:
+                _open_note = "no live AyoAI session-open (ayoai_session is None)"
             recorder.record({
                 "kind": "ayoai_session_open_mocked",
                 "ayo_server_key": card_id,
                 "ayo_environment_key": env_key,
                 "streaming_url": streaming_url,
-                "note": "live AyoAI session-open skipped (--mock-url set); g-315-04 outcome 2 (live recording) still gated by g-315-11",
+                "note": _open_note,
             })
 
     # Game loop variables
