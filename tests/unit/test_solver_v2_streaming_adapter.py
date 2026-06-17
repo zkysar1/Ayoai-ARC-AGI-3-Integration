@@ -276,13 +276,13 @@ def test_movement_reach_cell_routes_to_policy() -> None:
     assert decision.action in LS20_AVAILABLE
 
 
-def test_untrusted_toggle_no_action6_movement_routes_to_v1_explorer() -> None:
-    # g-315-206 + g-315-213: the no-ACTION6 ToggleProbe route is gated on TRUST,
-    # so an UNTRUSTED toggle never arms the probe (_toggle_no_action6 False). On a
-    # MOVEMENT-class frame (LS20_AVAILABLE, no ACTION6) it now routes to the
-    # HandBuiltPolicy v1 explorer (seed_target None) instead of the blind
-    # DeterministicExecutor round-robin. (A TRUSTED no-ACTION6 toggle routes to
-    # policy + ToggleProbe; see
+def test_untrusted_toggle_no_action6_movement_routes_to_frontier_explorer() -> None:
+    # g-315-206 + g-315-213 + g-315-214: the no-ACTION6 ToggleProbe route is gated
+    # on TRUST, so an UNTRUSTED toggle never arms the probe (_toggle_no_action6
+    # False). On a MOVEMENT-class frame (LS20_AVAILABLE, no ACTION6) it routes to
+    # the FrontierCoverageExplorer (g-315-214), which replaced the g-315-213 v1
+    # HandBuiltPolicy that collapsed to a RESET/ACTION3/ACTION1 loop on ls20. (A
+    # TRUSTED no-ACTION6 toggle routes to policy + ToggleProbe; see
     # test_trusted_toggle_without_action6_routes_to_policy_and_arms_probe.)
     seed = _ScriptedSeedProvider(
         _prior(OBJECTIVE_TOGGLE_AT_CELL, goal_cell=(0, 1), confidence=0.3)
@@ -291,11 +291,11 @@ def test_untrusted_toggle_no_action6_movement_routes_to_v1_explorer() -> None:
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
     )
     decision = adapter.choose_action(_strategic())
-    assert adapter.use_policy is True
-    assert adapter.policy is not None
-    assert adapter.policy.seed_target is None
+    assert adapter.exploring is True
+    assert adapter.explorer is not None
+    assert adapter.use_policy is False  # frontier route, NOT the policy route
     assert adapter._toggle_no_action6 is False  # untrusted -> probe not armed
-    assert decision.provenance["executor"] == "HandBuiltPolicy"
+    assert decision.provenance["executor"] == "FrontierCoverageExplorer"
 
 
 # ── g-315-201 Phase 1a: trusted toggle_at_cell routing + ACTION6 arrival ──────
@@ -555,12 +555,12 @@ def test_align_arrival_ends_route_terminal(monkeypatch) -> None:
     assert d2.provenance["executor"] == "DeterministicExecutor"
 
 
-def test_untrusted_align_movement_routes_to_v1_explorer() -> None:
-    # g-315-213: an align_to_cell below SEED_TRUST_MIN (0.5) is NOT trusted. On a
-    # MOVEMENT-class frame (LS20_AVAILABLE, no ACTION6) it now routes to the
-    # HandBuiltPolicy v1 explorer (seed_target None) instead of the blind
-    # DeterministicExecutor round-robin. avoid_target stays None (not an
-    # avoid-steer); goal_predicate stays None (set only on the TRUSTED align path).
+def test_untrusted_align_movement_routes_to_frontier_explorer() -> None:
+    # g-315-213 + g-315-214: an align_to_cell below SEED_TRUST_MIN (0.5) is NOT
+    # trusted. On a MOVEMENT-class frame (LS20_AVAILABLE, no ACTION6) it routes to
+    # the FrontierCoverageExplorer (g-315-214, replacing the g-315-213 v1
+    # HandBuiltPolicy). No policy is built (the explorer is a separate component),
+    # so neither seed_target nor goal_predicate steering applies.
     seed = _ScriptedSeedProvider(
         _prior(OBJECTIVE_ALIGN_TO_CELL, goal_cell=(0, 1), confidence=0.3)
     )
@@ -568,11 +568,11 @@ def test_untrusted_align_movement_routes_to_v1_explorer() -> None:
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
     )
     decision = adapter.choose_action(_strategic())
-    assert adapter.use_policy is True
-    assert adapter.policy is not None
-    assert adapter.policy.seed_target is None
-    assert adapter.policy.avoid_target is None
-    assert decision.provenance["executor"] == "HandBuiltPolicy"
+    assert adapter.exploring is True
+    assert adapter.explorer is not None
+    assert adapter.use_policy is False
+    assert adapter.policy is None
+    assert decision.provenance["executor"] == "FrontierCoverageExplorer"
 
 
 def test_trusted_avoid_routes_to_policy_with_avoid_target() -> None:
@@ -598,12 +598,12 @@ def test_trusted_avoid_routes_to_policy_with_avoid_target() -> None:
     assert decision.provenance["executor"] == "HandBuiltPolicy"
 
 
-def test_untrusted_avoid_movement_routes_to_v1_explorer() -> None:
-    # g-315-213: an avoid below SEED_TRUST_MIN (0.5) is NOT trusted. On a
-    # MOVEMENT-class frame it now routes to the HandBuiltPolicy v1 explorer
-    # (seed_target None) instead of the blind DeterministicExecutor round-robin.
-    # avoid_target stays None: an UNTRUSTED avoid does NOT flee a guessed cell
-    # (the goal_cell is unreliable) -- it explores to discover the layout first.
+def test_untrusted_avoid_movement_routes_to_frontier_explorer() -> None:
+    # g-315-213 + g-315-214: an avoid below SEED_TRUST_MIN (0.5) is NOT trusted. On
+    # a MOVEMENT-class frame it routes to the FrontierCoverageExplorer (g-315-214,
+    # replacing the g-315-213 v1 HandBuiltPolicy). An UNTRUSTED avoid does NOT flee
+    # a guessed cell (the goal_cell is unreliable) -- it explores to discover the
+    # layout first. No policy is built (explorer is a separate component).
     seed = _ScriptedSeedProvider(
         _prior(OBJECTIVE_AVOID, goal_cell=(0, 1), confidence=0.3)
     )
@@ -611,33 +611,35 @@ def test_untrusted_avoid_movement_routes_to_v1_explorer() -> None:
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
     )
     decision = adapter.choose_action(_strategic())
-    assert adapter.use_policy is True
-    assert adapter.policy is not None
-    assert adapter.policy.seed_target is None
-    assert adapter.policy.avoid_target is None
-    assert decision.provenance["executor"] == "HandBuiltPolicy"
+    assert adapter.exploring is True
+    assert adapter.explorer is not None
+    assert adapter.use_policy is False
+    assert adapter.policy is None
+    assert decision.provenance["executor"] == "FrontierCoverageExplorer"
 
 
-def test_unknown_movement_routes_to_v1_explorer() -> None:
-    # g-315-213: an UNKNOWN-objective seed (the dominant ls20 live case, rb-1759:
-    # 5/7 runs untrusted) on a MOVEMENT-class frame now routes to the HandBuiltPolicy
-    # v1 explorer instead of the blind DeterministicExecutor round-robin.
+def test_unknown_movement_routes_to_frontier_explorer() -> None:
+    # g-315-213 + g-315-214: an UNKNOWN-objective seed (the dominant ls20 live
+    # case, rb-1759: 5/7 runs untrusted) on a MOVEMENT-class frame routes to the
+    # FrontierCoverageExplorer (g-315-214, replacing the g-315-213 v1 HandBuiltPolicy)
+    # instead of the blind DeterministicExecutor round-robin.
     seed = _ScriptedSeedProvider(_prior(OBJECTIVE_UNKNOWN))
     adapter = SolverV2StreamingAdapter(
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
     )
     decision = adapter.choose_action(_strategic())
-    assert adapter.use_policy is True
-    assert adapter.policy is not None
-    assert adapter.policy.seed_target is None
-    assert decision.provenance["executor"] == "HandBuiltPolicy"
+    assert adapter.exploring is True
+    assert adapter.explorer is not None
+    assert adapter.use_policy is False
+    assert decision.provenance["executor"] == "FrontierCoverageExplorer"
 
 
-def test_untrusted_reach_cell_movement_routes_to_v1_explorer() -> None:
-    # g-315-213: REACH_CELL but confidence below SEED_TRUST_MIN (0.5) -> is_trusted
-    # False. On a MOVEMENT-class frame it now routes to the HandBuiltPolicy v1
-    # explorer (seed_target None -> no greedy steering toward the untrusted cell;
-    # rb-1690-safe) instead of the blind DeterministicExecutor round-robin.
+def test_untrusted_reach_cell_movement_routes_to_frontier_explorer() -> None:
+    # g-315-213 + g-315-214: REACH_CELL but confidence below SEED_TRUST_MIN (0.5)
+    # -> is_trusted False. On a MOVEMENT-class frame it routes to the
+    # FrontierCoverageExplorer (g-315-214, replacing the g-315-213 v1 HandBuiltPolicy):
+    # no greedy steering toward the untrusted cell (rb-1690-safe), systematic
+    # coverage instead of the blind DeterministicExecutor round-robin.
     seed = _ScriptedSeedProvider(
         _prior(OBJECTIVE_REACH_CELL, goal_cell=(0, 3), confidence=0.49)
     )
@@ -645,17 +647,18 @@ def test_untrusted_reach_cell_movement_routes_to_v1_explorer() -> None:
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
     )
     decision = adapter.choose_action(_strategic())
-    assert adapter.use_policy is True
-    assert adapter.policy is not None
-    assert adapter.policy.seed_target is None
-    assert decision.provenance["executor"] == "HandBuiltPolicy"
+    assert adapter.exploring is True
+    assert adapter.explorer is not None
+    assert adapter.use_policy is False
+    assert decision.provenance["executor"] == "FrontierCoverageExplorer"
 
 
-def test_reach_cell_without_goal_cell_movement_routes_to_v1_explorer() -> None:
-    # g-315-213: REACH_CELL, high confidence, but no goal_cell -> is_trusted False.
-    # On a MOVEMENT-class frame it now routes to the HandBuiltPolicy v1 explorer
-    # (seed_target None) instead of the blind DeterministicExecutor round-robin --
-    # with no goal_cell there is nothing to steer toward, so exploration is right.
+def test_reach_cell_without_goal_cell_movement_routes_to_frontier_explorer() -> None:
+    # g-315-213 + g-315-214: REACH_CELL, high confidence, but no goal_cell ->
+    # is_trusted False. On a MOVEMENT-class frame it routes to the
+    # FrontierCoverageExplorer (g-315-214, replacing the g-315-213 v1 HandBuiltPolicy)
+    # -- with no goal_cell there is nothing to steer toward, so systematic
+    # coverage is right.
     seed = _ScriptedSeedProvider(
         _prior(OBJECTIVE_REACH_CELL, goal_cell=None, confidence=0.9)
     )
@@ -663,10 +666,10 @@ def test_reach_cell_without_goal_cell_movement_routes_to_v1_explorer() -> None:
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
     )
     decision = adapter.choose_action(_strategic())
-    assert adapter.use_policy is True
-    assert adapter.policy is not None
-    assert adapter.policy.seed_target is None
-    assert decision.provenance["executor"] == "HandBuiltPolicy"
+    assert adapter.exploring is True
+    assert adapter.explorer is not None
+    assert adapter.use_policy is False
+    assert decision.provenance["executor"] == "FrontierCoverageExplorer"
 
 
 def test_untrusted_click_class_still_routes_to_deterministic() -> None:
@@ -687,26 +690,28 @@ def test_untrusted_click_class_still_routes_to_deterministic() -> None:
     assert decision.provenance["executor"] == "DeterministicExecutor"
 
 
-def test_unknown_seed_movement_explores_via_policy_not_round_robin() -> None:
-    # g-315-213: an UNKNOWN (untrusted) seed on a MOVEMENT-class frame now routes
-    # to the HandBuiltPolicy v1 explorer, NOT the DeterministicExecutor blind
-    # plan-cycle. The pre-g-315-213 path cycled the injected action_plan
-    # (ACTION1, ACTION2, ...) which, on a movement game, OSCILLATES in place
-    # (up/down + left/right cancel) and never explores -> score 0 (live ls20
-    # g-315-154 2026-06-17). The v1 explorer (seed_target None) drives curiosity +
-    # coverage instead. The DeterministicExecutor's own plan-cycle is still
-    # unit-tested directly in test_solver_v2_executor.py.
+def test_unknown_seed_movement_explores_via_frontier_not_round_robin() -> None:
+    # g-315-213 + g-315-214: an UNKNOWN (untrusted) seed on a MOVEMENT-class frame
+    # routes to the FrontierCoverageExplorer (g-315-214), NOT the
+    # DeterministicExecutor blind plan-cycle. The pre-g-315-213 path cycled the
+    # injected action_plan (ACTION1, ACTION2, ...) which, on a movement game,
+    # OSCILLATES in place (up/down + left/right cancel) and never explores -> score
+    # 0 (live ls20 g-315-154 2026-06-17). g-315-213 first routed to the v1
+    # HandBuiltPolicy, which then collapsed to a RESET/ACTION3/ACTION1 loop; the
+    # FrontierCoverageExplorer (spatial visited-set + directional commitment)
+    # replaces it. The DeterministicExecutor's own plan-cycle is still unit-tested
+    # directly in test_solver_v2_executor.py.
     seed = _ScriptedSeedProvider(_prior(OBJECTIVE_UNKNOWN))
     adapter = SolverV2StreamingAdapter(
         ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
     )
     d0 = adapter.choose_action(_strategic(score=0))
     d1 = adapter.choose_action(_strategic(score=1))
-    assert adapter.use_policy is True
-    assert adapter.policy is not None
-    assert adapter.policy.seed_target is None
-    assert d0.provenance["executor"] == "HandBuiltPolicy"
-    assert d1.provenance["executor"] == "HandBuiltPolicy"
+    assert adapter.exploring is True
+    assert adapter.explorer is not None
+    assert adapter.use_policy is False
+    assert d0.provenance["executor"] == "FrontierCoverageExplorer"
+    assert d1.provenance["executor"] == "FrontierCoverageExplorer"
 
 
 def test_policy_deferred_observe_accumulates_history() -> None:
@@ -849,12 +854,13 @@ def test_axis_map_recorded_in_provenance_on_calibration_complete_tick() -> None:
 def test_per_episode_routing_switches_executor() -> None:
     # Episode 1 movement (REACH_CELL, trusted) opens in CalibrationProbe
     # (g-315-148); episode 2 UNTRUSTED toggle (via a guid-rotation boundary) is a
-    # MOVEMENT-class frame, so per g-315-213 it routes to the HandBuiltPolicy v1
-    # explorer (NOT the DeterministicExecutor). The route is fixed per EPISODE at
-    # the boundary, not re-decided per tick; the episode-2 boundary resets the
-    # (interrupted) episode-1 calibration state. The point of this test -- the
-    # per-episode route SWITCHES at the boundary -- still holds (CalibrationProbe
-    # -> HandBuiltPolicy-v1-explore).
+    # MOVEMENT-class frame, so per g-315-214 it routes to the
+    # FrontierCoverageExplorer (replacing the g-315-213 v1 HandBuiltPolicy; NOT the
+    # DeterministicExecutor). The route is fixed per EPISODE at the boundary, not
+    # re-decided per tick; the episode-2 boundary resets the (interrupted)
+    # episode-1 calibration state. The point of this test -- the per-episode route
+    # SWITCHES at the boundary -- still holds (CalibrationProbe ->
+    # FrontierCoverageExplorer).
     seed = _ScriptedSeedProvider(
         _prior(OBJECTIVE_REACH_CELL, goal_cell=(0, 3), confidence=0.5),
         _prior(OBJECTIVE_TOGGLE_AT_CELL, goal_cell=(0, 1), confidence=0.3),
@@ -868,13 +874,15 @@ def test_per_episode_routing_switches_executor() -> None:
     assert d1.provenance["executor"] == "CalibrationProbe"
     d2 = adapter.choose_action(_strategic(guid="play-2"))
     assert adapter.episode_id == 2
-    # g-315-213: untrusted toggle on a movement frame -> v1 explorer, not executor.
-    assert adapter.use_policy is True
+    # g-315-213 + g-315-214: untrusted toggle on a movement frame -> frontier
+    # explorer, not the policy and not the blind executor.
+    assert adapter.exploring is True
+    assert adapter.explorer is not None
     assert adapter.calibrating is False
     assert adapter.probe is None
-    assert adapter.policy is not None
-    assert adapter.policy.seed_target is None
-    assert d2.provenance["executor"] == "HandBuiltPolicy"
+    assert adapter.use_policy is False
+    assert adapter.policy is None
+    assert d2.provenance["executor"] == "FrontierCoverageExplorer"
 
 
 def test_policy_factory_injection_constructs_per_episode() -> None:

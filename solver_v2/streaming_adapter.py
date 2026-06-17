@@ -67,6 +67,7 @@ from solver_v2.episode import (
     class_slug_from_game_id,
 )
 from solver_v2.executor import DeterministicExecutor, ExecutorDecision
+from solver_v2.frontier_explorer import FrontierCoverageExplorer
 from solver_v2.seed_provider import DeterministicOracleSeedProvider, SeedProvider
 from solver_v2.toggle_probe import ToggleProbe, cell_under_cursor, toggle_candidates
 from structs import FrameData, GameAction, GameState
@@ -163,6 +164,18 @@ class SolverV2StreamingAdapter:
         # _route_episode from the seed prior. _decide_via_policy reads it to fire
         # the toggle_at_cell arrival override (ACTION6 click at the goal cell).
         self._objective: Optional[str] = None
+
+        # g-315-214 frontier-coverage explorer route. An UNTRUSTED movement-class
+        # episode (no ACTION6, move-actions present, seed not is_trusted()) routes
+        # every tick through a fresh FrontierCoverageExplorer instead of the v1
+        # HandBuiltPolicy (g-315-213), which collapsed to a RESET/ACTION3/ACTION1
+        # loop on ls20. The explorer maintains a spatial visited-set + online
+        # action->displacement model + directional commitment (systematic
+        # coverage; rb-1690-safe — not greedy). _exploring fixes the route at the
+        # boundary; _explorer holds the current episode's instance (fresh per
+        # episode, like _policy). Reset in _route_episode at every boundary.
+        self._explorer: Optional[FrontierCoverageExplorer] = None
+        self._exploring: bool = False
 
         # g-315-148 per-EPISODE calibration startup (Apply 2b). For a movement
         # episode, _route_episode() also builds a fresh CalibrationProbe and sets
@@ -279,6 +292,20 @@ class SolverV2StreamingAdapter:
         episode is not movement-routed or has no move-actions to calibrate. For
         test inspection of the calibration startup wiring (g-315-148)."""
         return self._probe
+
+    @property
+    def explorer(self) -> Optional[FrontierCoverageExplorer]:
+        """The current episode's FrontierCoverageExplorer, or None when the
+        episode is not on the untrusted-movement route. For test inspection of
+        the g-315-214 frontier-coverage routing + spatial-coverage wiring."""
+        return self._explorer
+
+    @property
+    def exploring(self) -> bool:
+        """True when the current episode is routed through the frontier-coverage
+        explorer (untrusted seed, movement-class — no ACTION6, move-actions
+        present). Mutually exclusive with use_policy (g-315-214)."""
+        return self._exploring
 
     def close(self) -> None:
         # No session, socket, or file handle to release. Match the
@@ -416,7 +443,19 @@ class SolverV2StreamingAdapter:
         #    DeterministicExecutor (proven g-315-138/139/142 click path).
         tick_in_episode = self._tick_in_episode
         decision: ExecutorDecision | PolicyDecision
-        if self._use_policy and self._policy is not None:
+        if self._exploring and self._explorer is not None:
+            # g-315-214: untrusted movement-class route -> frontier-coverage
+            # explorer (spatial visited-set + online action->displacement model +
+            # directional commitment). Replaces the g-315-213 routing of this path
+            # to the v1 HandBuiltPolicy, which collapsed to a RESET/ACTION3/ACTION1
+            # loop on ls20 (insufficient coverage — no spatial visited-set).
+            # _exploring is set ONLY on the untrusted-movement branch of
+            # _route_episode and is mutually exclusive with _use_policy, so this
+            # branch never shadows the trusted steering or the click/unknown
+            # DeterministicExecutor routes.
+            decision = self._explorer.decide(features)
+            executor_name = "FrontierCoverageExplorer"
+        elif self._use_policy and self._policy is not None:
             if self._calibrating and self._probe is not None:
                 # CalibrationProbe startup (g-315-148, Apply 2b): drive the
                 # probe's deterministic move-action schedule until it drains,
@@ -589,6 +628,12 @@ class SolverV2StreamingAdapter:
         # Phase 1a (g-315-201): record the episode objective so _decide_via_policy
         # can fire the toggle_at_cell arrival override; None when no prior.
         self._objective = prior.objective if prior is not None else None
+        # g-315-214: reset per-episode frontier-explorer route (no stale
+        # cross-episode carryover). The untrusted-movement branch below re-arms it;
+        # every other route leaves it cleared so the use_policy / DeterministicExecutor
+        # dispatch in choose_action is reached correctly.
+        self._exploring = False
+        self._explorer = None
         # g-315-205: reset per-episode cache state. The movement branch below
         # sets _episode_axis_key/_axis_map_source on a cached hit or a probed
         # miss; non-movement routes leave them cleared (no axis_map this episode).
@@ -735,32 +780,36 @@ class SolverV2StreamingAdapter:
             # ACTION1->2->3->4 round-robin, which on a movement game OSCILLATES IN
             # PLACE (up/down and left/right cancel) -> never explores -> score 0
             # (verified live ls20 g-315-154 2026-06-17, recording caee2ad5: 81
-            # ticks of ACTION1-4 round-robin, NOT_FINISHED). Route instead to the
-            # HandBuiltPolicy v1 explorer (seed_target stays None): no-op
-            # suppression + score-delta preference (rule 4) + palette-novelty
-            # curiosity (rule 4.5) + stagnation-triggered systematic coverage
-            # (rule 4.7) DISCOVER the goal through interaction. This is the
-            # documented "untrusted -> v1 candidate-cycling" path (episode.py
-            # is_trusted() docstring) that _route_episode previously never wired
-            # for movement-class -- it degraded straight to the blind executor.
-            # rb-1759: the untrusted path is the MAJORITY case (5/7 runs), so this
-            # is the dominant ls20 regime, not an edge. No CalibrationProbe/axis_map
-            # (v1 rules 4/4.5/4.7 do not steer toward a target; rule 4.6 greedy is
-            # dormant with seed_target None -- rb-1690-safe: no greedy-1-step
-            # maze-stall). No guard-787 widening: seed_target stays None (the plain
-            # v1 path), NOT a new mutually-exclusive steering field. Click-class
-            # untrusted (ACTION6 available) keeps the DeterministicExecutor click
-            # path below (g-315-138/139/142). A fresh policy per episode matches
-            # HandBuiltPolicy's per-episode state contract (visit_counts reset).
-            self._use_policy = True
-            self._policy = (
-                self._policy_factory()
-                if self._policy_factory is not None
-                else HandBuiltPolicy(game_class=self._game_class)
+            # ticks of ACTION1-4 round-robin, NOT_FINISHED). g-315-213 first routed
+            # this path to the v1 HandBuiltPolicy explorer, but that COLLAPSED to a
+            # repeating RESET/ACTION3/ACTION1 loop on ls20 (recording c3c9bb02): v1
+            # coverage (no-op suppression / palette-novelty curiosity / stagnation
+            # coverage) keeps NO spatial visited-set, so it re-paces the same cells.
+            # g-315-214 routes instead to the FrontierCoverageExplorer: an online
+            # action->displacement model (learned via deferred-observe — no
+            # CalibrationProbe on the untrusted route), a spatial visited-COUNT map,
+            # and directional commitment (commit to a direction until a wall, then
+            # turn toward the least-visited frontier) — systematic coverage that
+            # DISCOVERS the goal through interaction. rb-1690-safe: a systematic
+            # sweep, NOT greedy 1-step distance reduction (no maze-stall).
+            # guard-787-safe: a SEPARATE component, NOT a new mutually-exclusive
+            # steering target on HandBuiltPolicy, so no _directed_target_action
+            # guard widening. rb-1759: the untrusted path is the MAJORITY case
+            # (5/7 runs), the dominant ls20 regime. Click-class untrusted (ACTION6
+            # available) keeps the DeterministicExecutor click path below
+            # (g-315-138/139/142). A fresh explorer per episode matches the
+            # per-episode state contract (visited map + effect model reset at the
+            # boundary).
+            self._exploring = True
+            self._explorer = FrontierCoverageExplorer(
+                move_actions_from(available_action_ids),
+                game_class=self._game_class,
             )
-            # seed_target left None -> pure v1 exploration. axis_map None: the
-            # explorer rules do not consume it, and the deferred-observe loop in
-            # _decide_via_policy still accumulates frame-changed/score-delta signal.
+            # The explorer is NOT the HandBuiltPolicy route: clear _use_policy /
+            # _policy so choose_action dispatches to the explorer branch. No
+            # CalibrationProbe / axis_map (the explorer learns displacement online).
+            self._use_policy = False
+            self._policy = None
             self._probe = None
             self._calibrating = False
         else:
