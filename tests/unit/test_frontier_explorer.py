@@ -303,3 +303,106 @@ def test_walled_target_stall_reengages_coverage(monkeypatch) -> None:
     assert explorer.visited_count >= 2, f"dead-stuck at the wall: {actions}"
     # After the stall cap the candidate is abandoned (coverage re-engaged).
     assert explorer.candidate is None, "candidate not abandoned after steer stall"
+
+
+# ---- g-315-219: planning + reachability + mode-vote axis_map + re-probe ---- #
+
+
+def test_unreachable_axis_target_not_locked_g315219(monkeypatch) -> None:
+    # Part 1 (the ls20 trap-breaker): a target whose dominant axis has NO learned
+    # mover in the needed direction must NOT be locked. Greedy used to lock the
+    # nearest cluster (rows 31-33, ABOVE the cursor) when no up-action existed and
+    # oscillate the column forever (g-315-218). With reachability-aware selection
+    # the up-unreachable target is never locked, so coverage continues instead.
+    class _NoUpSim:
+        # Only DOWN/LEFT/RIGHT move; UP (action 1) is a no-op everywhere.
+        def __init__(self) -> None:
+            self.r, self.c = 30, 30
+
+        @property
+        def cursor(self) -> tuple[float, float]:
+            return (float(self.r), float(self.c))
+
+        def apply(self, action: int) -> None:
+            d = {2: (1, 0), 3: (0, -1), 4: (0, 1)}.get(action)  # no action 1 (up)
+            if d is None:
+                return
+            nr, nc = self.r + d[0], self.c + d[1]
+            if 0 <= nr < 64:
+                self.r = nr
+            if 0 <= nc < 64:
+                self.c = nc
+
+    sim = _NoUpSim()
+    target = (10, 30)  # 20 rows ABOVE -> needs UP, which no action provides
+    monkeypatch.setattr(
+        fe, "detect_cursor_and_targets", lambda f: (sim.cursor, [target])
+    )
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    for _ in range(40):
+        sim.apply(explorer.decide(_DUMMY).action)
+    assert explorer.candidate is None, (
+        f"up-unreachable target was locked: candidate={explorer.candidate}"
+    )
+
+
+def test_reachable_target_below_is_locked_and_descended_g315219(monkeypatch) -> None:
+    # Part 1 positive case + part 2 descent: a target BELOW the cursor, reachable
+    # via the learned DOWN mover, IS locked and the planner descends ROWS toward
+    # it (the ls20 row-61 cluster the column-trap never reached). The cursor must
+    # change rows toward the target -- the exact AC the g-315-218 baseline failed.
+    sim = _GridSim(size=64, start=(20, 30))  # _CARDINAL: 2 = down (+1, 0)
+    target = (50, 30)  # 30 rows BELOW -> reachable via ACTION2 (down)
+    monkeypatch.setattr(
+        fe, "detect_cursor_and_targets", lambda f: (sim.cursor, [target])
+    )
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    start_row = sim.r
+    closest = abs(start_row - target[0])
+    for _ in range(60):
+        sim.apply(explorer.decide(_DUMMY).action)
+        closest = min(closest, abs(sim.r - target[0]))
+    assert closest < abs(start_row - target[0]), (
+        f"cursor never descended toward the reachable target (start_row={start_row}, "
+        f"closest row-gap={closest})"
+    )
+    assert sim.r > start_row, f"no net downward movement: ended row {sim.r}"
+
+
+def test_plan_route_avoids_blocked_edge_g315219() -> None:
+    # Part 2 (rb-1690): the BFS planner routes AROUND a known wall edge that a
+    # greedy 1-step toward the target would hammer. Inject a learned effect model,
+    # a candidate, and a blocked straight-line edge; assert the first planned hop
+    # is NOT the blocked straight-East action.
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    # Cardinal movers at ls20-scale magnitude (5 cells/step).
+    explorer._effects = {
+        1: (-5.0, 0.0),
+        2: (5.0, 0.0),
+        3: (0.0, -5.0),
+        4: (0.0, 5.0),
+    }
+    explorer._candidate = (30, 40)  # due East of (30, 30)
+    explorer._blocked_edges = {((30, 30), 4)}  # straight-East from start is walled
+    first = explorer._plan_route((30, 30))
+    assert first is not None, "planner found no route around the wall"
+    assert first != 4, f"planner chose the blocked straight-East edge: {first}"
+    # Sanity: with the wall REMOVED, the greedy straight-East IS chosen (the
+    # detour above is caused by the blocked edge, not a planner bug).
+    explorer._blocked_edges = set()
+    assert explorer._plan_route((30, 30)) == 4
+
+
+def test_reprobes_wall_contacted_action_g315219(monkeypatch) -> None:
+    # Part 4 (guard-689 position-dependent block): an action that wall-contacts at
+    # bootstrap (no effect learned) is RE-PROBED from a fresh position so its axis
+    # is not permanently hidden -- the ls20 row-mover ACTION1 was issued once. Sim:
+    # UP (action 1) is a no-op at the start row 0 but works once the cursor descends.
+    sim = _GridSim(size=64, start=(0, 30))  # row 0: _CARDINAL UP (1) is a wall
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", lambda f: (sim.cursor, []))
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    for _ in range(30):
+        sim.apply(explorer.decide(_DUMMY).action)
+    assert 1 in explorer.effects, (
+        f"UP wall-contacted at bootstrap was never re-probed/learned: {explorer.effects}"
+    )

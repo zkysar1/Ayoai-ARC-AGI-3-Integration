@@ -45,7 +45,7 @@ recording dicts. No HTTP, no DNS, no sockets, no LLM.
 
 from __future__ import annotations
 
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
@@ -297,6 +297,56 @@ def build_axis_map(
         horizontal_blocked=horizontal_blocked,
         vertical_blocked=vertical_blocked,
     )
+
+
+def dominant_displacement(
+    observations: list[tuple[float, float]],
+    *,
+    noise_floor: float = NOISE_FLOOR_CELLS,
+) -> Optional[tuple[float, float]]:
+    """MAJORITY-VOTE (modal) cursor displacement over the MOVING samples.
+
+    The reliability-gated MEAN in build_axis_map demotes a BIMODAL action — one
+    whose moving samples split between two opposite directions — because the
+    spread inflates the per-axis stddev past MAX_AXIS_STDDEV (g-315-218: ls20
+    ACTION2 observed (0,+5)x14 / (0,-5)x5 -> mean_dc ~= 2.4 with stddev ~= 4.4 >
+    1.0 -> `reliable=False`). For an ONLINE explorer that must still pick a
+    direction from a noisy in-band model, the majority direction is the right
+    signal: ACTION2 moves RIGHT 14 times vs LEFT 5, so RIGHT is its effect and
+    the minority is wall-bounce / context noise.
+
+    Algorithm (value-agnostic, tiny-compute, fully deterministic):
+      1. Drop wall-contact samples (magnitude < noise_floor) — a cursor that did
+         not move FROM the probed position is position-dependent fact, not a
+         direction (guard-689; mirrors build_axis_map's `moving` partition).
+      2. Bucket each moving sample by its per-axis SIGN ((-1|0|+1), (-1|0|+1)),
+         quantizing magnitude out so +5 and +4.8 vote together.
+      3. Pick the bucket with the most votes; ties break to the lexicographically
+         smallest bucket (determinism, no randomness).
+      4. Return the MEAN displacement of the samples IN that winning bucket — the
+         representative vector for the majority direction.
+
+    Returns None when there is no moving sample (all wall-contact, or empty) —
+    the caller treats the action as not-yet-a-known-mover (re-probe candidate),
+    exactly as an absent _effects entry already signals.
+    """
+    moving = [
+        o for o in observations if (o[0] * o[0] + o[1] * o[1]) ** 0.5 >= noise_floor
+    ]
+    if not moving:
+        return None
+
+    def _bucket(o: tuple[float, float]) -> tuple[int, int]:
+        sr = 0 if abs(o[0]) < noise_floor else (1 if o[0] > 0 else -1)
+        sc = 0 if abs(o[1]) < noise_floor else (1 if o[1] > 0 else -1)
+        return (sr, sc)
+
+    counts = Counter(_bucket(o) for o in moving)
+    # Most votes first; lexicographically-smallest bucket breaks ties (no RNG).
+    winner = min(counts, key=lambda b: (-counts[b], b))
+    chosen = [o for o in moving if _bucket(o) == winner]
+    m = len(chosen)
+    return (sum(o[0] for o in chosen) / m, sum(o[1] for o in chosen) / m)
 
 
 class CalibrationProbe:

@@ -51,9 +51,11 @@ from __future__ import annotations
 
 from typing import Optional
 
+from collections import deque
+
 from solver_v0.perception import FrameFeatures
 from solver_v0.policy import DIRECTED_MIN_IMPROVEMENT, detect_cursor_and_targets
-from solver_v2.calibration import NOISE_FLOOR_CELLS
+from solver_v2.calibration import NOISE_FLOOR_CELLS, dominant_displacement
 from solver_v2.executor import ExecutorDecision
 
 # A cursor cell revisited more than this many times forces a turn even while the
@@ -95,6 +97,27 @@ _CANDIDATE_LOCK_TICKS: int = 2
 # maze wall; when greedy stalls, the explorer's systematic coverage IS the
 # route-around (it finds a fresh path, then re-detects and re-steers).
 _STEER_STALL_CAP: int = 4
+
+# Max BFS nodes expanded per _plan_route call (g-315-219 part 2). The reachable
+# lattice over +/-5 quantized displacements on a <=64x64 grid is ~13x13, so a few
+# hundred nodes covers it; the cap is a tiny-compute backstop (echo/self.md
+# Constraint 1) so a degenerate effect model can never make the planner unbounded.
+_BFS_MAX_NODES: int = 1024
+
+# ARC API frame coordinate bound (structs.py: FrameData.frame is <=64x64, ACTION6
+# x/y are each 0-63). The BFS planner clips projected cells to [0, _GRID_MAX] so a
+# route is never planned through an off-grid phantom cell. This is the BENCHMARK
+# API contract shared by every ARC-AGI-3 game, NOT an ls20-specific value
+# (generalization-preserving, echo/self.md Constraint 3).
+_GRID_MAX: int = 63
+
+# g-315-219 part 4 (complete-axis re-probe): every Nth coverage-turn, re-issue a
+# move-action that has NO confirmed mover effect yet (only wall-contact, or
+# unobserved since bootstrap) so a single early wall-contact does not permanently
+# hide an axis (guard-689: axis controllability is position-dependent; the ls20
+# row-mover ACTION1 was issued exactly once). Bounded so re-probing never starves
+# the least-used frontier turn.
+_REPROBE_INTERVAL: int = 3
 
 
 class FrontierCoverageExplorer:
@@ -156,6 +179,22 @@ class FrontierCoverageExplorer:
         # Targets abandoned after a steer stall — never re-locked this episode
         # (else an unreachable target re-locks every coverage tick, a livelock).
         self._exhausted_targets: set[tuple[int, int]] = set()
+        # --- g-315-219: planning + reachability + mode-vote axis model ---
+        # Per-action ACCUMULATED moving-displacement samples. _effects[a] is now
+        # the MAJORITY-vote (modal) displacement over this list (part 3), robust
+        # to the minority-opposite-axis noise that made the prior
+        # last-observation overwrite unreliable on ls20 (ACTION2 +5x14/-5x5).
+        self._obs: dict[int, list[tuple[float, float]]] = {}
+        # (cell, action) pairs OBSERVED as a wall (no-move) this episode. The BFS
+        # route planner skips these edges so it routes AROUND obstacles greedy
+        # 1-step steering cannot (rb-1690, part 2). Position-keyed: an action
+        # walled at one cell may still move from another (guard-689).
+        self._blocked_edges: set[tuple[tuple[int, int], int]] = set()
+        # Integer cursor cell from last tick (the blocked-edge key for the action
+        # issued last tick; deferred-observe attributes the no-move to it).
+        self._prev_cell: Optional[tuple[int, int]] = None
+        # Coverage-turn counter pacing the part-4 complete-axis re-probe.
+        self._coverage_turns: int = 0
 
     # ---------- inspection (tests / provenance) ---------- #
 
@@ -212,10 +251,25 @@ class FrontierCoverageExplorer:
         ):
             dr = cursor[0] - self._prev_cursor[0]
             dc = cursor[1] - self._prev_cursor[1]
-            if (dr * dr + dc * dc) ** 0.5 >= NOISE_FLOOR_CELLS:
-                self._effects[self._prev_action] = (dr, dc)
-            elif self._prev_action == self._committed:
-                committed_blocked = True
+            # g-315-219 part 3: accumulate the sample and recompute the MAJORITY-
+            # vote (modal) displacement, REPLACING the prior last-observation
+            # overwrite. On ls20 ACTION2 was observed (0,+5)x14 / (0,-5)x5 / (0,0)x20:
+            # the overwrite (or a plain mean) yields an unreliable near-zero/bimodal
+            # vector; the mode is a clean RIGHT (g-315-218 root cause #3).
+            self._obs.setdefault(self._prev_action, []).append((dr, dc))
+            mode = dominant_displacement(self._obs[self._prev_action])
+            if mode is not None:
+                self._effects[self._prev_action] = mode
+            if (dr * dr + dc * dc) ** 0.5 < NOISE_FLOOR_CELLS:
+                # Wall-contact: the action did NOT move the cursor FROM prev_cell.
+                # Record the blocked edge so the BFS planner (part 2) routes AROUND
+                # it instead of re-planning straight through the wall (rb-1690).
+                # Position-keyed -> a wall here does not block the same action
+                # elsewhere (guard-689 position-dependent).
+                if self._prev_cell is not None:
+                    self._blocked_edges.add((self._prev_cell, self._prev_action))
+                if self._prev_action == self._committed:
+                    committed_blocked = True
 
         if cell is not None:
             self._visited[cell] = self._visited.get(cell, 0) + 1
@@ -261,9 +315,19 @@ class FrontierCoverageExplorer:
                 for t, n in self._target_seen.items()
                 if n >= _CANDIDATE_LOCK_TICKS and t not in self._exhausted_targets
             ]
-            if stable:
+            # g-315-219 part 1: REACHABILITY-AWARE selection. Lock ONLY a target
+            # whose every needed axis has a learned mover in the needed direction.
+            # The ls20 trap: the NEAREST cluster (rows 31-33, Manhattan 12.5) sat
+            # ABOVE the cursor but NO action moved up, so greedy locked it and
+            # oscillated columns at a fixed row forever; the farther row-61-62
+            # cluster (reachable by ACTION1 DOWN) was never locked. Filtering to
+            # known-reachable targets makes the explorer prefer the reachable one
+            # and STAY IN COVERAGE (still learning axes via part-4 re-probe) when
+            # none is yet reachable — instead of locking an unreachable target.
+            reachable = [t for t in stable if self._reachable(cell, t)]
+            if reachable:
                 self._candidate = min(
-                    stable,
+                    reachable,
                     key=lambda t: (abs(cell[0] - t[0]) + abs(cell[1] - t[1]), t),
                 )
                 self._steer_stall = 0
@@ -317,13 +381,23 @@ class FrontierCoverageExplorer:
                         self._steer_stall = 0
                 # Steer only if the candidate survived the stall check this tick.
                 if self._candidate is not None:
-                    steer = self._steer(cell)
+                    # g-315-219 part 2: PLAN a route (BFS over the learned-
+                    # displacement lattice, skipping observed wall edges) instead
+                    # of a greedy 1-step. The route commits to a coherent
+                    # multi-step path (e.g. sustained DOWN to reach a row-distant
+                    # target) and goes AROUND a wall greedy cannot route past
+                    # (rb-1690). Greedy _steer is the depth-1 fallback when the
+                    # planner finds no improving path this tick.
+                    steer = self._plan_route(cell)
+                    if steer is None:
+                        steer = self._steer(cell)
                     if steer is not None:
                         self._action_counts[steer] = (
                             self._action_counts.get(steer, 0) + 1
                         )
                         self._prev_action = steer
                         self._prev_cursor = cursor
+                        self._prev_cell = cell
                         return ExecutorDecision(action=steer, x=None, y=None)
                     # steer None -> no distance-reducing learned mover this tick;
                     # fall through to coverage (rb-1690 route-around).
@@ -364,7 +438,98 @@ class FrontierCoverageExplorer:
         self._action_counts[action] = self._action_counts.get(action, 0) + 1
         self._prev_action = action
         self._prev_cursor = cursor
+        self._prev_cell = cell
         return ExecutorDecision(action=action, x=None, y=None)
+
+    def _reachable(self, cell: tuple[int, int], target: tuple[int, int]) -> bool:
+        """True iff EVERY axis the cursor must travel to reach `target` has a
+        learned mover in the needed direction (g-315-219 part 1 reachability).
+
+        For each axis with a nonzero cursor->target delta, some action in
+        _effects must have a modal displacement that moves the cursor that way
+        (sign match, magnitude above the noise floor). An axis with zero delta
+        imposes no requirement. This is the ls20 trap-breaker: with NO up-mover
+        learned, a target ABOVE the cursor is row-unreachable -> returns False ->
+        never locked, so the explorer does not greedy-trap on it.
+
+        Conservative — judged against what is LEARNED so far. A target whose
+        needed mover is not yet known returns False (not-yet-reachable); the
+        part-4 re-probe keeps completing the axis map so a genuinely reachable
+        target becomes lockable once its mover is observed. Each mover's axes are
+        considered independently (a diagonal mover can satisfy a row need; its
+        column drift is corrected by a separate planned step).
+        """
+        dr = target[0] - cell[0]
+        dc = target[1] - cell[1]
+        need_row = abs(dr) >= 1
+        need_col = abs(dc) >= 1
+        row_ok = not need_row
+        col_ok = not need_col
+        for er, ec in self._effects.values():
+            if need_row and not row_ok and abs(er) >= NOISE_FLOOR_CELLS and (er > 0) == (dr > 0):
+                row_ok = True
+            if need_col and not col_ok and abs(ec) >= NOISE_FLOOR_CELLS and (ec > 0) == (dc > 0):
+                col_ok = True
+            if row_ok and col_ok:
+                break
+        return row_ok and col_ok
+
+    def _plan_route(self, cell: Optional[tuple[int, int]]) -> Optional[int]:
+        """BFS route toward the candidate over the learned-displacement lattice,
+        skipping observed wall edges (g-315-219 part 2). Returns the FIRST action
+        of the shortest action-path reaching the cell of MINIMUM Manhattan
+        distance to the candidate; None when no reachable cell strictly improves
+        on staying put (cold start / fully walled) -> caller falls back to greedy
+        _steer then coverage. Deterministic (movers ascending; lowest-id path
+        wins ties) and bounded by _BFS_MAX_NODES (tiny-compute, echo Constraint 1).
+
+        Routes AROUND a wall greedy 1-step steering cannot (rb-1690): the column-
+        oscillation trap that locked the ls20 cursor at a fixed row becomes a
+        committed multi-step DOWN path to the reachable row-distant target.
+
+        guard-786 lesson (the seeded-BFS reconstruction bug): recover the first
+        action from the BEST node actually REACHED (always recorded in
+        first_action), never from a literal goal node that may not lie on the
+        +/-5 lattice and so was never enqueued.
+        """
+        if cell is None or self._candidate is None or not self._effects:
+            return None
+        cand = self._candidate
+        start_dist = abs(cell[0] - cand[0]) + abs(cell[1] - cand[1])
+        # first_action[c] = action of the FIRST hop on the shortest path cell->c
+        # (None for the start). BFS => first sighting of a cell is via a shortest path.
+        first_action: dict[tuple[int, int], Optional[int]] = {cell: None}
+        q: deque[tuple[int, int]] = deque([cell])
+        best_cell = cell
+        best_dist = start_dist
+        nodes = 0
+        while q and nodes < _BFS_MAX_NODES:
+            cur = q.popleft()
+            nodes += 1
+            for a in self._moves:  # ascending -> lowest-id path wins ties
+                eff = self._effects.get(a)
+                if eff is None:
+                    continue
+                if (cur, a) in self._blocked_edges:
+                    continue  # known wall edge -> route around (rb-1690)
+                nr = int(round(cur[0] + eff[0]))
+                nc = int(round(cur[1] + eff[1]))
+                if not (0 <= nr <= _GRID_MAX and 0 <= nc <= _GRID_MAX):
+                    continue  # off-grid phantom projection -> not a real cell
+                nxt = (nr, nc)
+                if nxt in first_action:
+                    continue  # already reached via an at-least-as-short path
+                first_action[nxt] = a if first_action[cur] is None else first_action[cur]
+                d = abs(nr - cand[0]) + abs(nc - cand[1])
+                if d < best_dist or (d == best_dist and nxt < best_cell):
+                    best_dist = d
+                    best_cell = nxt
+                if d == 0:
+                    return first_action[nxt]  # exact-arrival route
+                q.append(nxt)
+        if best_cell != cell and best_dist < start_dist:
+            return first_action[best_cell]
+        return None
 
     def _steer(self, cell: Optional[tuple[int, int]]) -> Optional[int]:
         """Greedy directed step toward the locked candidate goal cell (g-315-217).
@@ -438,6 +603,24 @@ class FrontierCoverageExplorer:
         #    learned axis); least-visited then steers WITHIN the least-used movers
         #    toward fresh ground; low id breaks ties (determinism).
         if cell is not None and self._effects:
+            # g-315-219 part 4: complete-axis re-probe. Every _REPROBE_INTERVAL
+            # turns, re-issue a move-action with NO confirmed mover effect yet
+            # (only wall-contact so far, or unobserved since bootstrap) from the
+            # current cursor position. guard-689: axis controllability is
+            # position-dependent, so a single early wall-contact must NOT
+            # permanently hide an axis -- on ls20 the row-mover ACTION1 was issued
+            # exactly once. Bounded by the interval so it never starves the
+            # least-used frontier turn below.
+            self._coverage_turns += 1
+            unconfirmed = [
+                a for a in self._moves if a not in self._effects and a != exclude
+            ]
+            if unconfirmed and self._coverage_turns % _REPROBE_INTERVAL == 0:
+                a = unconfirmed[0]  # lowest id (determinism)
+                self._committed = a
+                self._commit_run = 1
+                return a
+
             best_action: Optional[int] = None
             best_key: Optional[tuple[int, int, int]] = None
             for a in self._moves:

@@ -29,6 +29,7 @@ from solver_v2.calibration import (
     CalibrationProbe,
     build_axis_map,
     calibrate_from_recording,
+    dominant_displacement,
     move_actions_from,
 )
 
@@ -665,3 +666,44 @@ def test_to_move_mapping_excludes_ambiguous_and_unreliable() -> None:
     assert 2 in am.reliable_actions()  # reliable, but excluded for ambiguity
     assert 2 not in mapping  # diagonal has no dominant axis
     assert 3 not in mapping  # unreliable
+
+
+# ───────────────── dominant_displacement (mode-vote, g-315-219) ─────────────────
+
+
+def test_dominant_displacement_majority_over_bimodal() -> None:
+    # g-315-219 part 3: the exact ls20 ACTION2 shape g-315-218 measured --
+    # (0,+5)x14 / (0,-5)x5 / (0,0)x20. build_axis_map's variance gate marks it
+    # UNRELIABLE (stddev ~4.4 > 1.0); the mode is a clean RIGHT (+col), the
+    # majority direction (14 vs 5), with the 20 wall-contacts partitioned out.
+    obs = [(0.0, 5.0)] * 14 + [(0.0, -5.0)] * 5 + [(0.0, 0.0)] * 20
+    d = dominant_displacement(obs)
+    assert d is not None
+    assert d[1] > 0.0, f"majority direction should be RIGHT (+col): {d}"
+    assert abs(d[0]) < 0.5 and abs(d[1] - 5.0) < 1e-9, f"expected ~(0,5): {d}"
+    # Contrast: build_axis_map demotes the same action to unreliable.
+    am = build_axis_map({2: obs})
+    assert am.vectors[2].reliable is False
+
+
+def test_dominant_displacement_all_wall_contact_or_empty_is_none() -> None:
+    # No moving sample -> None (the caller treats it as a not-yet-known mover,
+    # exactly as an absent _effects entry; keeps a genuine noop unconfirmed).
+    assert dominant_displacement([(0.0, 0.0)] * 5) is None
+    assert dominant_displacement([]) is None
+
+
+def test_dominant_displacement_consistent_action_is_its_vector() -> None:
+    # A consistently-moving action (no minority noise) returns its single
+    # direction's mean -- the mode degrades to the mean when there is one bucket.
+    d = dominant_displacement([(5.0, 0.0), (4.9, 0.1), (5.1, 0.0)])
+    assert d is not None and d[0] > 4.0 and abs(d[1]) < 0.5
+
+
+def test_dominant_displacement_tie_breaks_deterministically() -> None:
+    # Equal vote counts in two opposite buckets break to the lexicographically
+    # smallest bucket (sign tuple) -- no randomness, reproducible across runs.
+    obs = [(0.0, 5.0), (0.0, -5.0)]  # (0,+1) vs (0,-1): tie -> (0,-1) wins (smaller)
+    assert dominant_displacement(obs) == dominant_displacement(list(obs))
+    d = dominant_displacement(obs)
+    assert d is not None and d[1] < 0.0  # (0,-1) is lexicographically smaller
