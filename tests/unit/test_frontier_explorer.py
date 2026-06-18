@@ -705,3 +705,43 @@ def test_g315223_cluster_commitment_is_deterministic(monkeypatch) -> None:
         return _run(explorer, sim, 45)
 
     assert one_run() == one_run()
+
+
+# ---- g-315-226: knowledge-conditional target exhaustion (maze re-route) ---- #
+
+
+def test_g315226_exhausted_target_relocks_after_new_maze_knowledge() -> None:
+    # g-315-226: a target abandoned by a steer stall (a maze detour AWAY from the
+    # target reads as no-net-progress) is NOT permanently dead. Once route-around
+    # coverage discovers NEW maze knowledge (a wall edge or a learned mover), the
+    # stall verdict rested on a sparser position-dependent wall map, so the target
+    # becomes re-lockable for a fresh BFS attempt -- the fix for the
+    # closest-approach-12 strand (the g-315-223 permanent set never re-attempted).
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    explorer._effects = {1: (-5.0, 0.0), 2: (5.0, 0.0), 3: (0.0, -5.0), 4: (0.0, 5.0)}
+    centroid = (30, 40)
+
+    # A steer stall exhausts the target, snapshotting maze knowledge at stall time.
+    explorer._exhausted_targets[centroid] = explorer._maze_knowledge()
+    assert explorer._is_exhausted(centroid), "freshly exhausted target must be exhausted"
+    # Idempotent with NO new knowledge -> stays exhausted (the no-livelock guard).
+    assert explorer._is_exhausted(centroid)
+    # A radius-jittered re-detection of the same dead cluster is also exhausted.
+    assert explorer._is_exhausted((30 + fe._CLUSTER_RADIUS, 40))
+
+    # Route-around coverage discovers a NEW wall edge -> maze knowledge grows.
+    explorer._blocked_edges.add(((30, 35), 4))
+    # The target is now re-lockable (richer wall map -> fresh BFS attempt)...
+    assert not explorer._is_exhausted(centroid), (
+        "target must re-lock after new maze knowledge is discovered"
+    )
+    # ...and the stale snapshot was dropped (not left lingering to re-match).
+    assert centroid not in explorer._exhausted_targets
+
+    # Re-exhaust at the new (higher) knowledge level: stays dead until knowledge
+    # grows AGAIN -> re-locks are bounded by the finite discoverable edge/mover
+    # count, never an unbounded livelock.
+    explorer._exhausted_targets[centroid] = explorer._maze_knowledge()
+    assert explorer._is_exhausted(centroid)
+    explorer._effects[7] = (3.0, 3.0)  # a newly learned mover -> knowledge grows
+    assert not explorer._is_exhausted(centroid)

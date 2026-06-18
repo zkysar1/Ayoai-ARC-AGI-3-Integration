@@ -223,9 +223,16 @@ class FrontierCoverageExplorer:
         # merely oscillates around a walled target stalls instead of looping
         # forever (g-315-217). None until the first steering tick after a lock.
         self._steer_best_dist: Optional[int] = None
-        # Targets abandoned after a steer stall — never re-locked this episode
-        # (else an unreachable target re-locks every coverage tick, a livelock).
-        self._exhausted_targets: set[tuple[int, int]] = set()
+        # Targets abandoned after a steer stall, keyed to the MAZE-KNOWLEDGE size
+        # (blocked edges + learned movers) at stall time (g-315-226). A target is
+        # treated as exhausted ONLY while that knowledge has not grown: once
+        # route-around coverage discovers new walls/movers, the stall verdict
+        # rested on a sparser map, so the target becomes re-lockable for a fresh
+        # BFS attempt with the richer position-dependent wall map. Bounded by the
+        # finite edge/mover count -> no re-lock livelock (the prior permanent-set
+        # semantics never re-attempted, stranding the cursor at closest-approach
+        # 12 even when the maze route existed -- exp-g-315-225 / g-315-223).
+        self._exhausted_targets: dict[tuple[int, int], int] = {}
         # --- g-315-219: planning + reachability + mode-vote axis model ---
         # Per-action ACCUMULATED moving-displacement samples. _effects[a] is now
         # the MAJORITY-vote (modal) displacement over this list (part 3), robust
@@ -448,7 +455,10 @@ class FrontierCoverageExplorer:
                 else:
                     self._steer_stall += 1
                     if self._steer_stall >= _STEER_STALL_CAP:
-                        self._exhausted_targets.add(self._candidate)
+                        # g-315-226: snapshot maze knowledge at stall time so the
+                        # target is re-lockable once route-around coverage grows
+                        # the wall map (not permanently dead at closest-approach 12).
+                        self._exhausted_targets[self._candidate] = self._maze_knowledge()
                         self._candidate = None
                         self._steer_best_dist = None
                         self._steer_stall = 0
@@ -716,14 +726,41 @@ class FrontierCoverageExplorer:
                 best = max(best, cl["sightings"])
         return best
 
+    def _maze_knowledge(self) -> int:
+        """Monotonic count of position-dependent maze facts discovered this
+        episode: observed wall edges + learned per-action movers (g-315-226).
+        Only ever grows within an episode, so a strictly larger value than a
+        prior snapshot means route-around coverage has mapped new structure
+        since a steer stall -- the signal that a stalled target deserves a fresh
+        BFS attempt with the richer wall map."""
+        return len(self._blocked_edges) + len(self._effects)
+
     def _is_exhausted(self, centroid: tuple[int, int]) -> bool:
-        """True iff `centroid` is within _CLUSTER_RADIUS of a cluster already
-        abandoned by a steer stall this episode (g-315-223). Radius-matched (not
-        exact) so a jittered re-detection of the same dead cluster does not
-        re-lock it -- the cluster-level analogue of the g-315-217 single-cell
-        _exhausted_targets livelock guard."""
-        for ex in self._exhausted_targets:
+        """True iff `centroid` is within _CLUSTER_RADIUS of a cluster abandoned by
+        a steer stall AND no new maze knowledge has been discovered since that
+        stall (g-315-226, refining g-315-223). Radius-matched (not exact) so a
+        jittered re-detection of the same dead cluster does not re-lock it.
+
+        The knowledge gate is the maze-aware change. The g-315-223 permanent set
+        never re-attempted an exhausted target, so a position-dependent-wall maze
+        (guard-689: LEFT walled at row 30, open at row 46) stranded the cursor at
+        closest-approach 12 even when a route existed: the first steer stall (a
+        legitimate detour AWAY from the target to go around a wall reads as
+        no-net-progress) killed the target forever. Now, when route-around
+        coverage grows the wall/mover map beyond the snapshot taken at stall time,
+        the stale exhaustion is dropped and the BFS gets a fresh attempt with the
+        richer position-dependent wall map. Bounded: maze knowledge is finite and
+        monotonic, so re-locks cannot exceed the discoverable edge/mover count ->
+        no livelock (the guarantee the permanent-set version enforced too
+        bluntly). exp-g-315-225."""
+        current_kb = self._maze_knowledge()
+        for ex in list(self._exhausted_targets):
             if abs(ex[0] - centroid[0]) + abs(ex[1] - centroid[1]) <= _CLUSTER_RADIUS:
+                if current_kb > self._exhausted_targets[ex]:
+                    # Maze knowledge grew since this stall -> re-eligible; drop the
+                    # stale snapshot so it cannot keep matching (g-315-226).
+                    del self._exhausted_targets[ex]
+                    return False
                 return True
         return False
 
