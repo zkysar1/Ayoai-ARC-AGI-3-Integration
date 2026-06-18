@@ -84,12 +84,36 @@ _BLIND_CAP: int = 2
 # off-axis goal_cell: coverage-EXISTENCE without coverage-QUALITY (g-315-215).
 _COMMIT_RUN_CAP: int = 8
 
-# A detected target must be SEEN this many decide() ticks (post-bootstrap, with
-# an effect model present) before the explorer LOCKS it as the candidate goal
-# and switches from coverage to directed steering (g-315-217). Conservative: a
-# one-tick rare-cell sighting can be perception noise; requiring persistence
-# avoids derailing systematic coverage on a transient flicker.
-_CANDIDATE_LOCK_TICKS: int = 2
+# g-315-223 (lock+steer RE-ARCHITECTURE — 10th ls20 move). The g-315-217
+# single-cell lock (a target cell SEEN _CANDIDATE_LOCK_TICKS=2 consecutive ticks)
+# is RETIRED: the g-315-220 live litmus (recording 32e82872) proved per-tick
+# target detection FLICKERS — the detector reports jittering cells within a
+# cluster ((31,21)->(32,22)->(31,20)) and whole clusters appear/vanish — so the
+# SAME exact cell rarely repeats two ticks running and the consecutive-cell gate
+# starved (coverage drift, closest-approach stuck 15.5). Replaced by SLIDING-
+# WINDOW CLUSTER COMMITMENT: accumulate per-tick target cells over a window,
+# single-linkage cluster them, and commit the nearest extent-reachable cluster
+# whose CUMULATIVE windowed sightings (NOT consecutive same-cell) clear a floor —
+# steering toward the stable cluster CENTROID, which survives cell jitter.
+#
+# Window of decide() ticks over which target sightings accumulate for clustering.
+# Long enough to bridge multi-tick detection gaps (flicker), short enough that a
+# genuinely-vanished cluster decays out within ~1s of play.
+_TARGET_WINDOW: int = 10
+# Two target cells within this Manhattan distance join one cluster (single-
+# linkage). ls20's two clusters sit ~30 rows apart while within-cluster jitter is
+# +/-2-3, so 6 cleanly separates them AND absorbs the jitter. Class-agnostic: it
+# is a perception-jitter tolerance in grid cells, not an ls20 coordinate.
+_CLUSTER_RADIUS: int = 6
+# A cluster must accumulate at least this many windowed sightings (sum over the
+# window of ticks in which any of its cells was detected) before it is commit-
+# eligible. Replaces the 2-consecutive-same-cell gate with a cumulative-over-
+# window gate that survives flicker (3 of 10 ticks => robust to a 70% miss rate).
+_CLUSTER_MIN_SIGHTINGS: int = 3
+# Once committed, a cluster is abandoned only when its windowed sightings DECAY to
+# at or below this floor (genuinely gone) — NOT on a single-tick detection gap.
+# This is the persistence that the old one-tick candidate-vanish lacked.
+_CLUSTER_VANISH_FLOOR: int = 1
 
 # Consecutive steering ticks with NO distance-reducing learned mover tolerated
 # before the locked candidate is abandoned and coverage re-engages. This is the
@@ -184,8 +208,13 @@ class FrontierCoverageExplorer:
         # mode. Set once a detected target persists (stability gate); cleared on
         # arrival, candidate-vanish, or a steer stall (-> coverage re-engages).
         self._candidate: Optional[tuple[int, int]] = None
-        # Per-target-cell consecutive-sighting tally (the stability gate input).
-        self._target_seen: dict[tuple[int, int], int] = {}
+        # g-315-223: sliding window of per-tick detected target cell-sets. Cluster
+        # commitment reads this (cumulative windowed sightings) INSTEAD of a
+        # per-cell consecutive-sighting tally, so detection flicker no longer
+        # starves the lock. Each post-bootstrap tick appends the tick's target set.
+        self._target_window: deque[frozenset[tuple[int, int]]] = deque(
+            maxlen=_TARGET_WINDOW
+        )
         # Consecutive steering ticks with no NET progress; at _STEER_STALL_CAP
         # the candidate is abandoned + exhausted (rb-1690 route-around).
         self._steer_stall: int = 0
@@ -311,90 +340,105 @@ class FrontierCoverageExplorer:
         else:
             self._blind_streak = 0
 
-        # ---- g-315-217: goal-recognition + directed-steering bridge ----
-        # Wire the proven trusted-route target detection (target_cells) + greedy
-        # steering core (DIRECTED_MIN_IMPROVEMENT) into the UNTRUSTED coverage
-        # explorer so it can DISCOVER a goal-candidate cell and approach it,
-        # not only sweep (g-315-216 finding: the untrusted route's
-        # discovery/interaction half was unbuilt). Class-agnostic (palette
-        # rarity + learned displacement, no env coords) -> generalizes across
-        # movement classes. guard-787-safe (a SEPARATE component, not a
-        # HandBuiltPolicy steering-target widening); guard-786-safe (greedy +
-        # coverage fallback, NOT the seeded BFS planner).
+        # ---- g-315-223: windowed cluster-commitment goal-seeking (RE-ARCH) ----
+        # Re-derivation of the g-315-217 lock+steer layer (pre-registered stop-rule
+        # fired after g-219/g-220 verified-but-non-converging; exp-g-315-223). The
+        # proven trusted-route target detection (detect_cursor_and_targets) + the
+        # greedy/BFS steering core stay; what changes is COMMITMENT. The old layer
+        # locked a single cell SEEN 2 consecutive ticks -- which g-315-220 proved
+        # detection flicker starves (jittering cells within a cluster + whole
+        # clusters appearing/vanishing => the same exact cell rarely repeats =>
+        # coverage drift, closest-approach 15.5). NEW: accumulate per-tick target
+        # cells over a sliding window, single-linkage cluster them, and commit the
+        # nearest extent-reachable cluster CENTROID whose CUMULATIVE windowed
+        # sightings clear a floor. The centroid is a stable aim-point under cell
+        # jitter; persistent commitment means a one-tick flicker to another cluster
+        # no longer derails steering. Class-agnostic (clusters of detected cells +
+        # learned displacements + wall observations; no env coords). guard-787-safe
+        # (separate component, not a HandBuiltPolicy widening); guard-786-safe
+        # (greedy + coverage fallback retained).
         #
-        # Stability gate: tally target sightings ONLY once bootstrap is done and
-        # an effect model exists -- locking before there is a usable displacement
-        # model would strand the candidate with no way to steer toward it.
-        # g-315-220: gate on FULL-axis bootstrap completion (every move-action's
-        # character confirmed), not just first-pass exhaustion (not self._untried)
-        # -- so a candidate is never locked while a genuine mover (e.g. the ls20
-        # row-mover) is still unconfirmed, which is exactly the state that left
-        # g-315-219 column-aligned but unable to close the row axis (rb-1994).
+        # Accumulate this tick's targets ONLY once full-axis bootstrap is done +
+        # an effect model exists (same gate as g-315-220: locking before a usable
+        # displacement model would strand a centroid with no way to steer). A blind
+        # tick contributes an empty set -- a real "no detection" sample, so a
+        # genuinely-vanished cluster decays out of the window.
         target_set = {(int(t[0]), int(t[1])) for t in targets}
         if self._bootstrap_complete() and self._effects:
-            for t in target_set:
-                self._target_seen[t] = self._target_seen.get(t, 0) + 1
-            for t in list(self._target_seen):
-                if t not in target_set:  # vanished -> drop its sighting tally
-                    del self._target_seen[t]
+            self._target_window.append(frozenset(target_set))
 
-        # Lock the nearest STABLE, NON-EXHAUSTED target as the candidate
-        # (coverage -> steering). A target abandoned by a prior steer stall stays
-        # in _exhausted_targets and is never re-locked this episode, else an
-        # unreachable goal cell re-locks every coverage tick (a livelock).
-        if self._candidate is None and cell is not None:
-            stable = [
-                t
-                for t, n in self._target_seen.items()
-                if n >= _CANDIDATE_LOCK_TICKS and t not in self._exhausted_targets
+        # Lock the nearest extent-reachable, non-exhausted cluster's CENTROID as
+        # the candidate (coverage -> steering). A cluster abandoned by a prior
+        # steer stall stays in _exhausted_targets (matched by radius) and is never
+        # re-locked this episode, else an unreachable cluster re-locks every tick.
+        if (
+            self._candidate is None
+            and cell is not None
+            and self._bootstrap_complete()
+            and self._effects
+        ):
+            eligible = [
+                cl
+                for cl in self._cluster_targets()
+                if cl["sightings"] >= _CLUSTER_MIN_SIGHTINGS
+                and not self._is_exhausted(cl["centroid"])
+                and self._reachable_extent(cell, cl["centroid"])
             ]
-            # g-315-219 part 1: REACHABILITY-AWARE selection. Lock ONLY a target
-            # whose every needed axis has a learned mover in the needed direction.
-            # The ls20 trap: the NEAREST cluster (rows 31-33, Manhattan 12.5) sat
-            # ABOVE the cursor but NO action moved up, so greedy locked it and
-            # oscillated columns at a fixed row forever; the farther row-61-62
-            # cluster (reachable by ACTION1 DOWN) was never locked. Filtering to
-            # known-reachable targets makes the explorer prefer the reachable one
-            # and STAY IN COVERAGE (still learning axes via part-4 re-probe) when
-            # none is yet reachable — instead of locking an unreachable target.
-            reachable = [t for t in stable if self._reachable(cell, t)]
-            if reachable:
-                self._candidate = min(
-                    reachable,
-                    key=lambda t: (abs(cell[0] - t[0]) + abs(cell[1] - t[1]), t),
+            # g-315-219 part 1 reachability is now extent-AWARE (g-315-223 (e)):
+            # a directional mover existing is necessary but not sufficient -- a
+            # cluster beyond a CONFIRMED wall in the needed direction (the ls20
+            # row-61 cluster past the row-45.5 down cap) is rejected even though a
+            # down-mover exists. Among eligible clusters, commit the NEAREST
+            # centroid (ls20: the reachable row-31 cluster at cursor row ~30.5),
+            # so persistent steering closes the orthogonal (column) axis the
+            # flickering single-cell lock could not.
+            if eligible:
+                best = min(
+                    eligible,
+                    key=lambda cl: (
+                        abs(cell[0] - cl["centroid"][0])
+                        + abs(cell[1] - cl["centroid"][1]),
+                        cl["centroid"],
+                    ),
                 )
+                self._candidate = best["centroid"]
                 self._steer_stall = 0
                 # Fresh candidate -> fresh net-progress baseline (the first
                 # steering tick below seeds _steer_best_dist from cur_dist).
                 self._steer_best_dist = None
 
-        # Steering mode: navigate toward the locked candidate via the learned
-        # effect model. Arrival or candidate-vanish re-engages coverage; a steer
-        # stall (no distance-reducing mover) re-engages coverage too (rb-1690).
+        # Steering mode: navigate toward the locked cluster centroid via the
+        # learned effect model. Arrival or a GENUINE cluster-vanish (windowed
+        # sightings decayed to the floor, NOT a one-tick gap) re-engages coverage;
+        # a steer stall (no distance-reducing mover) abandons + exhausts the
+        # cluster so coverage finds a fresh route (rb-1690 route-around).
         if self._candidate is not None:
             if cell is not None and cell == self._candidate:
-                # Reached it. If arrival scored, the episode ends (WIN) outside
-                # the explorer; else coverage seeks the next candidate (or
-                # surfaces the interaction gap -- the next frontier move).
-                self._target_seen.pop(self._candidate, None)
+                # Reached the cluster centroid exactly. Arrival scoring (WIN) is
+                # handled outside the explorer; else coverage seeks the next
+                # cluster (or surfaces the interaction gap -- the next frontier
+                # move). Exact match (not a tolerance): a centroid the cursor
+                # cannot land on exactly is handled by the net-progress steer
+                # stall below (abandon + exhaust), never by stopping one cell
+                # short -- which would leave the last cell of an exact target
+                # uncovered (the g-315-223 test regression that proved this).
                 self._candidate = None
                 self._steer_best_dist = None
-            elif (
-                self._candidate not in target_set
-                and self._target_seen.get(self._candidate, 0) == 0
-            ):
-                self._candidate = None  # candidate vanished from detection
+            elif self._committed_cluster_sightings() <= _CLUSTER_VANISH_FLOOR:
+                # Persistence: abandon ONLY when the committed cluster genuinely
+                # decayed out of the window. A single missing tick (flicker) is
+                # absorbed by the windowed floor -- the failure the per-tick
+                # candidate-vanish caused (g-315-220 coverage drift).
+                self._candidate = None
                 self._steer_best_dist = None
             elif cell is not None:
-                # Net-progress stall (g-315-217 oscillation fix): only a STRICTLY
-                # better cursor->candidate Manhattan distance than any achieved
-                # since the lock resets the stall. A cursor that merely oscillates
-                # around a walled target never beats its best, so the stall accrues
-                # and the candidate is abandoned + exhausted -- instead of the
-                # per-tick reset that let row-steps around a column-locked target
-                # re-arm the stall forever (the re-lock livelock). Owning the stall
-                # HERE (not in _steer) keeps _steer a pure greedy function and makes
-                # the stall a function of NET progress in one place.
+                # Net-progress stall (g-315-217 oscillation fix, retained): only a
+                # STRICTLY better cursor->centroid Manhattan than any achieved since
+                # the lock resets the stall. A cursor oscillating around a walled
+                # centroid never beats its best, so the stall accrues and the
+                # cluster is abandoned + exhausted (rb-1690 route-around) instead of
+                # looping forever. Owning the stall HERE keeps _steer a pure greedy
+                # function and makes the stall a function of NET progress.
                 cur_dist = abs(cell[0] - self._candidate[0]) + abs(
                     cell[1] - self._candidate[1]
                 )
@@ -404,23 +448,15 @@ class FrontierCoverageExplorer:
                 else:
                     self._steer_stall += 1
                     if self._steer_stall >= _STEER_STALL_CAP:
-                        # Greedy cannot route around the obstacle (rb-1690);
-                        # abandon + exhaust this candidate so coverage re-engages
-                        # and finds a fresh path (the systematic-coverage
-                        # route-around), and the dead target never re-locks.
                         self._exhausted_targets.add(self._candidate)
                         self._candidate = None
                         self._steer_best_dist = None
                         self._steer_stall = 0
-                # Steer only if the candidate survived the stall check this tick.
                 if self._candidate is not None:
                     # g-315-219 part 2: PLAN a route (BFS over the learned-
-                    # displacement lattice, skipping observed wall edges) instead
-                    # of a greedy 1-step. The route commits to a coherent
-                    # multi-step path (e.g. sustained DOWN to reach a row-distant
-                    # target) and goes AROUND a wall greedy cannot route past
-                    # (rb-1690). Greedy _steer is the depth-1 fallback when the
-                    # planner finds no improving path this tick.
+                    # displacement lattice, skipping observed wall edges) toward the
+                    # centroid; greedy _steer is the depth-1 fallback when the
+                    # planner finds no improving path this tick (rb-1690).
                     steer = self._plan_route(cell)
                     if steer is None:
                         steer = self._steer(cell)
@@ -602,6 +638,146 @@ class FrontierCoverageExplorer:
                 best_action = a
                 best_dist = d
         return best_action
+
+    # ---------- g-315-223: windowed cluster-commitment goal-seeking ---------- #
+
+    def _cluster_targets(self) -> list[dict]:
+        """Single-linkage cluster the windowed target cells (g-315-223).
+
+        Flattens self._target_window into per-cell sighting counts (how many of
+        the windowed ticks detected each cell), groups cells within
+        _CLUSTER_RADIUS Manhattan via union-find, and returns one dict per
+        cluster: {"centroid": (r,c), "cells": [...], "sightings": total}. The
+        centroid is the sighting-count-weighted mean (rounded) -- a stable aim-
+        point under per-tick cell jitter. `sightings` sums the per-cell counts in
+        the cluster (CUMULATIVE windowed evidence, not consecutive). Deterministic
+        (cells processed sorted; fixed rounding; result sorted by centroid).
+        Tiny-compute: O(cells^2) over the few cells a small window holds.
+        """
+        counts: dict[tuple[int, int], int] = {}
+        for tickset in self._target_window:
+            for c in tickset:
+                counts[c] = counts.get(c, 0) + 1
+        if not counts:
+            return []
+        cells = sorted(counts)
+        # Union-find: edge between any two cells within _CLUSTER_RADIUS Manhattan.
+        parent = {c: c for c in cells}
+
+        def find(x: tuple[int, int]) -> tuple[int, int]:
+            root = x
+            while parent[root] != root:
+                root = parent[root]
+            while parent[x] != root:  # path compression
+                parent[x], x = root, parent[x]
+            return root
+
+        for i, a in enumerate(cells):
+            for b in cells[i + 1:]:
+                if abs(a[0] - b[0]) + abs(a[1] - b[1]) <= _CLUSTER_RADIUS:
+                    ra, rb = find(a), find(b)
+                    if ra != rb:
+                        if rb < ra:  # deterministic root (smaller tuple wins)
+                            ra, rb = rb, ra
+                        parent[rb] = ra
+        groups: dict[tuple[int, int], list[tuple[int, int]]] = {}
+        for c in cells:
+            groups.setdefault(find(c), []).append(c)
+        clusters: list[dict] = []
+        for members in groups.values():
+            total = sum(counts[c] for c in members)
+            sr = sum(c[0] * counts[c] for c in members)
+            sc = sum(c[1] * counts[c] for c in members)
+            centroid = (int(round(sr / total)), int(round(sc / total)))
+            clusters.append(
+                {"centroid": centroid, "cells": members, "sightings": total}
+            )
+        clusters.sort(key=lambda cl: cl["centroid"])
+        return clusters
+
+    def _committed_cluster_sightings(self) -> int:
+        """Cumulative windowed sightings of the cluster the current _candidate
+        centroid belongs to (g-315-223). Re-clusters the live window and returns
+        the max sightings among clusters whose centroid is within _CLUSTER_RADIUS
+        of _candidate; 0 when the committed cluster has decayed out of the window
+        (the GENUINE-vanish signal, distinct from a one-tick flicker the windowed
+        floor absorbs). Defensive _CLUSTER_MIN_SIGHTINGS when no candidate is set
+        (callers gate on _candidate first)."""
+        if self._candidate is None:
+            return _CLUSTER_MIN_SIGHTINGS
+        best = 0
+        for cl in self._cluster_targets():
+            cen = cl["centroid"]
+            if (
+                abs(cen[0] - self._candidate[0])
+                + abs(cen[1] - self._candidate[1])
+                <= _CLUSTER_RADIUS
+            ):
+                best = max(best, cl["sightings"])
+        return best
+
+    def _is_exhausted(self, centroid: tuple[int, int]) -> bool:
+        """True iff `centroid` is within _CLUSTER_RADIUS of a cluster already
+        abandoned by a steer stall this episode (g-315-223). Radius-matched (not
+        exact) so a jittered re-detection of the same dead cluster does not
+        re-lock it -- the cluster-level analogue of the g-315-217 single-cell
+        _exhausted_targets livelock guard."""
+        for ex in self._exhausted_targets:
+            if abs(ex[0] - centroid[0]) + abs(ex[1] - centroid[1]) <= _CLUSTER_RADIUS:
+                return True
+        return False
+
+    def _reachable_extent(
+        self, cell: tuple[int, int], target: tuple[int, int]
+    ) -> bool:
+        """Extent-AWARE reachability (g-315-223 (e)): base _reachable (a mover
+        exists for each needed axis-direction) AND no CONFIRMED wall caps that
+        direction short of the target.
+
+        Base _reachable is distance-blind -- it returned True for the ls20 row-61
+        cluster because a DOWN mover exists, but the cursor physically caps at row
+        ~45.5 (the down mover wall-contacts there). For each needed direction
+        whose advancing movers are ALL confirmed-walled (guard-689 >=2 distinct
+        wall cells), the target's coordinate on that axis must not lie beyond the
+        extreme wall coordinate (1-cell tolerance). If any advancing mover is not
+        yet confirmed-walled it may reach further => no bound (do not over-reject
+        far-but-reachable targets early)."""
+        if not self._reachable(cell, target):
+            return False
+        dr = target[0] - cell[0]
+        dc = target[1] - cell[1]
+        if abs(dr) >= 1 and not self._extent_ok(0, 1 if dr > 0 else -1, target[0]):
+            return False
+        if abs(dc) >= 1 and not self._extent_ok(1, 1 if dc > 0 else -1, target[1]):
+            return False
+        return True
+
+    def _extent_ok(self, axis: int, sign: int, target_coord: int) -> bool:
+        """True iff `target_coord` on `axis` is not beyond a CONFIRMED wall in the
+        `sign` direction (g-315-223 (e)). A bound applies ONLY when EVERY mover
+        advancing (axis, sign) is confirmed-walled (>=2 distinct positions) -- if
+        any advancing mover is unwalled it may still reach further. The bound is
+        the extreme wall coordinate (furthest the cursor demonstrably reached
+        before walling)."""
+        advancing = [
+            a
+            for a, eff in self._effects.items()
+            if abs(eff[axis]) >= NOISE_FLOOR_CELLS and (eff[axis] > 0) == (sign > 0)
+        ]
+        if not advancing:
+            return True  # base _reachable already rejects a no-mover direction
+        bound: Optional[int] = None
+        for a in advancing:
+            walls = self._bootstrap_wall_positions(a)
+            if len(walls) < 2:
+                return True  # an advancing mover not confirmed-walled => no bound
+            coords = [w[axis] for w in walls]
+            wb = max(coords) if sign > 0 else min(coords)
+            if bound is None:
+                bound = wb
+            else:
+                bound = max(bound, wb) if sign > 0 else min(bound, wb)
+        return target_coord <= bound + 1 if sign > 0 else target_coord >= bound - 1
 
     # ---------- g-315-220: extended-bootstrap full-axis calibration ---------- #
 

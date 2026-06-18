@@ -550,3 +550,158 @@ def test_g315220_extended_bootstrap_is_deterministic(monkeypatch) -> None:
         return _run(explorer, sim, 40)
 
     assert one_run() == one_run()
+
+
+# ---- g-315-223: windowed cluster-commitment lock+steer (RE-ARCHITECTURE) ---- #
+
+
+def test_g315223_cluster_targets_separates_two_clusters_and_centroids() -> None:
+    # _cluster_targets single-linkage groups windowed cells into clusters with
+    # CUMULATIVE (not consecutive) sighting counts and sighting-weighted centroids.
+    # Two clusters ~30 apart (the ls20 row-31 / row-61 shape) with intra-cluster
+    # jitter must separate cleanly; centroids are stable aim-points under jitter.
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    window = [
+        frozenset({(31, 21), (61, 55)}),
+        frozenset({(32, 22), (61, 56)}),
+        frozenset({(31, 20)}),
+        frozenset({(60, 55)}),
+        frozenset({(31, 21), (61, 55)}),
+    ]
+    for s in window:
+        explorer._target_window.append(s)
+    clusters = explorer._cluster_targets()
+    assert len(clusters) == 2, f"expected 2 clusters: {[c['centroid'] for c in clusters]}"
+    by_centroid = sorted(clusters, key=lambda c: c["centroid"])
+    a, b = by_centroid[0], by_centroid[1]
+    assert a["centroid"] == (31, 21), f"row-31 cluster centroid {a['centroid']}"
+    assert b["centroid"] == (61, 55), f"row-61 cluster centroid {b['centroid']}"
+    # Cumulative windowed sightings (NOT consecutive same-cell): each cluster's
+    # cells were seen 4 ticks total -> >= _CLUSTER_MIN_SIGHTINGS even though NO
+    # single cell repeated two ticks running (the flicker the old lock starved on).
+    assert a["sightings"] >= fe._CLUSTER_MIN_SIGHTINGS, f"A sightings {a['sightings']}"
+    assert b["sightings"] >= fe._CLUSTER_MIN_SIGHTINGS, f"B sightings {b['sightings']}"
+
+
+def test_g315223_windowed_lock_survives_detection_flicker(monkeypatch) -> None:
+    # THE core re-architecture proof. A target cluster detected with GAPS and
+    # cell-jitter -- NEVER the same cell two ticks in a row -- still commits via
+    # cumulative windowed sightings, where the retired 2-consecutive-same-cell
+    # lock starved (g-315-220 coverage drift, closest-approach stuck 15.5). The
+    # cursor then steers to the stable centroid and CLOSES distance.
+    sim = _GridSim(size=30, start=(10, 10))
+    state = {"tick": 0}
+    jitter = [(10, 22), (11, 22), (10, 23), (11, 23)]  # one cluster, intra-jitter
+
+    def flicker(_f):
+        t = state["tick"]
+        state["tick"] += 1
+        if t % 3 == 2:
+            return (sim.cursor, [])  # detection miss every 3rd tick (no 2 in a row)
+        return (sim.cursor, [jitter[t % len(jitter)]])
+
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", flicker)
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    start_dist = abs(10 - 10) + abs(10 - 22)  # = 12 (East cluster)
+    closest = start_dist
+    locked = False
+    for _ in range(50):
+        sim.apply(explorer.decide(_DUMMY).action)
+        if explorer.candidate is not None:
+            locked = True
+        closest = min(closest, abs(sim.r - 10) + abs(sim.c - 22))
+    assert locked, "windowed cluster commitment never locked under detection flicker"
+    # Convergence: the cursor closed in on the flickering cluster (the old lock
+    # never committed under this flicker, so it could only coverage-drift).
+    assert closest <= 2, f"cursor did not converge on the flickering cluster: closest={closest}"
+
+
+def test_g315223_extent_aware_reachability_rejects_beyond_wall() -> None:
+    # g-315-223 (e): a directional mover EXISTING is necessary but not sufficient.
+    # The ls20 row-61 cluster sits past the row-~45 down cap (the down mover
+    # wall-contacts there from >=2 positions), so it is unreachable even though a
+    # down mover exists -- base _reachable is distance-blind; _reachable_extent is
+    # not. A target WITHIN the demonstrated extent stays reachable.
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    explorer._effects = {1: (-5.0, 0.0), 2: (5.0, 0.0), 3: (0.0, -5.0), 4: (0.0, 5.0)}
+    cell = (30, 30)
+    far_down = (61, 30)  # below the cursor
+    near_down = (44, 30)  # below, but within the soon-to-be-confirmed extent
+    # Base _reachable says BOTH are reachable (a down mover, action 2, exists).
+    assert explorer._reachable(cell, far_down)
+    assert explorer._reachable(cell, near_down)
+    # No wall confirmed yet -> extent imposes no bound: both still reachable.
+    assert explorer._reachable_extent(cell, far_down)
+    assert explorer._reachable_extent(cell, near_down)
+    # Confirm the down mover (action 2) walls at row ~45 from >=2 distinct cells.
+    explorer._blocked_edges = {((45, 30), 2), ((45, 36), 2)}
+    # Now the row-61 target is beyond the wall boundary -> extent-unreachable;
+    # the row-44 target is within the boundary -> still reachable.
+    assert not explorer._reachable_extent(cell, far_down), "beyond-wall target not rejected"
+    assert explorer._reachable_extent(cell, near_down), "within-extent target wrongly rejected"
+    # base _reachable is unchanged (still distance-blind) -> extent is the discriminator.
+    assert explorer._reachable(cell, far_down)
+
+
+def test_g315223_commitment_persists_through_one_tick_gap(monkeypatch) -> None:
+    # Persistence: once committed, a SINGLE missing-detection tick does NOT drop
+    # the candidate (the windowed floor absorbs flicker) -- the failure the old
+    # per-tick candidate-vanish caused. A target a few cells away so the cursor
+    # has not arrived (arrival would clear the candidate for a different reason).
+    sim = _GridSim(size=40, start=(10, 10))
+    state = {"present": True}
+
+    def det(_f):
+        return (sim.cursor, [(10, 30)] if state["present"] else [])
+
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", det)
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    for _ in range(30):
+        sim.apply(explorer.decide(_DUMMY).action)
+        if explorer.candidate is not None:
+            break
+    assert explorer.candidate is not None, "never locked under steady detection"
+    locked = explorer.candidate
+    assert (sim.r, sim.c) != locked, "cursor already arrived; cannot test persistence"
+    # One missing-detection tick: the candidate MUST persist (windowed floor).
+    state["present"] = False
+    sim.apply(explorer.decide(_DUMMY).action)
+    assert explorer.candidate == locked, "candidate dropped on a single-tick flicker"
+
+
+def test_g315223_committed_cluster_sightings_decays_on_genuine_vanish() -> None:
+    # The vanish signal is windowed DECAY, not a one-tick gap. A full window of
+    # the committed cluster reads high; draining it to empty reads 0 (<= floor ->
+    # abandon); a lone sighting reads at the floor (still abandon -- hysteresis vs
+    # the >= _CLUSTER_MIN_SIGHTINGS commit gate).
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    explorer._candidate = (10, 30)
+    for _ in range(8):
+        explorer._target_window.append(frozenset({(10, 30)}))
+    assert explorer._committed_cluster_sightings() >= fe._CLUSTER_MIN_SIGHTINGS
+    for _ in range(fe._TARGET_WINDOW):  # drain to all-empty (genuine vanish)
+        explorer._target_window.append(frozenset())
+    assert explorer._committed_cluster_sightings() == 0
+    explorer._target_window.append(frozenset({(10, 30)}))  # a single lone sighting
+    assert explorer._committed_cluster_sightings() <= fe._CLUSTER_VANISH_FLOOR
+
+
+def test_g315223_cluster_commitment_is_deterministic(monkeypatch) -> None:
+    # The windowed-cluster lock+steer path is fully deterministic: identical frame
+    # sequences -> identical action streams (clustering is sorted/union-find,
+    # centroid rounding is fixed, all tie-breaks by lowest id / centroid tuple).
+    def one_run() -> list[int]:
+        sim = _GridSim(size=30, start=(10, 10))
+        seq = {"tick": 0}
+        jitter = [(10, 22), (11, 22), (10, 23)]
+
+        def flicker(_f):
+            t = seq["tick"]
+            seq["tick"] += 1
+            return (sim.cursor, [jitter[t % len(jitter)]] if t % 4 != 3 else [])
+
+        monkeypatch.setattr(fe, "detect_cursor_and_targets", flicker)
+        explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+        return _run(explorer, sim, 45)
+
+    assert one_run() == one_run()
