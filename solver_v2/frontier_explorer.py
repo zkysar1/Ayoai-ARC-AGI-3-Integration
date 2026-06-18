@@ -119,6 +119,24 @@ _GRID_MAX: int = 63
 # the least-used frontier turn.
 _REPROBE_INTERVAL: int = 3
 
+# g-315-220 (bootstrap full-axis calibration). The extended bootstrap re-probes
+# EVERY move-action until its movement character is CONFIRMED -- a learned mover,
+# OR wall-only from >=2 distinct positions (guard-689) -- BEFORE candidate-locking
+# + steering begins, so the first time the cursor column-aligns with a reachable
+# target the orthogonal (row) axis is ALREADY a known mover and the explorer can
+# close BOTH axes. rb-1994: g-315-219 broke the column-trap and traversed 6 rows,
+# but closest-approach stuck at 12.5 because the row-mover (ACTION1) was learned
+# only ~t38 -- after column-alignment (~t21) was lost -- since its single
+# bootstrap issue did not confirm it and the part-4 re-probe is paced too slowly
+# (every _REPROBE_INTERVAL coverage turns, which only run AFTER bootstrap).
+# Absolute backstop: bootstrap force-completes after this many ticks PER move-
+# action, so a genuinely uncontrollable cursor (no mover can relocate it off a
+# wall) can never loop bootstrap forever. Sized so even the worst case (every
+# action needs a 2nd distinct-position observation, interleaved with relocations)
+# completes well before the ls20 first column-alignment (~t21, recording cdb782f5);
+# the >=2-distinct-positions confirm rule -- not this cap -- is the normal terminator.
+_BOOTSTRAP_TICK_BUDGET_PER_MOVE: int = 4
+
 
 class FrontierCoverageExplorer:
     """Stateful per-episode frontier-coverage decider (untrusted movement route).
@@ -195,6 +213,16 @@ class FrontierCoverageExplorer:
         self._prev_cell: Optional[tuple[int, int]] = None
         # Coverage-turn counter pacing the part-4 complete-axis re-probe.
         self._coverage_turns: int = 0
+        # --- g-315-220: extended-bootstrap (full-axis calibration) accounting ---
+        # _boot_ticks counts ticks spent in the bootstrap phase (first-pass issues
+        # + re-probes + relocations); _boot_tick_cap force-completes bootstrap if a
+        # genuinely uncontrollable cursor would otherwise loop it forever (absolute
+        # backstop -- the >=2-distinct-positions confirm rule is the normal
+        # terminator). max(1, ...) guards a degenerate empty move set.
+        self._boot_ticks: int = 0
+        self._boot_tick_cap: int = _BOOTSTRAP_TICK_BUDGET_PER_MOVE * max(
+            1, len(self._moves)
+        )
 
     # ---------- inspection (tests / provenance) ---------- #
 
@@ -297,8 +325,13 @@ class FrontierCoverageExplorer:
         # Stability gate: tally target sightings ONLY once bootstrap is done and
         # an effect model exists -- locking before there is a usable displacement
         # model would strand the candidate with no way to steer toward it.
+        # g-315-220: gate on FULL-axis bootstrap completion (every move-action's
+        # character confirmed), not just first-pass exhaustion (not self._untried)
+        # -- so a candidate is never locked while a genuine mover (e.g. the ls20
+        # row-mover) is still unconfirmed, which is exactly the state that left
+        # g-315-219 column-aligned but unable to close the row axis (rb-1994).
         target_set = {(int(t[0]), int(t[1])) for t in targets}
-        if not self._untried and self._effects:
+        if self._bootstrap_complete() and self._effects:
             for t in target_set:
                 self._target_seen[t] = self._target_seen.get(t, 0) + 1
             for t in list(self._target_seen):
@@ -570,6 +603,72 @@ class FrontierCoverageExplorer:
                 best_dist = d
         return best_action
 
+    # ---------- g-315-220: extended-bootstrap full-axis calibration ---------- #
+
+    def _bootstrap_wall_positions(self, action: int) -> set[tuple[int, int]]:
+        """Distinct cursor cells where `action` was OBSERVED as a wall-contact
+        this episode (derived from _blocked_edges, the same store the BFS planner
+        routes around). guard-689: an action walled from >=2 distinct positions is
+        concluded a non-mover for bootstrap purposes; a single wall-contact is
+        position-local fact, not an axis-capability verdict."""
+        return {c for (c, a) in self._blocked_edges if a == action}
+
+    def _bootstrap_confirmed(self, action: int) -> bool:
+        """True once `action`'s movement character is KNOWN: a learned mover (in
+        _effects), or wall-only from >=2 distinct positions (guard-689)."""
+        if action in self._effects:
+            return True
+        return len(self._bootstrap_wall_positions(action)) >= 2
+
+    def _bootstrap_pending(self) -> list[int]:
+        """Move-actions whose character is not yet confirmed (ascending id, for
+        deterministic probe order)."""
+        return [a for a in self._moves if not self._bootstrap_confirmed(a)]
+
+    def _bootstrap_complete(self) -> bool:
+        """True when full-axis calibration is done (g-315-220): every move-action
+        confirmed, OR the absolute tick backstop reached (a cursor no mover can
+        relocate off a wall must not loop bootstrap forever). A non-empty first-
+        pass queue always means not-yet-complete. Consulted by decide()'s
+        candidate-lock gate and by _choose Step 1 -- both read the SAME predicate,
+        so locking can never begin while bootstrap is still calibrating."""
+        if self._boot_ticks >= self._boot_tick_cap:
+            return True
+        if self._untried:
+            return False
+        return not self._bootstrap_pending()
+
+    def _pick_bootstrap_probe(self, cell: Optional[tuple[int, int]]) -> int:
+        """Next action to issue during extended bootstrap (after the first pass).
+
+        Prefer issuing an unconfirmed action from a position where it has NOT
+        already wall-contacted (a FRESH observation -> learns the mover, or adds a
+        2nd distinct wall position that confirms it wall-only). When EVERY pending
+        action is already walled at the current cell, relocate via a known mover
+        free at this cell so the next tick re-probes from a new position
+        (guard-689: axis controllability is position-dependent -- the precise
+        relocate-then-reprobe the paced part-4 re-probe was too slow to do during
+        the window the ls20 cursor was column-aligned). Falls back to the lowest-id
+        pending action when blind / cold-start / fully boxed in -- the tick
+        backstop then ends bootstrap. Deterministic (ascending ids throughout)."""
+        pending = self._bootstrap_pending() or list(self._moves)
+        if cell is not None:
+            # (a) An unconfirmed action re-probable from HERE (fresh observation).
+            for a in pending:
+                if cell not in self._bootstrap_wall_positions(a):
+                    return a
+            # (b) All pending walled here -> relocate via a known mover free at
+            #     this cell so the cursor reaches a fresh position next tick.
+            for m in self._moves:
+                if m in self._effects and (cell, m) not in self._blocked_edges:
+                    return m
+        # (c) Blind / cold-start / fully boxed in: ROTATE through pending actions
+        #     (NOT a dead-repeat) keyed on the bootstrap tick, so a blind cursor
+        #     still jiggles different actions to re-induce movement / re-acquire
+        #     detection (g-315-214), deterministically. The tick backstop ends
+        #     bootstrap if nothing ever moves.
+        return pending[self._boot_ticks % len(pending)]
+
     def _choose(
         self, cell: Optional[tuple[int, int]], exclude: Optional[int] = None
     ) -> int:
@@ -580,12 +679,21 @@ class FrontierCoverageExplorer:
         the same direction (g-315-215 anti-lock). When excluding leaves no known
         mover, it falls through to the deterministic rotation fallback.
         """
-        # 1. Bootstrap: issue each move-action once to learn its effect. Do NOT
-        #    commit yet -- bootstrap is pure observation; the first commit is the
-        #    frontier-turn below, made once effects are known.
-        if self._untried:
+        # 1. BOOTSTRAP / full-axis calibration (g-315-220). Confirm EVERY move-
+        #    action's movement character -- a learned mover, OR wall-only from >=2
+        #    distinct positions (guard-689) -- BEFORE commit+steer, so the first
+        #    column-alignment with a reachable target can immediately drive the
+        #    orthogonal axis (rb-1994). First pass issues each action once (as
+        #    before); then re-probe any unconfirmed action from a fresh position,
+        #    relocating via a known mover when the current cell is already walled
+        #    for every pending action. Do NOT commit yet -- bootstrap is pure
+        #    observation; the first commit is the frontier-turn below.
+        if not self._bootstrap_complete():
+            self._boot_ticks += 1
             self._commit_run = 0
-            return self._untried.pop(0)
+            if self._untried:
+                return self._untried.pop(0)
+            return self._pick_bootstrap_probe(cell)
 
         # 2. Committed traversal: keep going while the committed action is a known
         #    mover and was not just cleared (wall / over-revisit / run-cap) above.

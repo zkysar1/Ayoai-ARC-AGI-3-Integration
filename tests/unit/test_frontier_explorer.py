@@ -406,3 +406,147 @@ def test_reprobes_wall_contacted_action_g315219(monkeypatch) -> None:
     assert 1 in explorer.effects, (
         f"UP wall-contacted at bootstrap was never re-probed/learned: {explorer.effects}"
     )
+
+
+# ---- g-315-220: extended-bootstrap full-axis calibration before steering ---- #
+
+
+class _StartLedgeSim:
+    """All moves work EXCEPT down (action 2) is a no-op at the EXACT start cell
+    (20, 30) -- a ledge the cursor must step off (via a column move) before its
+    row-mover works. Mirrors the ls20 trap g-315-220 fixes: the row-mover does
+    NOT move from the bootstrap position; only a re-probe from a RELOCATED cell
+    confirms it. _CARDINAL: 1=up, 2=down, 3=left, 4=right (magnitude 1)."""
+
+    def __init__(self) -> None:
+        self.r, self.c = 20, 30
+
+    @property
+    def cursor(self) -> tuple[float, float]:
+        return (float(self.r), float(self.c))
+
+    def apply(self, action: int) -> None:
+        d = _CARDINAL.get(action)
+        if d is None:
+            return
+        if action == 2 and (self.r, self.c) == (20, 30):
+            return  # down is walled at the start ledge -> wall-contact at bootstrap
+        nr, nc = self.r + d[0], self.c + d[1]
+        if 0 <= nr < 64:
+            self.r = nr
+        if 0 <= nc < 64:
+            self.c = nc
+
+
+def test_g315220_guard689_wall_only_needs_two_distinct_positions() -> None:
+    # guard-689 at the bootstrap-confirm layer: a SINGLE wall-contact is
+    # position-local fact, NOT a non-mover verdict -- the action stays unconfirmed
+    # (bootstrap not yet done on its account). Only a 2nd DISTINCT wall position
+    # concludes it wall-only. A learned mover is confirmed regardless.
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    explorer._blocked_edges = {((30, 30), 1)}  # UP walled at ONE position
+    assert not explorer._bootstrap_confirmed(1)  # one position != verdict
+    assert 1 in explorer._bootstrap_pending()
+    explorer._blocked_edges.add(((31, 30), 1))  # 2nd DISTINCT position
+    assert explorer._bootstrap_confirmed(1)  # now concluded wall-only (guard-689)
+    assert 1 not in explorer._bootstrap_pending()
+    explorer._effects[2] = (5.0, 0.0)  # a learned mover
+    assert explorer._bootstrap_confirmed(2)  # confirmed by effect, no walls needed
+
+
+def test_g315220_extended_bootstrap_reprobes_walled_mover_before_completing(
+    monkeypatch,
+) -> None:
+    # The core fix: an action that wall-contacts on its FIRST bootstrap issue is
+    # NOT left unconfirmed -- the extended bootstrap relocates and re-probes it
+    # until its character is known, and bootstrap does NOT complete (so locking
+    # cannot begin) until then. UP (action 1) wall-contacts at start row 0.
+    sim = _GridSim(size=64, start=(0, 30))  # row 0 -> UP (1) is a wall at bootstrap
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", lambda f: (sim.cursor, []))
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+
+    # After the first pass (4 ticks) UP has wall-contacted exactly once and is
+    # NOT a learned mover -> bootstrap is NOT complete (the old `not self._untried`
+    # gate WOULD have considered bootstrap done here and allowed locking).
+    _run(explorer, sim, 4)
+    assert not explorer._bootstrap_complete(), "bootstrap wrongly complete with UP unconfirmed"
+    assert 1 not in explorer.effects  # UP not yet learned (walled at row 0)
+    assert explorer.candidate is None  # locking gated by bootstrap completion
+
+    # Drive the extended bootstrap: it relocates (down) and re-probes UP from a
+    # row > 0 where UP moves -> UP is confirmed a mover and bootstrap completes.
+    _run(explorer, sim, 12)
+    assert 1 in explorer.effects, f"UP never re-probed/learned in bootstrap: {explorer.effects}"
+    assert explorer._bootstrap_complete()
+
+
+def test_g315220_reaches_target_needing_bootstrap_walled_row_mover(monkeypatch) -> None:
+    # rb-1994 essence (the convergence the g-315-219 baseline missed): a target
+    # below the cursor needs the ROW mover, which wall-contacts at the bootstrap
+    # cell. Because the extended bootstrap CONFIRMS that mover before locking, the
+    # explorer locks the (now-reachable) target and CLOSES BOTH axes to reach it --
+    # instead of column-aligning and stalling 12.5 rows away with the row-mover
+    # still unlearned.
+    sim = _StartLedgeSim()
+    target = (40, 30)  # 20 rows below the start, same column -> needs down (walled at start)
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", lambda f: (sim.cursor, [target]))
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+
+    start_manhattan = abs(20 - 40) + abs(30 - 30)  # = 20
+    closest = start_manhattan
+    for _ in range(70):
+        sim.apply(explorer.decide(_DUMMY).action)
+        closest = min(closest, abs(sim.r - target[0]) + abs(sim.c - target[1]))
+
+    assert 2 in explorer.effects, f"row-mover (down) never learned: {explorer.effects}"
+    # Convergence: closest-approach Manhattan collapses near zero (BOTH axes
+    # closed), strictly and decisively better than the 12.5-equivalent stall.
+    assert closest <= 2, f"cursor did not converge on the target (closest Manhattan={closest})"
+
+
+def test_g315220_tick_backstop_force_completes_on_uncontrollable_cursor(
+    monkeypatch,
+) -> None:
+    # Termination guarantee: when NO action ever moves the cursor (it is detectable
+    # but frozen), no mover is learned and no action can reach a 2nd distinct wall
+    # position (the cursor never relocates), so the >=2-positions rule can never
+    # fire. The absolute tick backstop MUST force-complete bootstrap so the loop
+    # never hangs in calibration forever.
+    class _FrozenSim:
+        def __init__(self) -> None:
+            self.r, self.c = 10, 10
+
+        @property
+        def cursor(self) -> tuple[float, float]:
+            return (float(self.r), float(self.c))
+
+        def apply(self, action: int) -> None:
+            pass  # every move is a wall -> the cursor never relocates
+
+    sim = _FrozenSim()
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", lambda f: (sim.cursor, []))
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    cap = explorer._boot_tick_cap
+    actions = _run(explorer, sim, cap + 5)
+    assert all(a in _MOVES for a in actions)  # legal moves only, never crashed
+    assert explorer._bootstrap_complete()  # force-completed by the tick backstop
+    assert explorer._boot_ticks >= cap  # completion was via the cap, not via confirm
+    # No mover was ever learnable on a frozen cursor (sanity: the backstop, not a
+    # spurious effect, is what completed bootstrap).
+    assert explorer.effects == {}
+
+
+def test_g315220_extended_bootstrap_is_deterministic(monkeypatch) -> None:
+    # The extended-bootstrap re-probe + relocation path (exercised by the ledge
+    # sim, unlike the open-grid determinism test) is fully deterministic: identical
+    # frame sequence -> identical action stream (all tie-breaks by lowest id /
+    # bootstrap-tick rotation, no randomness).
+    def one_run() -> list[int]:
+        sim = _StartLedgeSim()
+        monkeypatch.setattr(
+            fe, "detect_cursor_and_targets", lambda f: (sim.cursor, [(40, 30)])
+        )
+        explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+        return _run(explorer, sim, 40)
+
+    assert one_run() == one_run()
