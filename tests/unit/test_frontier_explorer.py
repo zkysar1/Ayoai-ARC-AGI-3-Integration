@@ -6,11 +6,13 @@ movement-class episode. It learns each move-action's cursor displacement online
 toward the least-visited frontier — systematic spatial coverage that replaced
 the g-315-213 v1 HandBuiltPolicy collapse (RESET/ACTION3/ACTION1 loop on ls20).
 
-The explorer reads the cursor only via detect_cursor_centroid(features); these
-tests monkeypatch that helper to return a controllable grid simulator's cursor,
-so the decision LOGIC is exercised in isolation from perception. The deferred-
-observe timing (an action's effect is measured on the FOLLOWING tick) is honored
-by applying each returned action to the simulator AFTER decide() each tick.
+The explorer reads the cursor + goal-candidate targets via
+detect_cursor_and_targets(features); these tests monkeypatch that helper to
+return a controllable grid simulator's cursor (and, for the g-315-217 steering
+tests, a target list), so the decision LOGIC is exercised in isolation from
+perception. The deferred-observe timing (an action's effect is measured on the
+FOLLOWING tick) is honored by applying each returned action to the simulator
+AFTER decide() each tick.
 """
 
 from __future__ import annotations
@@ -74,7 +76,7 @@ def test_bootstrap_issues_each_move_action_once(monkeypatch) -> None:
     # The first |moves| ticks issue each move-action exactly once (ascending id),
     # to LEARN each action's displacement before committing to a direction.
     sim = _GridSim(size=10, start=(5, 5))
-    monkeypatch.setattr(fe, "detect_cursor_centroid", lambda f: sim.cursor)
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", lambda f: (sim.cursor, []))
     explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
     first_four = _run(explorer, sim, 4)
     assert sorted(first_four) == _MOVES  # each move-action issued exactly once
@@ -86,7 +88,7 @@ def test_covers_open_grid_with_directional_commitment(monkeypatch) -> None:
     # cells (spatial coverage) and HOLDS a committed direction across ticks (runs),
     # the opposite of the blind 1-2-3-4 round-robin that oscillates in place.
     sim = _GridSim(size=20, start=(10, 10))
-    monkeypatch.setattr(fe, "detect_cursor_centroid", lambda f: sim.cursor)
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", lambda f: (sim.cursor, []))
     explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
     actions = _run(explorer, sim, 40)
     assert explorer.visited_count >= 6  # non-degenerate spatial coverage
@@ -100,7 +102,7 @@ def test_turns_when_committed_action_hits_a_wall(monkeypatch) -> None:
     # explorer must NOT get stuck issuing UP forever -- it learns UP is blocked and
     # turns toward open space, escaping the single start cell.
     sim = _GridSim(size=10, start=(0, 5))
-    monkeypatch.setattr(fe, "detect_cursor_centroid", lambda f: sim.cursor)
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", lambda f: (sim.cursor, []))
     explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
     _run(explorer, sim, 30)
     assert explorer.visited_count >= 3  # escaped the wall, covered ground
@@ -110,7 +112,7 @@ def test_turns_when_committed_action_hits_a_wall(monkeypatch) -> None:
 def test_no_cursor_degrades_to_legal_moves(monkeypatch) -> None:
     # When the cursor is undetectable every tick, decide() must still return a
     # legal move-action (never crash, never RESET/ACTION6) and record no coverage.
-    monkeypatch.setattr(fe, "detect_cursor_centroid", lambda f: None)
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", lambda f: (None, []))
     explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
     actions = [explorer.decide(_DUMMY).action for _ in range(12)]
     assert all(a in _MOVES for a in actions)
@@ -121,7 +123,7 @@ def test_never_issues_reset_or_action6(monkeypatch) -> None:
     # The explorer is constructed from move_actions_from (already excludes RESET=0
     # and ACTION6=6); it must never emit either, and every action carries no coords.
     sim = _GridSim(size=15, start=(7, 7))
-    monkeypatch.setattr(fe, "detect_cursor_centroid", lambda f: sim.cursor)
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", lambda f: (sim.cursor, []))
     explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
     for _ in range(50):
         decision = explorer.decide(_DUMMY)
@@ -135,7 +137,7 @@ def test_deterministic_same_simulation_same_actions(monkeypatch) -> None:
     # stream (no randomness; all tie-breaks are by lowest action id).
     def one_run() -> list[int]:
         sim = _GridSim(size=20, start=(10, 10))
-        monkeypatch.setattr(fe, "detect_cursor_centroid", lambda f: sim.cursor)
+        monkeypatch.setattr(fe, "detect_cursor_and_targets", lambda f: (sim.cursor, []))
         explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
         return _run(explorer, sim, 30)
 
@@ -156,9 +158,9 @@ def test_blind_cursor_rotates_instead_of_dead_committing(monkeypatch) -> None:
     def cursor_then_blind(_f):
         # Visible while we drive it for the first 6 ticks, then lost forever.
         state["t"] += 1
-        return sim.cursor if state["t"] <= 6 else None
+        return (sim.cursor, []) if state["t"] <= 6 else (None, [])
 
-    monkeypatch.setattr(fe, "detect_cursor_centroid", cursor_then_blind)
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", cursor_then_blind)
     explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
     actions: list[int] = []
     for _ in range(24):
@@ -182,7 +184,7 @@ def test_open_grid_no_single_action_dominates_g315215(monkeypatch) -> None:
     # (usage-balanced turn key + _COMMIT_RUN_CAP) must keep the distribution
     # non-degenerate (no single action > 50% of ticks) AND cover > 1 axis.
     sim = _GridSim(size=64, start=(32, 32))  # ls20-scale grid, cursor mid-field
-    monkeypatch.setattr(fe, "detect_cursor_centroid", lambda f: sim.cursor)
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", lambda f: (sim.cursor, []))
     explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
     actions = _run(explorer, sim, 60)
 
@@ -208,10 +210,96 @@ def test_commit_run_cap_bounds_single_action_run(monkeypatch) -> None:
     # a committed run reaches the cap. The +1 tolerance covers the one case where a
     # bootstrap tick is immediately adjacent to a committed run of the same action.
     sim = _GridSim(size=64, start=(32, 32))
-    monkeypatch.setattr(fe, "detect_cursor_centroid", lambda f: sim.cursor)
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", lambda f: (sim.cursor, []))
     explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
     actions = _run(explorer, sim, 50)
     max_run = max(len(list(g)) for _, g in groupby(actions))
     assert max_run <= fe._COMMIT_RUN_CAP + 1, (
         f"run {max_run} exceeded cap {fe._COMMIT_RUN_CAP} (+1): {actions}"
     )
+
+
+# ---------- g-315-217: goal-recognition + directed-steering bridge ---------- #
+
+
+def test_detects_target_locks_and_steers_to_it(monkeypatch) -> None:
+    # The bridge: with a stable target present, the explorer finishes bootstrap
+    # (learns effects), LOCKS the nearest target as a candidate, then STEERS the
+    # cursor to it via the learned displacement model -- the recognition +
+    # directed-steering the pure-coverage explorer (g-315-216) structurally
+    # lacked. Without it the cursor only sweeps and never reaches the goal cell.
+    sim = _GridSim(size=20, start=(10, 10))
+    target = (10, 16)  # 6 cells East; reachable by ACTION4 (0, +1)
+    monkeypatch.setattr(
+        fe, "detect_cursor_and_targets", lambda f: (sim.cursor, [target])
+    )
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    reached = False
+    actions: list[int] = []
+    for _ in range(40):
+        a = explorer.decide(_DUMMY).action
+        actions.append(a)
+        sim.apply(a)
+        if (sim.r, sim.c) == target:
+            reached = True
+            break
+    assert reached, f"cursor never reached target {target}; ended at {(sim.r, sim.c)}"
+    assert all(a in _MOVES for a in actions)  # steering still emits only moves
+    # The candidate was actually locked at some point (not reached by coverage
+    # luck): once reached it is cleared, so we assert it engaged steering by the
+    # action stream being dominated by the East mover after bootstrap.
+    assert actions.count(4) >= 4, f"did not steer East toward target: {actions}"
+
+
+def test_no_targets_stays_pure_coverage(monkeypatch) -> None:
+    # With target_cells empty (the common untrusted case until a goal is found),
+    # the explorer NEVER locks a candidate and behaves exactly as the
+    # pure-coverage explorer -- the strict-superset guarantee for g-315-217.
+    sim = _GridSim(size=20, start=(10, 10))
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", lambda f: (sim.cursor, []))
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    _run(explorer, sim, 30)
+    assert explorer.candidate is None  # never entered steering mode
+    assert explorer.visited_count >= 6  # coverage behavior unchanged
+
+
+def test_walled_target_stall_reengages_coverage(monkeypatch) -> None:
+    # rb-1690 mitigation: greedy 1-step steering cannot route around a wall. When
+    # the only distance-reducing move is permanently walled, the explorer must
+    # STALL steering and re-engage coverage (keep moving, never dead-loop or
+    # crash), NOT hammer the wall forever. Sim: the cursor is COLUMN-LOCKED (all
+    # horizontal moves are no-ops); the target sits to the East, so the lone
+    # distance-reducer (ACTION4) is always a wall no-op -> stall -> coverage.
+    class _ColumnLockedSim:
+        def __init__(self) -> None:
+            self.r, self.c = 5, 0
+
+        @property
+        def cursor(self) -> tuple[float, float]:
+            return (float(self.r), float(self.c))
+
+        def apply(self, action: int) -> None:
+            d = _CARDINAL.get(action)
+            if d is None:
+                return
+            nr = self.r + d[0]
+            if 0 <= nr < 10:
+                self.r = nr  # vertical moves work; the column stays LOCKED at 0
+
+    sim = _ColumnLockedSim()
+    target = (5, 5)  # East of the column-locked cursor -> ACTION4 never helps
+    monkeypatch.setattr(
+        fe, "detect_cursor_and_targets", lambda f: (sim.cursor, [target])
+    )
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    actions: list[int] = []
+    for _ in range(30):
+        a = explorer.decide(_DUMMY).action
+        actions.append(a)
+        sim.apply(a)
+    assert all(a in _MOVES for a in actions)  # legal moves only, no crash
+    # Coverage kept the cursor moving along the reachable (row) axis rather than
+    # dead-stepping the walled column: multiple distinct rows visited.
+    assert explorer.visited_count >= 2, f"dead-stuck at the wall: {actions}"
+    # After the stall cap the candidate is abandoned (coverage re-engaged).
+    assert explorer.candidate is None, "candidate not abandoned after steer stall"

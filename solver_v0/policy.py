@@ -1558,6 +1558,28 @@ def detect_cursor_centroid(features: FrameFeatures) -> Optional[tuple[float, flo
     return cursor
 
 
+def detect_cursor_and_targets(
+    features: FrameFeatures,
+) -> tuple[Optional[tuple[float, float]], list[tuple[int, int]]]:
+    """Public cursor + target-candidate detector (g-315-217).
+
+    Returns ``(cursor_centroid, target_cells)`` — the SAME value-agnostic
+    detection ``detect_cursor_centroid`` and Rule 4.6 steering already use, but
+    exposing the ``target_cells`` (stable rare non-cursor destinations) the
+    cursor-only wrapper discards. The untrusted ``FrontierCoverageExplorer``
+    consumes the targets to recognize a goal-candidate cell and switch from
+    spatial coverage to directed steering — the bridge that lets the coverage
+    explorer DISCOVER and approach a goal, not just sweep (g-315-216 finding:
+    the discovery/interaction half of the untrusted route was unbuilt).
+
+    Single source of truth (communication-clarity rule 5): delegates to the
+    same ``HandBuiltPolicy._detect_cursor_and_targets`` staticmethod, so the
+    explorer's cursor/target definitions never drift from the trusted route's.
+    ``target_cells`` is ``[]`` on a degenerate palette or when no stable rare
+    destination qualifies — the explorer then stays in pure coverage."""
+    return HandBuiltPolicy._detect_cursor_and_targets(features)
+
+
 def invalid_action_rate(actions: List[int], available: List[int]) -> float:
     """Helper exposed for sim/simulation: given an issued-action sequence
     and the env's available_actions, return the fraction that were NOT

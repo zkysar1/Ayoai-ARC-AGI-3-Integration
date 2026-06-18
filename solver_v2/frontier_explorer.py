@@ -52,7 +52,7 @@ from __future__ import annotations
 from typing import Optional
 
 from solver_v0.perception import FrameFeatures
-from solver_v0.policy import detect_cursor_centroid
+from solver_v0.policy import DIRECTED_MIN_IMPROVEMENT, detect_cursor_and_targets
 from solver_v2.calibration import NOISE_FLOOR_CELLS
 from solver_v2.executor import ExecutorDecision
 
@@ -81,6 +81,20 @@ _BLIND_CAP: int = 2
 # explorer sweeps ONE axis (66/81 ACTION2 on re-run #4) and never discovers an
 # off-axis goal_cell: coverage-EXISTENCE without coverage-QUALITY (g-315-215).
 _COMMIT_RUN_CAP: int = 8
+
+# A detected target must be SEEN this many decide() ticks (post-bootstrap, with
+# an effect model present) before the explorer LOCKS it as the candidate goal
+# and switches from coverage to directed steering (g-315-217). Conservative: a
+# one-tick rare-cell sighting can be perception noise; requiring persistence
+# avoids derailing systematic coverage on a transient flicker.
+_CANDIDATE_LOCK_TICKS: int = 2
+
+# Consecutive steering ticks with NO distance-reducing learned mover tolerated
+# before the locked candidate is abandoned and coverage re-engages. This is the
+# rb-1690 mitigation: greedy 1-step steering cannot route around an obstacle /
+# maze wall; when greedy stalls, the explorer's systematic coverage IS the
+# route-around (it finds a fresh path, then re-detects and re-steers).
+_STEER_STALL_CAP: int = 4
 
 
 class FrontierCoverageExplorer:
@@ -124,6 +138,24 @@ class FrontierCoverageExplorer:
         # Consecutive ticks the CURRENT committed action has been ridden; a
         # diversity-turn is forced once this reaches _COMMIT_RUN_CAP (decide()).
         self._commit_run: int = 0
+        # --- goal-recognition + directed-steering bridge (g-315-217) ---
+        # The locked candidate goal cell (row, col), or None in pure-coverage
+        # mode. Set once a detected target persists (stability gate); cleared on
+        # arrival, candidate-vanish, or a steer stall (-> coverage re-engages).
+        self._candidate: Optional[tuple[int, int]] = None
+        # Per-target-cell consecutive-sighting tally (the stability gate input).
+        self._target_seen: dict[tuple[int, int], int] = {}
+        # Consecutive steering ticks with no NET progress; at _STEER_STALL_CAP
+        # the candidate is abandoned + exhausted (rb-1690 route-around).
+        self._steer_stall: int = 0
+        # Best (minimum) cursor->candidate Manhattan distance achieved since the
+        # lock; a tick that does not BEAT it is no-progress, so steering that
+        # merely oscillates around a walled target stalls instead of looping
+        # forever (g-315-217). None until the first steering tick after a lock.
+        self._steer_best_dist: Optional[int] = None
+        # Targets abandoned after a steer stall — never re-locked this episode
+        # (else an unreachable target re-locks every coverage tick, a livelock).
+        self._exhausted_targets: set[tuple[int, int]] = set()
 
     # ---------- inspection (tests / provenance) ---------- #
 
@@ -147,6 +179,11 @@ class FrontierCoverageExplorer:
         """Copy of the per-action issue tally this episode (coverage diversity)."""
         return dict(self._action_counts)
 
+    @property
+    def candidate(self) -> Optional[tuple[int, int]]:
+        """The locked candidate goal cell being steered toward (None = coverage)."""
+        return self._candidate
+
     # ---------- hot path ---------- #
 
     def decide(self, features: FrameFeatures) -> ExecutorDecision:
@@ -157,7 +194,7 @@ class FrontierCoverageExplorer:
         record): falls through to a deterministic rotation that still differs from
         the blind round-robin because a committed direction is held across ticks.
         """
-        cursor = detect_cursor_centroid(features)
+        cursor, targets = detect_cursor_and_targets(features)
         cell: Optional[tuple[int, int]] = (
             (int(round(cursor[0])), int(round(cursor[1])))
             if cursor is not None
@@ -191,6 +228,107 @@ class FrontierCoverageExplorer:
             self._blind_streak += 1
         else:
             self._blind_streak = 0
+
+        # ---- g-315-217: goal-recognition + directed-steering bridge ----
+        # Wire the proven trusted-route target detection (target_cells) + greedy
+        # steering core (DIRECTED_MIN_IMPROVEMENT) into the UNTRUSTED coverage
+        # explorer so it can DISCOVER a goal-candidate cell and approach it,
+        # not only sweep (g-315-216 finding: the untrusted route's
+        # discovery/interaction half was unbuilt). Class-agnostic (palette
+        # rarity + learned displacement, no env coords) -> generalizes across
+        # movement classes. guard-787-safe (a SEPARATE component, not a
+        # HandBuiltPolicy steering-target widening); guard-786-safe (greedy +
+        # coverage fallback, NOT the seeded BFS planner).
+        #
+        # Stability gate: tally target sightings ONLY once bootstrap is done and
+        # an effect model exists -- locking before there is a usable displacement
+        # model would strand the candidate with no way to steer toward it.
+        target_set = {(int(t[0]), int(t[1])) for t in targets}
+        if not self._untried and self._effects:
+            for t in target_set:
+                self._target_seen[t] = self._target_seen.get(t, 0) + 1
+            for t in list(self._target_seen):
+                if t not in target_set:  # vanished -> drop its sighting tally
+                    del self._target_seen[t]
+
+        # Lock the nearest STABLE, NON-EXHAUSTED target as the candidate
+        # (coverage -> steering). A target abandoned by a prior steer stall stays
+        # in _exhausted_targets and is never re-locked this episode, else an
+        # unreachable goal cell re-locks every coverage tick (a livelock).
+        if self._candidate is None and cell is not None:
+            stable = [
+                t
+                for t, n in self._target_seen.items()
+                if n >= _CANDIDATE_LOCK_TICKS and t not in self._exhausted_targets
+            ]
+            if stable:
+                self._candidate = min(
+                    stable,
+                    key=lambda t: (abs(cell[0] - t[0]) + abs(cell[1] - t[1]), t),
+                )
+                self._steer_stall = 0
+                # Fresh candidate -> fresh net-progress baseline (the first
+                # steering tick below seeds _steer_best_dist from cur_dist).
+                self._steer_best_dist = None
+
+        # Steering mode: navigate toward the locked candidate via the learned
+        # effect model. Arrival or candidate-vanish re-engages coverage; a steer
+        # stall (no distance-reducing mover) re-engages coverage too (rb-1690).
+        if self._candidate is not None:
+            if cell is not None and cell == self._candidate:
+                # Reached it. If arrival scored, the episode ends (WIN) outside
+                # the explorer; else coverage seeks the next candidate (or
+                # surfaces the interaction gap -- the next frontier move).
+                self._target_seen.pop(self._candidate, None)
+                self._candidate = None
+                self._steer_best_dist = None
+            elif (
+                self._candidate not in target_set
+                and self._target_seen.get(self._candidate, 0) == 0
+            ):
+                self._candidate = None  # candidate vanished from detection
+                self._steer_best_dist = None
+            elif cell is not None:
+                # Net-progress stall (g-315-217 oscillation fix): only a STRICTLY
+                # better cursor->candidate Manhattan distance than any achieved
+                # since the lock resets the stall. A cursor that merely oscillates
+                # around a walled target never beats its best, so the stall accrues
+                # and the candidate is abandoned + exhausted -- instead of the
+                # per-tick reset that let row-steps around a column-locked target
+                # re-arm the stall forever (the re-lock livelock). Owning the stall
+                # HERE (not in _steer) keeps _steer a pure greedy function and makes
+                # the stall a function of NET progress in one place.
+                cur_dist = abs(cell[0] - self._candidate[0]) + abs(
+                    cell[1] - self._candidate[1]
+                )
+                if self._steer_best_dist is None or cur_dist < self._steer_best_dist:
+                    self._steer_best_dist = cur_dist
+                    self._steer_stall = 0
+                else:
+                    self._steer_stall += 1
+                    if self._steer_stall >= _STEER_STALL_CAP:
+                        # Greedy cannot route around the obstacle (rb-1690);
+                        # abandon + exhaust this candidate so coverage re-engages
+                        # and finds a fresh path (the systematic-coverage
+                        # route-around), and the dead target never re-locks.
+                        self._exhausted_targets.add(self._candidate)
+                        self._candidate = None
+                        self._steer_best_dist = None
+                        self._steer_stall = 0
+                # Steer only if the candidate survived the stall check this tick.
+                if self._candidate is not None:
+                    steer = self._steer(cell)
+                    if steer is not None:
+                        self._action_counts[steer] = (
+                            self._action_counts.get(steer, 0) + 1
+                        )
+                        self._prev_action = steer
+                        self._prev_cursor = cursor
+                        return ExecutorDecision(action=steer, x=None, y=None)
+                    # steer None -> no distance-reducing learned mover this tick;
+                    # fall through to coverage (rb-1690 route-around).
+            # cell is None (blind) with a candidate still locked -> fall through
+            # to coverage, whose blind-streak recovery owns that case.
 
         # Commit maintenance: a blocked committed action, over-revisiting the
         # current cell, or going blind past the tolerance window each forces the
@@ -227,6 +365,45 @@ class FrontierCoverageExplorer:
         self._prev_action = action
         self._prev_cursor = cursor
         return ExecutorDecision(action=action, x=None, y=None)
+
+    def _steer(self, cell: Optional[tuple[int, int]]) -> Optional[int]:
+        """Greedy directed step toward the locked candidate goal cell (g-315-217).
+
+        Returns the learned mover whose displacement most reduces the
+        cursor->candidate Manhattan distance by at least DIRECTED_MIN_IMPROVEMENT
+        (ties -> lowest action id, for determinism), or None when no learned
+        mover makes progress -- a cold start (no effect model), a wall, or a maze
+        layout greedy cannot route around. Mirrors the proven greedy core of
+        HandBuiltPolicy._directed_target_action (g-315-132) on the explorer's OWN
+        per-episode _effects model (guard-787: a separate component, never a
+        HandBuiltPolicy widening).
+
+        The net-progress stall accounting and candidate abandonment live in the
+        caller (decide()'s steering branch), NOT here: a per-tick stall reset on
+        any momentary distance reduction let a cursor oscillating around a walled
+        target re-arm the stall forever and re-lock the dead candidate every
+        coverage tick (the g-315-217 livelock). Keeping _steer pure makes the
+        stall a function of NET progress since the lock, owned in one place.
+        """
+        if cell is None or self._candidate is None or not self._effects:
+            return None
+        cur_dist = abs(cell[0] - self._candidate[0]) + abs(cell[1] - self._candidate[1])
+        # A candidate qualifies only if its projected Manhattan distance is at
+        # least DIRECTED_MIN_IMPROVEMENT below the current distance.
+        qualify = cur_dist - DIRECTED_MIN_IMPROVEMENT
+        best_action: Optional[int] = None
+        best_dist: Optional[float] = None
+        for a in self._moves:  # ascending -> lowest id wins ties (strict <)
+            eff = self._effects.get(a)
+            if eff is None:
+                continue
+            d = abs(cell[0] + eff[0] - self._candidate[0]) + abs(
+                cell[1] + eff[1] - self._candidate[1]
+            )
+            if d <= qualify and (best_dist is None or d < best_dist):
+                best_action = a
+                best_dist = d
+        return best_action
 
     def _choose(
         self, cell: Optional[tuple[int, int]], exclude: Optional[int] = None
