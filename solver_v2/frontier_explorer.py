@@ -72,6 +72,16 @@ _REVISIT_CAP: int = 3
 # before forcing the rotation recovery in _choose's fallback.
 _BLIND_CAP: int = 2
 
+# Maximum consecutive ticks the explorer rides a SINGLE committed action before a
+# diversity-turn is forced -- even while that action is still nominally "moving"
+# through fresh cells. Without this bound an action whose forward projection keeps
+# landing on never-visited cells (a long open corridor, or -- the g-315-214/re-run
+# #4 live ls20 collapse, recording 6db68e28 -- a wall-direction whose phantom
+# off-grid projection reads visit-count 0) is re-selected indefinitely, so the
+# explorer sweeps ONE axis (66/81 ACTION2 on re-run #4) and never discovers an
+# off-axis goal_cell: coverage-EXISTENCE without coverage-QUALITY (g-315-215).
+_COMMIT_RUN_CAP: int = 8
+
 
 class FrontierCoverageExplorer:
     """Stateful per-episode frontier-coverage decider (untrusted movement route).
@@ -106,6 +116,14 @@ class FrontierCoverageExplorer:
         self._rr_index: int = 0
         # Consecutive ticks with no detectable cursor (reset on any sighting).
         self._blind_streak: int = 0
+        # Total times each action has been issued this episode. The frontier-turn
+        # picks the LEAST-used mover FIRST (g-315-215 coverage-diversity), so no
+        # single direction can dominate the distribution the way ACTION2 did
+        # (66/81) on the re-run #4 ls20 live litmus.
+        self._action_counts: dict[int, int] = {}
+        # Consecutive ticks the CURRENT committed action has been ridden; a
+        # diversity-turn is forced once this reaches _COMMIT_RUN_CAP (decide()).
+        self._commit_run: int = 0
 
     # ---------- inspection (tests / provenance) ---------- #
 
@@ -123,6 +141,11 @@ class FrontierCoverageExplorer:
     def committed(self) -> Optional[int]:
         """The action currently committed to (None before the first turn)."""
         return self._committed
+
+    @property
+    def action_counts(self) -> dict[int, int]:
+        """Copy of the per-action issue tally this episode (coverage diversity)."""
+        return dict(self._action_counts)
 
     # ---------- hot path ---------- #
 
@@ -175,37 +198,74 @@ class FrontierCoverageExplorer:
         # dead-commit: with no cursor, _choose falls to the rotation fallback,
         # which cycles a DIFFERENT action each blind tick — jiggling to re-induce
         # movement and re-acquire the cursor instead of dead-repeating one action.
+        # Record WHICH action a forced turn-off cleared, so the turn below can
+        # EXCLUDE it and pick a genuinely different axis. Without this, an action
+        # whose forward projection stays freshest (the open-corridor case) is
+        # immediately re-committed after the run-cap fires, producing a 2x-cap
+        # single-axis run (g-315-215 follow-up: 16x ACTION4 observed in test).
+        cleared_action: Optional[int] = None
         if committed_blocked:
+            cleared_action = self._committed
             self._committed = None
         elif cell is not None and self._visited.get(cell, 0) > _REVISIT_CAP:
+            cleared_action = self._committed
             self._committed = None
         elif self._blind_streak >= _BLIND_CAP:
+            cleared_action = self._committed
+            self._committed = None
+        elif self._committed is not None and self._commit_run >= _COMMIT_RUN_CAP:
+            # Diversity turn (g-315-215): the committed action is still moving
+            # through fresh cells, but it has held for the full run cap. Drop the
+            # commitment so _choose's usage-balanced frontier turn rotates the
+            # axis instead of riding one direction to the wall (66/81 collapse).
+            cleared_action = self._committed
             self._committed = None
 
-        action = self._choose(cell)
+        action = self._choose(cell, exclude=cleared_action)
 
+        self._action_counts[action] = self._action_counts.get(action, 0) + 1
         self._prev_action = action
         self._prev_cursor = cursor
         return ExecutorDecision(action=action, x=None, y=None)
 
-    def _choose(self, cell: Optional[tuple[int, int]]) -> int:
-        """Bootstrap (learn) -> hold committed -> turn to least-visited frontier."""
+    def _choose(
+        self, cell: Optional[tuple[int, int]], exclude: Optional[int] = None
+    ) -> int:
+        """Bootstrap (learn) -> hold committed -> turn to least-visited frontier.
+
+        `exclude` is the action a forced turn-off just cleared; the frontier turn
+        skips it so the explorer changes axis instead of immediately re-committing
+        the same direction (g-315-215 anti-lock). When excluding leaves no known
+        mover, it falls through to the deterministic rotation fallback.
+        """
         # 1. Bootstrap: issue each move-action once to learn its effect. Do NOT
         #    commit yet -- bootstrap is pure observation; the first commit is the
         #    frontier-turn below, made once effects are known.
         if self._untried:
+            self._commit_run = 0
             return self._untried.pop(0)
 
         # 2. Committed traversal: keep going while the committed action is a known
-        #    mover and was not just cleared (wall / over-revisit) above.
+        #    mover and was not just cleared (wall / over-revisit / run-cap) above.
         if self._committed is not None and self._committed in self._effects:
+            self._commit_run += 1
             return self._committed
 
-        # 3. Turn to the least-visited frontier among known movers.
+        # 3. Turn to the least-USED known mover whose projection is least-visited.
+        #    Usage is the PRIMARY key (g-315-215): the prior least-visited-only key
+        #    (visited[proj], a) re-picked the same forward direction every turn --
+        #    its projection (including the phantom off-grid cell at a wall) always
+        #    read visit-count 0 -- locking the explorer onto ACTION2 (66/81 on
+        #    re-run #4). Ranking least-used FIRST keeps the action distribution
+        #    balanced (no single action can dominate -> coverage spans every
+        #    learned axis); least-visited then steers WITHIN the least-used movers
+        #    toward fresh ground; low id breaks ties (determinism).
         if cell is not None and self._effects:
             best_action: Optional[int] = None
-            best_key: Optional[tuple[int, int]] = None
+            best_key: Optional[tuple[int, int, int]] = None
             for a in self._moves:
+                if a == exclude:
+                    continue  # don't immediately re-commit the just-cleared axis
                 eff = self._effects.get(a)
                 if eff is None:
                     continue
@@ -213,12 +273,17 @@ class FrontierCoverageExplorer:
                     int(round(cell[0] + eff[0])),
                     int(round(cell[1] + eff[1])),
                 )
-                key = (self._visited.get(proj, 0), a)  # least-visited, then low id
+                key = (
+                    self._action_counts.get(a, 0),  # least-used mover first
+                    self._visited.get(proj, 0),      # then least-visited frontier
+                    a,                                # then low id (determinism)
+                )
                 if best_key is None or key < best_key:
                     best_key = key
                     best_action = a
             if best_action is not None:
                 self._committed = best_action
+                self._commit_run = 1
                 return best_action
 
         # 4. Fallback: no cursor and/or no learned movers. Hold a committed
@@ -227,4 +292,5 @@ class FrontierCoverageExplorer:
         action = self._moves[self._rr_index % len(self._moves)]
         self._rr_index += 1
         self._committed = action
+        self._commit_run = 1
         return action

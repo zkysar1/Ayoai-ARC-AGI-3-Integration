@@ -15,6 +15,7 @@ by applying each returned action to the simulator AFTER decide() each tick.
 
 from __future__ import annotations
 
+from collections import Counter
 from itertools import groupby
 from typing import Optional
 
@@ -170,3 +171,47 @@ def test_blind_cursor_rotates_instead_of_dead_committing(monkeypatch) -> None:
     # would leave a single repeated action across the whole tail.
     blind_tail = actions[8:]
     assert len(set(blind_tail)) >= 2, f"dead-commit while blind: {blind_tail}"
+
+
+def test_open_grid_no_single_action_dominates_g315215(monkeypatch) -> None:
+    # Regression for g-315-215 (re-run #4 live ls20: 66/81 = 81% ACTION2). On a
+    # LARGE open grid the committed direction keeps finding fresh cells, so the
+    # prior least-visited-only turn key re-picked the same forward action every
+    # turn (and at a wall the phantom off-grid projection read visit-count 0),
+    # locking the explorer onto ONE axis. The coverage-diversity fix
+    # (usage-balanced turn key + _COMMIT_RUN_CAP) must keep the distribution
+    # non-degenerate (no single action > 50% of ticks) AND cover > 1 axis.
+    sim = _GridSim(size=64, start=(32, 32))  # ls20-scale grid, cursor mid-field
+    monkeypatch.setattr(fe, "detect_cursor_centroid", lambda f: sim.cursor)
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    actions = _run(explorer, sim, 60)
+
+    # AC #1: no single action exceeds 50% of ticks (the 66/81 collapse signature).
+    counts = Counter(actions)
+    _top_action, top_n = counts.most_common(1)[0]
+    assert top_n <= len(actions) // 2, f"single-axis collapse: {dict(counts)}"
+
+    # AC #2: coverage spans > 1 movement axis -- visited cells vary in BOTH row
+    # and column (a 1D sweep would vary only one of them).
+    rows = {cell[0] for cell in explorer._visited}
+    cols = {cell[1] for cell in explorer._visited}
+    assert len(rows) >= 2 and len(cols) >= 2, f"single-axis coverage: rows={rows} cols={cols}"
+
+    # Every move-action was issued at least once (no starved axis).
+    ac = explorer.action_counts
+    assert all(ac.get(m, 0) >= 1 for m in _MOVES), f"starved action: {ac}"
+
+
+def test_commit_run_cap_bounds_single_action_run(monkeypatch) -> None:
+    # Directly exercises _COMMIT_RUN_CAP: on an unobstructed straight corridor the
+    # explorer must NOT ride one action indefinitely -- a diversity-turn fires once
+    # a committed run reaches the cap. The +1 tolerance covers the one case where a
+    # bootstrap tick is immediately adjacent to a committed run of the same action.
+    sim = _GridSim(size=64, start=(32, 32))
+    monkeypatch.setattr(fe, "detect_cursor_centroid", lambda f: sim.cursor)
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    actions = _run(explorer, sim, 50)
+    max_run = max(len(list(g)) for _, g in groupby(actions))
+    assert max_run <= fe._COMMIT_RUN_CAP + 1, (
+        f"run {max_run} exceeded cap {fe._COMMIT_RUN_CAP} (+1): {actions}"
+    )
