@@ -22,7 +22,11 @@ from typing import Optional
 
 import solver_v2.frontier_explorer as fe
 from solver_v0.perception import FrameFeatures
-from solver_v2.dock_classifier import DockClassifier
+from solver_v2.dock_classifier import (
+    _LATCH_DECLASSIFY_TICKS,
+    _STATIC_DRIFT_RUN,
+    DockClassifier,
+)
 from solver_v2.frontier_explorer import FrontierCoverageExplorer
 
 _MOVES = [1, 2, 3, 4]
@@ -411,6 +415,108 @@ def test_dock_centroid_reads_latched_value_current_centroid() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Flicker-robust staticness + sticky-latch unit tests (g-315-234)             #
+#                                                                             #
+# g-315-233's value-latch was correct but only as stable as its per-frame     #
+# eligibility test: on ls20-9607627b tick 13 a ONE-FRAME flicker (76/439 lock #
+# cells flashed value-0, reverting at t14) shifted v5's centroid 5.3 cells,    #
+# permanently poisoning the hist[0]-baseline staticness -> latch declassified  #
+# -> re-latched to the far decoy v8 -> attractor flip, no verified dock        #
+# (rb-2062, guard-822). The fix: (1) flicker-robust staticness (median         #
+# baseline + N-consecutive-drift, not a fixed-frame compare); (2) sticky-latch #
+# (sustained ineligibility before declassify; nearest-not-farthest re-select). #
+# --------------------------------------------------------------------------- #
+
+def test_static_survives_single_frame_flicker() -> None:
+    # THE g-315-234 / rb-2062 unit reproduction. A dock latched static for many
+    # ticks suffers ONE flicker frame (centroid jumps >> _STATIC_EPS) then
+    # reverts. The flicker-robust staticness must NOT declassify it; the latch
+    # must hold. The pre-fix hist[0]-baseline rule would have flipped it forever.
+    dc = DockClassifier()
+    dock_fixed = _blob(2, 2, 3, 4)    # value 5, centroid (3, 3.5)
+    dock_flicker = _blob(2, 8, 3, 4)  # SAME value 5, centroid (3, 9.5): a 6-col jump
+    for t in range(6):  # solid static latch
+        cursor = _blob(15, 2 + t, 2, 2)
+        dc.update(_grid_features(24, {7: cursor, 5: dock_fixed}, terrain2_cells=40), _centroid(cursor))
+    assert dc.dock_value() == 5
+    assert dc._is_static(5) is True
+    # One flicker frame: centroid jumps 6 cols (>> _STATIC_EPS).
+    dc.update(_grid_features(24, {7: _blob(15, 8, 2, 2), 5: dock_flicker}, terrain2_cells=40), (15.5, 8.5))
+    assert dc._is_static(5) is True   # transient frame must NOT poison staticness
+    assert dc.dock_value() == 5       # latch held -- no flip
+    # Revert: dock back home, still static + latched.
+    dc.update(_grid_features(24, {7: _blob(15, 9, 2, 2), 5: dock_fixed}, terrain2_cells=40), (15.5, 9.5))
+    assert dc._is_static(5) is True
+    assert dc.dock_value() == 5
+
+
+def test_static_declassifies_on_sustained_drift() -> None:
+    # Counterpart to the flicker test: flicker-robustness must NOT make a
+    # genuinely-mobile group look static. A SUSTAINED move (>= _STATIC_DRIFT_RUN
+    # consecutive drifting frames) must still declassify.
+    assert _STATIC_DRIFT_RUN >= 2  # the test below assumes >=2 consecutive frames declassify
+    dc = DockClassifier()
+    for t in range(5):  # fixed -> static
+        cursor = _blob(15, 2 + t, 2, 2)
+        dc.update(_grid_features(24, {7: cursor, 5: _blob(2, 2, 3, 4)}, terrain2_cells=40), _centroid(cursor))
+    assert dc._is_static(5) is True
+    for k in range(1, 4):  # 3 consecutive drifting frames (a real move, +3 col/tick)
+        cursor = _blob(15, 6 + k, 2, 2)
+        dc.update(_grid_features(24, {7: cursor, 5: _blob(2, 2 + k * 3, 3, 4)}, terrain2_cells=40), _centroid(cursor))
+    assert dc._is_static(5) is False  # sustained drift -> non-static (not over-lenient)
+
+
+def test_sticky_latch_survives_transient_ineligibility() -> None:
+    # g-315-234 sticky-latch: the latched dock momentarily fails eligibility (cell
+    # count dips below _DOCK_MIN_CELLS for _LATCH_DECLASSIFY_TICKS - 1 ticks, e.g.
+    # a flicker occluding cells) then recovers. The latch must HOLD across the
+    # transient and NOT declassify to a present larger decoy.
+    dc = DockClassifier()
+    dock_full = _blob(2, 2, 3, 4)   # value 5, 12 cells (>= floor)
+    dock_dip = _blob(2, 2, 1, 4)    # value 5, 4 cells (< _DOCK_MIN_CELLS): transient
+    decoy = _blob(15, 2, 5, 5)      # value 6, 25 cells: a larger static decoy
+    for t in range(5):  # latch D ALONE so the first latch is unambiguously D
+        cursor = _blob(10, 2 + t, 2, 2)
+        dc.update(_grid_features(24, {7: cursor, 5: dock_full}, terrain2_cells=40), _centroid(cursor))
+    assert dc.dock_value() == 5
+    for k in range(4):  # the larger decoy appears + warms to static; latch holds D
+        cursor = _blob(10, 7 + k, 2, 2)
+        dc.update(_grid_features(24, {7: cursor, 5: dock_full, 6: decoy}, terrain2_cells=40), _centroid(cursor))
+    assert dc.dock_value() == 5  # decoy now static + larger, but the latch held D
+    for k in range(_LATCH_DECLASSIFY_TICKS - 1):  # D dips below floor (transient); decoy eligible
+        cursor = _blob(10, 11 + k, 2, 2)
+        dc.update(_grid_features(24, {7: cursor, 5: dock_dip, 6: decoy}, terrain2_cells=40), _centroid(cursor))
+        assert dc.dock_value() == 5  # sticky-latch holds through EACH transient tick
+    # D recovers -> latch stays on D, never declassified to the present decoy.
+    dc.update(_grid_features(24, {7: _blob(10, 14, 2, 2), 5: dock_full, 6: decoy}, terrain2_cells=40), (10.5, 14.5))
+    assert dc.dock_value() == 5
+
+
+def test_reselect_prefers_nearest_not_farthest() -> None:
+    # g-315-234: on a forced re-select after SUSTAINED declassification, the latch
+    # picks the eligible static group NEAREST the last-known dock, NOT the largest
+    # (the g-315-233 failure re-latched to a far larger decoy). Here a NEAR-smaller
+    # and a FAR-larger static group both qualify; the latch must pick the near one.
+    dc = DockClassifier()
+    dock_d = _blob(3, 3, 3, 4)        # value 5, 12 cells, home centroid (4, 4.5)
+    near_static = _blob(6, 8, 3, 3)   # value 8, 9 cells, centroid (7, 9): NEAR, smaller
+    far_bigger = _blob(18, 16, 5, 5)  # value 6, 25 cells, centroid (20, 18): FAR, larger
+    for t in range(5):  # latch D ALONE so the first latch is unambiguously D
+        cursor = _blob(12, 2 + (t % 6), 2, 2)
+        dc.update(_grid_features(26, {7: cursor, 5: dock_d}, terrain2_cells=60), _centroid(cursor))
+    assert dc.dock_value() == 5
+    for k in range(3):  # near + far decoys appear (both static); latch holds D
+        cursor = _blob(12, 2 + (k % 6), 2, 2)
+        dc.update(_grid_features(26, {7: cursor, 5: dock_d, 8: near_static, 6: far_bigger}, terrain2_cells=60), _centroid(cursor))
+    assert dc.dock_value() == 5
+    for _k in range(_LATCH_DECLASSIFY_TICKS + 1):  # D DISAPPEARS -> sticky window -> declassify -> re-select
+        cursor = _blob(12, 2 + (_k % 6), 2, 2)
+        dc.update(_grid_features(26, {7: cursor, 8: near_static, 6: far_bigger}, terrain2_cells=60), _centroid(cursor))
+    # Old _best_static_dock would pick value 6 (25 > 9 cells). Nearest-reselect picks 8.
+    assert dc.dock_value() == 8
+
+
+# --------------------------------------------------------------------------- #
 # Explorer integration test                                                   #
 # --------------------------------------------------------------------------- #
 
@@ -581,3 +687,83 @@ def test_explorer_no_attractor_flip_with_late_larger_decoy() -> None:
 
     assert start_dist > 15  # carried piece started far from the FIRST dock
     assert best <= 4  # ...and the latch kept it converging there despite the decoy
+
+
+class _DockSimFlicker(_DockSim):
+    """_DockSim where the static dock suffers a ONE-FRAME centroid flicker at
+    `flicker_tick` -- a chunk of its cells momentarily vanish (shifting the
+    centroid > _STATIC_EPS) then revert next tick. This is the ls20-9607627b
+    tick-13 failure mode (rb-2062): the pre-g-315-234 hist[0]-baseline staticness
+    would treat that one frame as permanent non-staticness, declassify the dock
+    latch, and strand the carried piece. The flicker-robust staticness must
+    absorb the transient so the carried piece still docks.
+    """
+
+    def __init__(
+        self,
+        size: int,
+        start: tuple[int, int],
+        dock_top_left: tuple[int, int],
+        flicker_tick: int,
+    ) -> None:
+        super().__init__(size, start, dock_top_left)
+        self._dtl = dock_top_left
+        self.flicker_tick = flicker_tick
+        self.tick = 0
+
+    def features(self) -> FrameFeatures:
+        if self.tick == self.flicker_tick:
+            # One flicker frame: only the bottom half of the dock is visible
+            # (8 cells, still >= _DOCK_MIN_CELLS) so the count gate holds but the
+            # centroid jumps 2 rows; reverts on the next tick.
+            flick = _blob(self._dtl[0] + 2, self._dtl[1], 2, 4)  # 8 cells, shifted
+            return _grid_features(
+                self.size,
+                {7: self._cursor_cells(), 9: self._carried_cells(), 5: flick},
+                terrain2_cells=40,
+            )
+        return super().features()
+
+    def apply(self, action: int) -> None:
+        self.tick += 1
+        super().apply(action)
+
+
+def test_explorer_latch_survives_dock_flicker() -> None:
+    # g-315-234 integration: the dock flickers for ONE frame mid-convergence (the
+    # ls20 tick-13 reproduction). The flicker-robust staticness must keep the dock
+    # latched so the explorer still drives the carried piece home. A pre-fix
+    # hist[0]-baseline rule would poison staticness on the flicker frame, drop the
+    # latch (no other static group -> dock routing off), and strand the carried
+    # piece short of the dock.
+    sim = _DockSimFlicker(size=24, start=(18, 2), dock_top_left=(2, 2), flicker_tick=10)
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+
+    def _detect(_features):
+        return (sim.cursor_centroid, [])
+
+    import pytest
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", _detect)
+    try:
+        start_dist = abs(sim.carried_centroid[0] - sim.dock_centroid[0]) + abs(
+            sim.carried_centroid[1] - sim.dock_centroid[1]
+        )
+        best = start_dist
+        flicker_seen = False
+        for _ in range(140):
+            action = explorer.decide(sim.features()).action
+            if sim.tick == sim.flicker_tick:
+                flicker_seen = True
+            sim.apply(action)
+            d = abs(sim.carried_centroid[0] - sim.dock_centroid[0]) + abs(
+                sim.carried_centroid[1] - sim.dock_centroid[1]
+            )
+            best = min(best, d)
+    finally:
+        monkeypatch.undo()
+
+    assert flicker_seen  # the flicker frame was actually fed to the explorer
+    assert start_dist > 15  # carried piece started far from the dock
+    assert best <= 4  # ...and the latch survived the flicker -> carried piece docked
