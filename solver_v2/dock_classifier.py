@@ -105,6 +105,18 @@ class DockClassifier:
         # The palette value whose centroid is nearest the detected cursor (the
         # cursor's own cells) -- excluded from carried-piece candidates.
         self._cursor_value: Optional[int] = None
+        # g-315-233 dock-identity LATCH: once an eligible dock is first
+        # classified, its value is pinned here and KEPT across ticks until it
+        # DECLASSIFIES (disappears, shrinks below _DOCK_MIN_CELLS, or stops being
+        # static). g-315-227's live litmus saw the per-tick argmax-largest-static
+        # selection FLIP the attractor target at tick 13 (a far static group
+        # transiently won), so the controller chased the wrong dock and the
+        # carried piece never reached a verified dock (min approach 5.45 >
+        # _DOCK_ARRIVAL_CELLS=2). A closed-loop attractor controller needs a
+        # STABLE/LATCHED target -- this pins the dock identity to the first
+        # stable dock and rejects later larger static groups unless the latch
+        # declassifies. Naturally per-episode (one classifier instance/episode).
+        self._latched_dock_value: Optional[int] = None
 
     # ---------- per-tick update ---------- #
 
@@ -186,6 +198,11 @@ class DockClassifier:
         self._prev_cursor = cursor_centroid
         self._prev_centroid = dict(centroids)
 
+        # Resolve the dock-identity latch with this tick's refreshed counts +
+        # centroids (g-315-233). Done here in update() -- the single state-mutation
+        # point -- so dock_value()/dock_centroid() stay pure reads of the latch.
+        self._resolve_dock_latch()
+
     # ---------- classification queries ---------- #
 
     def _is_static(self, value: int) -> bool:
@@ -201,29 +218,72 @@ class DockClassifier:
                 return False
         return True
 
-    def dock_centroid(self) -> Optional[tuple[float, float]]:
-        """Centroid of the dock = the LARGEST static non-cursor value-group with
-        at least _DOCK_MIN_CELLS cells, or None when none qualifies yet.
+    def _eligible_dock(self, value: int) -> bool:
+        """True iff `value` currently qualifies as the dock: present this tick,
+        not the cursor, at least _DOCK_MIN_CELLS cells, and static. The
+        eligibility predicate the latch uses both to decide whether to KEEP the
+        latched dock and to filter candidates when (re-)latching."""
+        if value == self._cursor_value:
+            return False
+        cnt = self._cur_count.get(value)
+        if cnt is None or cnt < _DOCK_MIN_CELLS:
+            return False
+        return self._is_static(value)
 
-        Largest-static-structure is the value-agnostic dock signal: the ls20
+    def _best_static_dock(self) -> Optional[int]:
+        """The LARGEST eligible static value-group (tie-break: smaller value),
+        or None when none qualifies yet. Value-agnostic dock signal: the ls20
         lock (v5, ~439 cells) dominates the static point-markers (the target
         cross, a few cells per value) and the mobile carried piece (not static).
-        """
+        Used to pick the dock at FIRST latch and to RE-latch when the prior dock
+        declassifies. Identical selection to the pre-g-315-233 argmax, so the
+        first dock chosen is unchanged -- the latch only changes what happens on
+        LATER ticks."""
         best_value: Optional[int] = None
         best_count = -1
         for v, cnt in self._cur_count.items():
-            if v == self._cursor_value:
-                continue
-            if cnt < _DOCK_MIN_CELLS:
-                continue
-            if not self._is_static(v):
+            if not self._eligible_dock(v):
                 continue
             if cnt > best_count or (cnt == best_count and (best_value is None or v < best_value)):
                 best_count = cnt
                 best_value = v
-        if best_value is None:
+        return best_value
+
+    def _resolve_dock_latch(self) -> None:
+        """Update the dock-identity latch (called at the end of update()). Keep
+        the currently-latched dock as long as it stays eligible; (re-)latch to
+        the current best static group ONLY when the latch is empty or the latched
+        dock has DECLASSIFIED (disappeared from the frame, shrank below
+        _DOCK_MIN_CELLS, or stopped being static).
+
+        g-315-233 fix: g-315-227's per-tick argmax re-selection flipped the
+        attractor target at tick 13 (a far static group transiently became the
+        largest), so the carried piece never reached a verified dock (min
+        approach 5.45 > _DOCK_ARRIVAL_CELLS=2). Pinning the identity to the first
+        stable dock keeps the closed-loop attractor target stable; a genuinely
+        larger lock that appears LATER is rejected -- only declassification of
+        the latched dock re-opens selection."""
+        if self._latched_dock_value is not None and self._eligible_dock(
+            self._latched_dock_value
+        ):
+            return  # latch holds -- reject any later larger static group
+        self._latched_dock_value = self._best_static_dock()
+
+    def dock_value(self) -> Optional[int]:
+        """The currently LATCHED dock palette value (see _resolve_dock_latch),
+        or None when no dock has been classified yet. Inspection hook for the
+        explorer + tests."""
+        return self._latched_dock_value
+
+    def dock_centroid(self) -> Optional[tuple[float, float]]:
+        """Current centroid of the LATCHED dock value-group, or None when no
+        dock is latched. The latched VALUE is fixed across ticks (g-315-233) so
+        the closed-loop attractor target does not flip mid-episode; the returned
+        centroid still tracks the latched group's current position (a true static
+        dock drifts 0, within _STATIC_EPS)."""
+        if self._latched_dock_value is None:
             return None
-        return self._cur_centroid.get(best_value)
+        return self._cur_centroid.get(self._latched_dock_value)
 
     def carried_centroid(self) -> Optional[tuple[float, float]]:
         """Centroid of the carried piece = the non-cursor value-group with the
