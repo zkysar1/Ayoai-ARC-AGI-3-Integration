@@ -35,6 +35,7 @@ Offline-testable: no HTTP, no DNS, no sockets, no LLM. Pure in-process Python.
 from __future__ import annotations
 
 import logging
+import os
 from collections import deque
 from typing import Any, Callable, Optional
 
@@ -69,6 +70,7 @@ from solver_v2.episode import (
 from solver_v2.executor import DeterministicExecutor, ExecutorDecision
 from solver_v2.frontier_explorer import FrontierCoverageExplorer
 from solver_v2.seed_provider import DeterministicOracleSeedProvider, SeedProvider
+from solver_v2.state_graph import StateGraphExplorer
 from solver_v2.toggle_probe import ToggleProbe, cell_under_cursor, toggle_candidates
 from structs import FrameData, GameAction, GameState
 
@@ -129,6 +131,7 @@ class SolverV2StreamingAdapter:
         executor: DeterministicExecutor | None = None,
         policy_factory: Callable[[], HandBuiltPolicy] | None = None,
         history_depth: int = DEFAULT_HISTORY_DEPTH,
+        use_state_graph: bool = False,
     ) -> None:
         # streaming_url / api_key / session / http_timeout_s / retry_sleep
         # are accepted-and-ignored -- the adapter does no network I/O. Kept in
@@ -174,8 +177,18 @@ class SolverV2StreamingAdapter:
         # coverage; rb-1690-safe — not greedy). _exploring fixes the route at the
         # boundary; _explorer holds the current episode's instance (fresh per
         # episode, like _policy). Reset in _route_episode at every boundary.
-        self._explorer: Optional[FrontierCoverageExplorer] = None
+        self._explorer: Optional[FrontierCoverageExplorer | StateGraphExplorer] = None
         self._exploring: bool = False
+        # g-315-230: state-graph explorer toggle (DEFAULT OFF -> byte-identical to
+        # the g-315-214 FrontierCoverageExplorer route). When enabled (constructor
+        # kwarg OR env SOLVER_V2_STATE_GRAPH truthy), the untrusted movement route
+        # builds a StateGraphExplorer instead -- win-condition DISCOVERY via a
+        # masked-frame state graph (design/v2-state-graph-explorer.md). Reversible:
+        # flip OFF and the prior explorer is restored with zero other changes.
+        self._use_state_graph: bool = bool(use_state_graph) or (
+            os.environ.get("SOLVER_V2_STATE_GRAPH", "").strip().lower()
+            in ("1", "true", "yes", "on")
+        )
 
         # g-315-148 per-EPISODE calibration startup (Apply 2b). For a movement
         # episode, _route_episode() also builds a fresh CalibrationProbe and sets
@@ -454,7 +467,9 @@ class SolverV2StreamingAdapter:
             # branch never shadows the trusted steering or the click/unknown
             # DeterministicExecutor routes.
             decision = self._explorer.decide(features)
-            executor_name = "FrontierCoverageExplorer"
+            # g-315-230: reflect the actual explorer (FrontierCoverageExplorer or
+            # StateGraphExplorer) in provenance so recordings attribute correctly.
+            executor_name = type(self._explorer).__name__
         elif self._use_policy and self._policy is not None:
             if self._calibrating and self._probe is not None:
                 # CalibrationProbe startup (g-315-148, Apply 2b): drive the
@@ -801,10 +816,22 @@ class SolverV2StreamingAdapter:
             # per-episode state contract (visited map + effect model reset at the
             # boundary).
             self._exploring = True
-            self._explorer = FrontierCoverageExplorer(
-                move_actions_from(available_action_ids),
-                game_class=self._game_class,
-            )
+            if self._use_state_graph:
+                # g-315-230: win-condition DISCOVERY via a masked-frame state
+                # graph (Algorithm 1 + score-only reward + shortest-path replay).
+                # Holds a FrontierCoverageExplorer internally as the large-state-
+                # space curtailment fallback (design section 2.6). Same per-tick
+                # decide(features)->ExecutorDecision contract as the coverage
+                # explorer, so the choose_action dispatch is unchanged.
+                self._explorer = StateGraphExplorer(
+                    move_actions_from(available_action_ids),
+                    game_class=self._game_class,
+                )
+            else:
+                self._explorer = FrontierCoverageExplorer(
+                    move_actions_from(available_action_ids),
+                    game_class=self._game_class,
+                )
             # The explorer is NOT the HandBuiltPolicy route: clear _use_policy /
             # _policy so choose_action dispatches to the explorer branch. No
             # CalibrationProbe / axis_map (the explorer learns displacement online).
