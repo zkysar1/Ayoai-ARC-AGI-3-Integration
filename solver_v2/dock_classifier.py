@@ -410,16 +410,19 @@ class DockClassifier:
             return None
         return self._cur_centroid.get(self._latched_dock_value)
 
-    def carried_centroid(self) -> Optional[tuple[float, float]]:
-        """Centroid of the carried piece = the non-cursor value-group with the
-        most same-direction co-moves (>= _CARRIED_MIN_COMOVES) that out-number
-        its against-moves, or None when none qualifies yet.
+    def carried_value(self) -> Optional[int]:
+        """The palette VALUE of the carried piece = the non-cursor value-group
+        with the most same-direction co-moves (>= _CARRIED_MIN_COMOVES) that
+        out-number its against-moves, or None when none qualifies yet.
 
-        Co-movement with the cursor is the value-agnostic "carried/attached"
-        signal (ls20 v9's centroid tracks the cursor; g-315-225). A static dock
-        accrues no co-moves; an independently-moving HUD region accrues mixed
-        signs and is rejected by the comove > against gate.
-        """
+        This is the value-agnostic "carried/attached" signal (co-movement with
+        the cursor) at VALUE granularity. The CC-segmentation consumer
+        (cc_assembly.py, g-315-237) uses it to pick WHICH palette value's
+        connected-components are the movable pieces, then segments that value
+        into individual components (the loose piece nearest the cursor vs the
+        placed pieces) -- the spatial granularity carried_centroid() lacks
+        (carried_centroid averages ALL same-value components into one
+        physically-meaningless point; rb-2071 / guard-826)."""
         best_value: Optional[int] = None
         best_score = -1
         for v, cm in self._comove.items():
@@ -432,6 +435,26 @@ class DockClassifier:
             if cm > best_score or (cm == best_score and (best_value is None or v < best_value)):
                 best_score = cm
                 best_value = v
+        return best_value
+
+    def carried_centroid(self) -> Optional[tuple[float, float]]:
+        """Centroid of the carried piece = the non-cursor value-group with the
+        most same-direction co-moves (>= _CARRIED_MIN_COMOVES) that out-number
+        its against-moves, or None when none qualifies yet.
+
+        Co-movement with the cursor is the value-agnostic "carried/attached"
+        signal (ls20 v9's centroid tracks the cursor; g-315-225). A static dock
+        accrues no co-moves; an independently-moving HUD region accrues mixed
+        signs and is rejected by the comove > against gate.
+
+        NOTE (g-315-237): this is the VALUE-grouped centroid -- it averages every
+        same-value component into one point. g-315-235 proved that point is
+        physically meaningless when the value spans disjoint objects (ls20 v9 =
+        5 components). The CC-segmentation path (cc_assembly.py) supersedes this
+        for steering; carried_centroid()/dock routing remain as the additive
+        fallback for scenes the CC path cannot classify (single-component
+        carried value), preserving the existing dock tests."""
+        best_value = self.carried_value()
         if best_value is None:
             return None
         return self._cur_centroid.get(best_value)

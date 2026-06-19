@@ -55,6 +55,8 @@ from typing import Optional
 from solver_v0.perception import FrameFeatures
 from solver_v0.policy import DIRECTED_MIN_IMPROVEMENT, detect_cursor_and_targets
 from solver_v2.calibration import NOISE_FLOOR_CELLS, dominant_displacement
+from solver_v2.cc_assembly import plan_assembly
+from solver_v2.cc_segment import segment, terrain_values
 from solver_v2.dock_classifier import DockClassifier
 from solver_v2.executor import ExecutorDecision
 
@@ -257,6 +259,17 @@ class FrontierCoverageExplorer:
         # re-engages once the carried piece is repositioned closer.
         self._dock_stall: int = 0
         self._dock_best_dist: Optional[float] = None
+        # --- g-315-237: connected-component ASSEMBLY routing (PREEMPTS dock) ---
+        # g-315-235 proved the value-grouped dock/carried centroids are
+        # physically meaningless multi-object averages (ls20 v9 = 5 disjoint
+        # components, v5 = 4). The CC path segments the carried value into
+        # individual components and steers the LOOSE piece (nearest the cursor)
+        # to complete the PLACED same-value pattern (cc_assembly.plan_assembly).
+        # Dedicated stall tracker (mirrors _dock_stall) on the loose->placed
+        # Manhattan distance, so a maze wall between them routes around via
+        # coverage (rb-1690) instead of pinning the cursor.
+        self._cc_stall: int = 0
+        self._cc_best_dist: Optional[float] = None
         # --- g-315-219: planning + reachability + mode-vote axis model ---
         # Per-action ACCUMULATED moving-displacement samples. _effects[a] is now
         # the MAJORITY-vote (modal) displacement over this list (part 3), robust
@@ -389,7 +402,79 @@ class FrontierCoverageExplorer:
         # (guard-786/787-safe: separate component, greedy + coverage fallback kept).
         self._dock.update(features, cursor)
         if self._bootstrap_complete() and self._effects and cell is not None:
-            dock_target = self._dock.dock_cursor_target(cursor)
+            # ---- g-315-237: connected-component ASSEMBLY routing (PREEMPTS dock) ----
+            # g-315-235 proved the value-grouped carried_centroid()/dock_centroid()
+            # the dock path steers toward are physically meaningless multi-object
+            # averages (ls20 v9 = 5 disjoint components, v5 = 4). Segment the
+            # carried VALUE (the co-moving value, from the proven DockClassifier
+            # signal) into individual connected components and steer the LOOSE
+            # piece (the carried-value component NEAREST the cursor -- the one
+            # being pushed) to COMPLETE the PLACED same-value pattern (the nearest
+            # other carried-value component). When the carried value has < 2
+            # components (no separate pattern to complete) plan_assembly returns
+            # None, cc_owns stays False, and control falls through to the dock-
+            # routing fallback below -- purely ADDITIVE (rb-2071 / guard-826).
+            cc_owns = False
+            cc_carried_value = self._dock.carried_value()
+            if cc_carried_value is not None:
+                _terr = terrain_values(features.values)
+                _comps = segment(
+                    features.values,
+                    features.width,
+                    features.height,
+                    ignore_values=_terr,
+                )
+                cc_plan = plan_assembly(_comps, cc_carried_value, cursor)
+                if cc_plan is not None:
+                    # A loose piece + a separate same-value pattern exist: CC
+                    # owns this tick (dock_target is forced None below so the
+                    # value-centroid phantom path cannot also fire).
+                    cc_owns = True
+                    cc_target = cc_plan.cursor_target(cursor)
+                    if cc_target is not None:
+                        self._candidate = None  # drop stale palette-rare cross
+                        cc_dist = cc_plan.distance
+                        cc_steer_ok = True
+                        if cc_dist <= _DOCK_ARRIVAL_CELLS:
+                            # Loose piece is ON the placed pattern -> at goal, reset
+                            # (read the scorecard at the assembled overlap).
+                            self._cc_stall = 0
+                            self._cc_best_dist = cc_dist
+                        else:
+                            if self._cc_best_dist is None or cc_dist < self._cc_best_dist:
+                                self._cc_best_dist = cc_dist
+                                self._cc_stall = 0
+                            else:
+                                self._cc_stall += 1
+                                if self._cc_stall >= _STEER_STALL_CAP:
+                                    self._cc_stall = 0
+                                    self._cc_best_dist = None
+                                    cc_steer_ok = False  # rb-1690 route-around
+                        if cc_steer_ok:
+                            self._candidate = cc_target
+                            steer = self._plan_route(cell)
+                            if steer is None:
+                                steer = self._steer(cell)
+                            if steer is not None:
+                                self._action_counts[steer] = (
+                                    self._action_counts.get(steer, 0) + 1
+                                )
+                                self._prev_action = steer
+                                self._prev_cursor = cursor
+                                self._prev_cell = cell
+                                return ExecutorDecision(action=steer, x=None, y=None)
+                            # Loose piece already on the pattern (no improving
+                            # move) -> clear candidate; the per-tick recompute
+                            # re-assembles next tick. (Falls through to coverage,
+                            # NOT dock -- dock_target is None when cc_owns.)
+                            self._candidate = None
+            # ---- dock-routing fallback (g-315-227): only when CC has no plan ----
+            # cc_owns forces dock_target None so CC assembly and dock routing are
+            # mutually exclusive per tick. On a CC stall (route-around) control
+            # falls to coverage below, never back to the ruled-out value-centroid
+            # dock (g-315-235 phantom). When no carried value / < 2 components,
+            # cc_owns is False and the dock path runs unchanged (additive).
+            dock_target = None if cc_owns else self._dock.dock_cursor_target(cursor)
             if dock_target is not None:
                 # Dock routing owns the episode now: drop any stale palette-rare
                 # cross candidate so the (now-gated) cluster path can never steer
