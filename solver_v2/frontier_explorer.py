@@ -49,13 +49,13 @@ boundary).
 
 from __future__ import annotations
 
-from typing import Optional
-
 from collections import deque
+from typing import Optional
 
 from solver_v0.perception import FrameFeatures
 from solver_v0.policy import DIRECTED_MIN_IMPROVEMENT, detect_cursor_and_targets
 from solver_v2.calibration import NOISE_FLOOR_CELLS, dominant_displacement
+from solver_v2.dock_classifier import DockClassifier
 from solver_v2.executor import ExecutorDecision
 
 # A cursor cell revisited more than this many times forces a turn even while the
@@ -121,6 +121,14 @@ _CLUSTER_VANISH_FLOOR: int = 1
 # maze wall; when greedy stalls, the explorer's systematic coverage IS the
 # route-around (it finds a fresh path, then re-detects and re-steers).
 _STEER_STALL_CAP: int = 4
+
+# g-315-227 (key-in-lock dock routing — 13th ls20 move). The carried piece is
+# "docked" once its centroid is within this Manhattan distance of the dock
+# centroid; at/under it the explorer stops accruing a dock steer-stall (it is at
+# the goal, not stalled) and lets the closed-loop recompute hold the carried
+# piece on the dock so the streaming loop can read the scorecard. A small cell
+# tolerance, not an ls20 coordinate (generalization-preserving).
+_DOCK_ARRIVAL_CELLS: int = 2
 
 # Max BFS nodes expanded per _plan_route call (g-315-219 part 2). The reachable
 # lattice over +/-5 quantized displacements on a <=64x64 grid is ~13x13, so a few
@@ -233,6 +241,22 @@ class FrontierCoverageExplorer:
         # semantics never re-attempted, stranding the cursor at closest-approach
         # 12 even when the maze route existed -- exp-g-315-225 / g-315-223).
         self._exhausted_targets: dict[tuple[int, int], int] = {}
+        # --- g-315-227: key-in-lock dock routing (carried piece -> dock) ---
+        # Per-episode classifier of the cursor-CARRIED piece (co-moves with the
+        # cursor) and the static DOCK structure, both derived from INTERACTION
+        # (co-movement + staticness), never palette values (generalization). When
+        # both are classified, dock routing PREEMPTS the palette-rare cluster
+        # steering below -- g-315-226 proved reaching the salient static cross
+        # does NOT score (rb-2021); ls20 is Locksmith-class, so the untested
+        # win-cond is docking the carried piece into the lock (key-in-lock).
+        self._dock = DockClassifier()
+        # Net-progress steer-stall on the carried-piece->dock Manhattan distance
+        # (mirrors _steer_stall for the cluster path): when greedy/BFS cannot
+        # reduce it for _STEER_STALL_CAP ticks, fall through to coverage so the
+        # systematic sweep finds a fresh route (rb-1690), then dock routing
+        # re-engages once the carried piece is repositioned closer.
+        self._dock_stall: int = 0
+        self._dock_best_dist: Optional[float] = None
         # --- g-315-219: planning + reachability + mode-vote axis model ---
         # Per-action ACCUMULATED moving-displacement samples. _effects[a] is now
         # the MAJORITY-vote (modal) displacement over this list (part 3), robust
@@ -347,6 +371,75 @@ class FrontierCoverageExplorer:
         else:
             self._blind_streak = 0
 
+        # ---- g-315-227: key-in-lock dock routing (PREEMPTS cluster steering) ----
+        # Update the carried-piece + dock classifier every tick -- it accumulates
+        # per-value centroid history + cursor co-movement tallies, INCLUDING during
+        # bootstrap (each issued action moves the cursor), so the carried piece can
+        # already be identified by the time bootstrap completes. When BOTH a carried
+        # piece and a dock are classified (from interaction, never palette values),
+        # steer the cursor so the carried piece overlaps the dock -- the validated
+        # win-condition direction: g-315-226 proved reaching the palette-rare cross
+        # does NOT score (rb-2021), and ls20 is Locksmith-class, so the untested
+        # win-cond is docking the carried piece into the lock (key-in-lock). This
+        # PREEMPTS the palette-rare cluster steering below (the cross is ruled out);
+        # the cluster LOCK is gated off once classified, so control never reverts to
+        # the cross. When dock routing is inactive (carried/dock not yet classified,
+        # or a non-Locksmith game with no carried piece) the explorer falls through
+        # to its prior cluster + coverage behavior unchanged -- purely ADDITIVE
+        # (guard-786/787-safe: separate component, greedy + coverage fallback kept).
+        self._dock.update(features, cursor)
+        if self._bootstrap_complete() and self._effects and cell is not None:
+            dock_target = self._dock.dock_cursor_target(cursor)
+            if dock_target is not None:
+                # Dock routing owns the episode now: drop any stale palette-rare
+                # cross candidate so the (now-gated) cluster path can never steer
+                # back toward the ruled-out cross.
+                self._candidate = None
+                carried = self._dock.carried_centroid()
+                dock = self._dock.dock_centroid()
+                dock_dist = (
+                    abs(carried[0] - dock[0]) + abs(carried[1] - dock[1])
+                    if carried is not None and dock is not None
+                    else None
+                )
+                # Net-progress stall on the carried-piece->dock distance (mirrors
+                # the cluster steer-stall). At/under the arrival tolerance the
+                # carried piece is ON the dock -> reset (at goal, not stalled). A
+                # sustained no-improvement stall hands the tick to coverage so the
+                # sweep routes around a maze wall (rb-1690), then dock routing
+                # re-engages on the next improvement.
+                steer_ok = True
+                if dock_dist is not None and dock_dist <= _DOCK_ARRIVAL_CELLS:
+                    self._dock_stall = 0
+                    self._dock_best_dist = dock_dist
+                elif dock_dist is not None:
+                    if self._dock_best_dist is None or dock_dist < self._dock_best_dist:
+                        self._dock_best_dist = dock_dist
+                        self._dock_stall = 0
+                    else:
+                        self._dock_stall += 1
+                        if self._dock_stall >= _STEER_STALL_CAP:
+                            self._dock_stall = 0
+                            self._dock_best_dist = None
+                            steer_ok = False  # rb-1690 route-around via coverage
+                if steer_ok:
+                    self._candidate = dock_target
+                    steer = self._plan_route(cell)
+                    if steer is None:
+                        steer = self._steer(cell)
+                    if steer is not None:
+                        self._action_counts[steer] = (
+                            self._action_counts.get(steer, 0) + 1
+                        )
+                        self._prev_action = steer
+                        self._prev_cursor = cursor
+                        self._prev_cell = cell
+                        return ExecutorDecision(action=steer, x=None, y=None)
+                    # Carried piece already on the dock (no improving move) -> clear
+                    # the candidate and let coverage nudge; the per-tick recompute
+                    # re-docks next tick so the scorecard is read at the overlap.
+                    self._candidate = None
+
         # ---- g-315-223: windowed cluster-commitment goal-seeking (RE-ARCH) ----
         # Re-derivation of the g-315-217 lock+steer layer (pre-registered stop-rule
         # fired after g-219/g-220 verified-but-non-converging; exp-g-315-223). The
@@ -383,6 +476,7 @@ class FrontierCoverageExplorer:
             and cell is not None
             and self._bootstrap_complete()
             and self._effects
+            and not self._dock.classified()
         ):
             eligible = [
                 cl
