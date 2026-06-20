@@ -52,6 +52,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Optional
 
+from primitives.frontier_coverage import FrontierCoverage
 from solver_v0.perception import FrameFeatures
 from solver_v0.policy import DIRECTED_MIN_IMPROVEMENT, detect_cursor_and_targets
 from solver_v2.calibration import NOISE_FLOOR_CELLS, dominant_displacement
@@ -198,7 +199,9 @@ class FrontierCoverageExplorer:
       - _effects:   learned per-action cursor displacement (dr, dc), populated by
                     deferred-observe; an action absent here has not been seen to
                     move the cursor (unknown or wall-only so far).
-      - _visited:   visit-count per integer cursor cell (the coverage frontier).
+      - _coverage:  env-agnostic FrontierCoverage core (g-315-236-c) owning the
+                    per-cell visit-count map + per-action usage tally + the
+                    usage-balanced novelty turn selection (the coverage frontier).
       - _committed: the action we are currently committed to (None => choose anew).
       - _untried:   bootstrap queue (each move-action issued once to learn effect).
 
@@ -216,7 +219,14 @@ class FrontierCoverageExplorer:
         self._moves: list[int] = sorted({int(a) for a in move_actions})
         self._game_class = game_class
         self._effects: dict[int, tuple[float, float]] = {}
-        self._visited: dict[tuple[int, int], int] = {}
+        # Env-agnostic frontier-coverage core (g-315-236-c): owns the per-cell
+        # visit-count map AND the per-action usage tally, plus the usage-balanced
+        # novelty turn selection. ARC perception below feeds it observations
+        # (record_visit / record_action) and supplies the displacement-projection
+        # seam at turn time. Extracted from the inline _visited/_action_counts
+        # dicts per Zachary's generalization directive (g-315-236) so the SAME
+        # primitive can drive exploration in any environment.
+        self._coverage = FrontierCoverage()
         self._committed: Optional[int] = None
         self._untried: list[int] = list(self._moves)
         self._prev_cursor: Optional[tuple[float, float]] = None
@@ -224,11 +234,6 @@ class FrontierCoverageExplorer:
         self._rr_index: int = 0
         # Consecutive ticks with no detectable cursor (reset on any sighting).
         self._blind_streak: int = 0
-        # Total times each action has been issued this episode. The frontier-turn
-        # picks the LEAST-used mover FIRST (g-315-215 coverage-diversity), so no
-        # single direction can dominate the distribution the way ACTION2 did
-        # (66/81) on the re-run #4 ls20 live litmus.
-        self._action_counts: dict[int, int] = {}
         # Consecutive ticks the CURRENT committed action has been ridden; a
         # diversity-turn is forced once this reaches _COMMIT_RUN_CAP (decide()).
         self._commit_run: int = 0
@@ -346,7 +351,12 @@ class FrontierCoverageExplorer:
     @property
     def visited_count(self) -> int:
         """Number of DISTINCT cursor cells visited this episode (coverage size)."""
-        return len(self._visited)
+        return self._coverage.visited_count
+
+    @property
+    def visited_cells(self) -> set[tuple[int, int]]:
+        """Copy of the distinct cursor cells visited (coverage analysis / tests)."""
+        return self._coverage.visited_cells
 
     @property
     def effects(self) -> dict[int, tuple[float, float]]:
@@ -361,7 +371,7 @@ class FrontierCoverageExplorer:
     @property
     def action_counts(self) -> dict[int, int]:
         """Copy of the per-action issue tally this episode (coverage diversity)."""
-        return dict(self._action_counts)
+        return self._coverage.action_counts()
 
     @property
     def candidate(self) -> Optional[tuple[int, int]]:
@@ -430,7 +440,7 @@ class FrontierCoverageExplorer:
                     committed_blocked = True
 
         if cell is not None:
-            self._visited[cell] = self._visited.get(cell, 0) + 1
+            self._coverage.record_visit(cell)
 
         # Blind-streak: count consecutive undetectable-cursor ticks; any sighting
         # resets it. A still cursor (churn -> 0) is dropped by the detector, so
@@ -541,9 +551,7 @@ class FrontierCoverageExplorer:
                             if steer is None:
                                 steer = self._steer(cell)
                             if steer is not None:
-                                self._action_counts[steer] = (
-                                    self._action_counts.get(steer, 0) + 1
-                                )
+                                self._coverage.record_action(steer)
                                 self._prev_action = steer
                                 self._prev_cursor = cursor
                                 self._prev_cell = cell
@@ -605,9 +613,7 @@ class FrontierCoverageExplorer:
                     if steer is None:
                         steer = self._steer(cell)
                     if steer is not None:
-                        self._action_counts[steer] = (
-                            self._action_counts.get(steer, 0) + 1
-                        )
+                        self._coverage.record_action(steer)
                         self._prev_action = steer
                         self._prev_cursor = cursor
                         self._prev_cell = cell
@@ -742,9 +748,7 @@ class FrontierCoverageExplorer:
                     if steer is None:
                         steer = self._steer(cell)
                     if steer is not None:
-                        self._action_counts[steer] = (
-                            self._action_counts.get(steer, 0) + 1
-                        )
+                        self._coverage.record_action(steer)
                         self._prev_action = steer
                         self._prev_cursor = cursor
                         self._prev_cell = cell
@@ -769,7 +773,7 @@ class FrontierCoverageExplorer:
         if committed_blocked:
             cleared_action = self._committed
             self._committed = None
-        elif cell is not None and self._visited.get(cell, 0) > _REVISIT_CAP:
+        elif cell is not None and self._coverage.visits(cell) > _REVISIT_CAP:
             cleared_action = self._committed
             self._committed = None
         elif self._blind_streak >= _BLIND_CAP:
@@ -785,7 +789,7 @@ class FrontierCoverageExplorer:
 
         action = self._choose(cell, exclude=cleared_action)
 
-        self._action_counts[action] = self._action_counts.get(action, 0) + 1
+        self._coverage.record_action(action)
         self._prev_action = action
         self._prev_cursor = cursor
         self._prev_cell = cell
@@ -1266,26 +1270,24 @@ class FrontierCoverageExplorer:
                 self._commit_run = 1
                 return a
 
-            best_action: Optional[int] = None
-            best_key: Optional[tuple[int, int, int]] = None
-            for a in self._moves:
-                if a == exclude:
-                    continue  # don't immediately re-commit the just-cleared axis
+            # Delegate the usage-balanced novelty turn to the env-agnostic
+            # FrontierCoverage core (g-315-236-c). The ARC-specific seam is the
+            # projection closure mapping an action to the cell its learned
+            # displacement lands on (None => no confirmed mover yet -> skipped).
+            # The core's ranking key (action usage, visited[proj], action id) is
+            # identical to the previously-inlined key, so behavior is unchanged.
+            cur_cell = cell  # narrowed non-None by the guard above
+
+            def _project(a: int) -> Optional[tuple[int, int]]:
                 eff = self._effects.get(a)
                 if eff is None:
-                    continue
-                proj = (
-                    int(round(cell[0] + eff[0])),
-                    int(round(cell[1] + eff[1])),
+                    return None
+                return (
+                    int(round(cur_cell[0] + eff[0])),
+                    int(round(cur_cell[1] + eff[1])),
                 )
-                key = (
-                    self._action_counts.get(a, 0),  # least-used mover first
-                    self._visited.get(proj, 0),      # then least-visited frontier
-                    a,                                # then low id (determinism)
-                )
-                if best_key is None or key < best_key:
-                    best_key = key
-                    best_action = a
+
+            best_action = self._coverage.select(self._moves, _project, exclude=exclude)
             if best_action is not None:
                 self._committed = best_action
                 self._commit_run = 1

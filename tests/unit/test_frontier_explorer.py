@@ -195,8 +195,8 @@ def test_open_grid_no_single_action_dominates_g315215(monkeypatch) -> None:
 
     # AC #2: coverage spans > 1 movement axis -- visited cells vary in BOTH row
     # and column (a 1D sweep would vary only one of them).
-    rows = {cell[0] for cell in explorer._visited}
-    cols = {cell[1] for cell in explorer._visited}
+    rows = {cell[0] for cell in explorer.visited_cells}
+    cols = {cell[1] for cell in explorer.visited_cells}
     assert len(rows) >= 2 and len(cols) >= 2, f"single-axis coverage: rows={rows} cols={cols}"
 
     # Every move-action was issued at least once (no starved axis).
