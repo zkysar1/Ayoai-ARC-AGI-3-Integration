@@ -125,6 +125,28 @@ _CLUSTER_VANISH_FLOOR: int = 1
 # route-around (it finds a fresh path, then re-detects and re-steers).
 _STEER_STALL_CAP: int = 4
 
+# g-315-246 (route-HOLDING -- 26th ls20 move). The CC-assembly steer-stall above
+# increments on raw loose->slot Manhattan REGRESSION. But a maze route-around
+# legitimately PLATEAUS (and briefly INCREASES) that Manhattan while the cursor
+# rounds a wall: _plan_route's BFS returns the first hop of a multi-hop path to
+# the closest REACHABLE cell, and that first hop can point AWAY before the detour
+# turns back. g-315-244's live reachability probe proved the carried piece is
+# REACHABLE-IN-PRINCIPLE (BFS 3-hop path exists, dirs observed) yet the live
+# controller DIVERGED -- min cc_dist 20 at tick 13, then 68-tick oscillation --
+# because cap-4 raw-Manhattan stall abandoned the convergent route during the
+# detour's away-phase, exhausted the target, and handed to coverage (which then
+# re-locked + re-stalled: the oscillation). Route-HOLDING: while a BFS route to
+# the target STILL EXISTS (route-around live), tolerate plateau ticks up to this
+# larger cap before exhausting; a phantom route from a mode-lost effect model
+# (BFS step exists but the learned displacement is wrong, so the cursor never
+# actually progresses) is still bounded -> exhausts -> coverage. When NO BFS
+# route exists the original cap-4 exhaust is unchanged. Sized ~3x _STEER_STALL_CAP:
+# a +/-5 lattice route over a <=64 grid is <=~13 hops, so 12 plateau ticks lets a
+# real route-around's away-phase complete while staying well under the ~81-tick
+# episode (bounded -> no livelock). A tick-count hyperparameter, not an ls20
+# coordinate (generalization-preserving, echo/self.md Constraint 3); litmus-tunable.
+_CC_ROUTE_HOLD_CAP: int = 12
+
 # g-315-227 (key-in-lock dock routing — 13th ls20 move). The carried piece is
 # "docked" once its centroid is within this Manhattan distance of the dock
 # centroid; at/under it the explorer stops accruing a dock steer-stall (it is at
@@ -522,9 +544,17 @@ class FrontierCoverageExplorer:
                     cc_owns = not cc_suppressed
                     cc_target = cc_plan.cursor_target(cursor) if cc_owns else None
                     if cc_target is not None:
-                        self._candidate = None  # drop stale palette-rare cross
+                        self._candidate = cc_target  # lock the slot for routing
                         cc_dist = cc_plan.distance
                         cc_steer_ok = True
+                        # g-315-246: one BFS route plan, reused by the route-HOLDING
+                        # stall gate below AND the steer (tiny-compute: single call).
+                        # cursor->candidate Manhattan == cc_dist (candidate =
+                        # cursor + (target_point - loose_centroid)), so a non-None
+                        # route_step means a multi-hop path to a cell CLOSER than
+                        # start exists -- a live route-around, even when its first
+                        # hop points away through the detour.
+                        route_step = self._plan_route(cell)
                         if cc_dist <= _DOCK_ARRIVAL_CELLS:
                             # Loose piece is ON the placed pattern -> at goal, reset
                             # (read the scorecard at the assembled overlap).
@@ -536,7 +566,20 @@ class FrontierCoverageExplorer:
                                 self._cc_stall = 0
                             else:
                                 self._cc_stall += 1
-                                if self._cc_stall >= _STEER_STALL_CAP:
+                                # g-315-246 route-HOLDING: HOLD a live BFS route
+                                # past _STEER_STALL_CAP (a maze route-around
+                                # legitimately plateaus/raises Manhattan during its
+                                # away-phase -- g-315-244 tick-13 divergence); only
+                                # when NO route exists is the original cap-4 exhaust
+                                # used. _CC_ROUTE_HOLD_CAP bounds a phantom route
+                                # (mode-lost effect model) so it still exhausts ->
+                                # coverage (rb-2113 path-generic backoff; rb-1690).
+                                cap = (
+                                    _CC_ROUTE_HOLD_CAP
+                                    if route_step is not None
+                                    else _STEER_STALL_CAP
+                                )
+                                if self._cc_stall >= cap:
                                     self._cc_stall = 0
                                     self._cc_best_dist = None
                                     # g-315-241: snapshot maze knowledge so this placed
@@ -545,11 +588,9 @@ class FrontierCoverageExplorer:
                                     # is exhausted -> coverage owns sustained control.
                                     self._cc_exhausted[pc] = self._maze_knowledge()
                                     cc_steer_ok = False  # rb-1690 route-around
+                                    self._candidate = None  # coverage owns fall-through
                         if cc_steer_ok:
-                            self._candidate = cc_target
-                            steer = self._plan_route(cell)
-                            if steer is None:
-                                steer = self._steer(cell)
+                            steer = route_step if route_step is not None else self._steer(cell)
                             if steer is not None:
                                 self._coverage.record_action(steer)
                                 self._prev_action = steer

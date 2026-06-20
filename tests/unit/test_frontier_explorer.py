@@ -847,6 +847,12 @@ def test_g315241_cc_stall_exhausts_and_yields_coverage_until_knowledge_grows(
     explorer._effects = {1: (5.0, 0.0), 2: (-5.0, 0.0), 3: (0.0, -5.0), 4: (0.0, 5.0)}
     explorer._untried = []  # bootstrap complete (all 4 actions confirmed via _effects)
     explorer._dock = _StubDock()  # type: ignore[assignment]
+    # g-315-246: pin a LIVE BFS route every tick so the route-HOLDING cap logic is
+    # isolated from the deferred-observe effect-model dynamics (the sim moves the
+    # cursor +-1 while the explorer believes +-5, which would otherwise flip the
+    # learned movers mid-loop and make _plan_route's verdict non-deterministic).
+    # route_step != None => the route-aware cap is _CC_ROUTE_HOLD_CAP (route held).
+    monkeypatch.setattr(explorer, "_plan_route", lambda cell: 2)
     # Control maze knowledge explicitly so the exhaustion window is deterministic
     # (the live deferred-observe would otherwise grow _effects_pos and re-lock early).
     kb = {"v": 100}
@@ -862,11 +868,25 @@ def test_g315241_cc_stall_exhausts_and_yields_coverage_until_knowledge_grows(
     explorer._choose = _traced_choose  # type: ignore[assignment]
 
     slot = (10, 10)
-    # Drive the stall: cc_dist=30 never improves -> _cc_stall reaches the cap.
+    # g-315-246 route-HOLDING: _plan_route is pinned LIVE (above) while the stubbed
+    # cc_dist stays a CONSTANT 30 -- a PHANTOM route (a BFS step exists but no real
+    # progress). The route-aware cap therefore HOLDS past _STEER_STALL_CAP (a real
+    # route-around's away-phase must be allowed to complete) and exhausts only at the
+    # bounded _CC_ROUTE_HOLD_CAP. First: drive _STEER_STALL_CAP+1 ticks -> NOT yet exhausted.
     for _ in range(fe._STEER_STALL_CAP + 1):
         explorer.decide(feat)
         sim.apply(2)  # move the cursor (interior -> no boundary walls)
-    assert slot in explorer._cc_exhausted, "CC steer-stall must exhaust the completion slot"
+    assert slot not in explorer._cc_exhausted, (
+        "g-315-246: a LIVE BFS route must HOLD past _STEER_STALL_CAP, not exhaust at cap-4"
+    )
+    # Continue to the bounded hold cap: the phantom route now exhausts -> coverage
+    # (bounded -> no livelock; rb-2113 path-generic backoff preserved).
+    for _ in range(fe._CC_ROUTE_HOLD_CAP - fe._STEER_STALL_CAP):
+        explorer.decide(feat)
+        sim.apply(2)
+    assert slot in explorer._cc_exhausted, (
+        "CC steer-stall must exhaust the completion slot at the bounded _CC_ROUTE_HOLD_CAP"
+    )
 
     # Post-exhaustion tick (knowledge unchanged): CC is suppressed -> coverage owns.
     chose["n"] = 0
@@ -882,6 +902,68 @@ def test_g315241_cc_stall_exhausts_and_yields_coverage_until_knowledge_grows(
     explorer.decide(feat)
     assert slot not in explorer._cc_exhausted, (
         "growing maze knowledge must drop the stale CC exhaustion snapshot (re-lock)"
+    )
+
+
+def test_g315246_no_bfs_route_exhausts_at_steer_stall_cap(monkeypatch) -> None:
+    # g-315-246 route-HOLDING preserves the ORIGINAL cap-4 exhaust on the NO-ROUTE
+    # path: when _plan_route returns None (no learned mover reduces the cursor->slot
+    # Manhattan -- a genuine wall / unlearned region), the stall must still exhaust
+    # at _STEER_STALL_CAP so coverage takes over to LEARN the missing mover (rb-1690
+    # route-around; rb-2113 path-generic backoff). The route-aware cap RELAXES only
+    # the route-EXISTS case (covered by the test above); route-absent is unchanged.
+    sim = _GridSim(size=64, start=(40, 40))
+
+    class _StubPlan:
+        target_point = (10.0, 10.0)  # up-left of the cursor
+        distance = 30.0  # constant -> stall accrues
+
+        def cursor_target(self, cur):  # type: ignore[no-untyped-def]
+            return (10, 10)
+
+    class _StubDock:
+        def update(self, *a, **k):  # type: ignore[no-untyped-def]
+            pass
+
+        def carried_value(self):  # type: ignore[no-untyped-def]
+            return 1
+
+        def classified(self):  # type: ignore[no-untyped-def]
+            return True
+
+        def dock_cursor_target(self, cur):  # type: ignore[no-untyped-def]
+            return None
+
+    class _StubFeat:
+        values: list = []
+        width = 64
+        height = 64
+
+    feat = _StubFeat()
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", lambda f: (sim.cursor, []))
+    monkeypatch.setattr(fe, "segment", lambda *a, **k: [])
+    monkeypatch.setattr(fe, "terrain_values", lambda *a, **k: set())
+    monkeypatch.setattr(fe, "plan_assembly", lambda *a, **k: _StubPlan())
+
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    # All 4 movers learned so bootstrap COMPLETES (the CC block runs); the route
+    # ABSENCE is pinned via _plan_route below, decoupling "no route" from "bootstrap
+    # incomplete" (a 2-mover model leaves bootstrap unconfirmed and the CC block
+    # never runs -- a confound, not the behavior under test).
+    explorer._effects = {1: (5.0, 0.0), 2: (-5.0, 0.0), 3: (0.0, -5.0), 4: (0.0, 5.0)}
+    explorer._untried = []  # bootstrap complete
+    explorer._dock = _StubDock()  # type: ignore[assignment]
+    # No BFS route exists (genuine wall / unlearned region) -> route_step is None
+    # every tick -> the cap stays _STEER_STALL_CAP (the original cap-4 exhaust).
+    monkeypatch.setattr(explorer, "_plan_route", lambda cell: None)
+    monkeypatch.setattr(explorer, "_maze_knowledge", lambda: 100)
+
+    slot = (10, 10)
+    for _ in range(fe._STEER_STALL_CAP + 1):
+        explorer.decide(feat)
+        sim.apply(2)  # sim down (+1 row, clamped); route stays absent (pinned None)
+    assert slot in explorer._cc_exhausted, (
+        "no-route CC stall must still exhaust at _STEER_STALL_CAP (unchanged path)"
     )
 
 
