@@ -171,6 +171,25 @@ _REPROBE_INTERVAL: int = 3
 # the >=2-distinct-positions confirm rule -- not this cap -- is the normal terminator.
 _BOOTSTRAP_TICK_BUDGET_PER_MOVE: int = 4
 
+# g-315-240 (position-dependent effect model -- 21st ls20 move). _effects stores
+# ONE global modal displacement per action, blind to POSITION-DEPENDENT movers:
+# g-315-239 proved ls20 ACTION2 is bimodal -- up from most cells, LEFT from the
+# rows40-47/cols24-39 band (100% within-region consistency, NOT detector
+# conflation; analysis/position_dependent_effects_probe.py) -- so
+# dominant_displacement() collapses it to up and _plan_route's BFS loses the
+# left-mover (bfsmin oscillated 14->30 as the global mode flipped mid-episode).
+# The fix mirrors how _blocked_edges already makes WALLS position-dependent
+# (guard-689): accumulate per-(region, action) displacement samples and let
+# _effect_at() return the region-specific mover where learned, falling back to the
+# global mode elsewhere. REGION quantization (not per-exact-cell) GENERALIZES an
+# observed mover to the BFS's projected (unvisited) lattice cells in the same
+# neighborhood, which per-cell keying could not. Both constants are resolution
+# hyperparameters -- a grid-cell bin size, and a confirm threshold mirroring the
+# >=2-distinct-positions wall-confirm rule -- NOT ls20 coordinates
+# (generalization-preserving, echo/self.md Constraint 3).
+_EFFECT_REGION_SIZE: int = 8
+_EFFECT_POS_MIN_SAMPLES: int = 2
+
 
 class FrontierCoverageExplorer:
     """Stateful per-episode frontier-coverage decider (untrusted movement route).
@@ -276,6 +295,17 @@ class FrontierCoverageExplorer:
         # to the minority-opposite-axis noise that made the prior
         # last-observation overwrite unreliable on ls20 (ACTION2 +5x14/-5x5).
         self._obs: dict[int, list[tuple[float, float]]] = {}
+        # g-315-240: POSITION-DEPENDENT effect model (the per-region twin of the
+        # global _obs/_effects above). _obs_pos keys per-action displacement samples
+        # by the REGION the action was issued FROM (region = cell // _EFFECT_REGION_
+        # SIZE); _effects_pos[(region, action)] is the modal displacement once
+        # >= _EFFECT_POS_MIN_SAMPLES samples confirm it. _effect_at() prefers the
+        # region mover over the global mode, so _plan_route's BFS can represent that
+        # one action moves a DIFFERENT direction from different cells (ls20 ACTION2 =
+        # up globally, left from rows40-47/cols24-39). This makes DISPLACEMENTS
+        # position-dependent the same way _blocked_edges makes WALLS so (guard-689).
+        self._obs_pos: dict[tuple[tuple[int, int], int], list[tuple[float, float]]] = {}
+        self._effects_pos: dict[tuple[tuple[int, int], int], tuple[float, float]] = {}
         # (cell, action) pairs OBSERVED as a wall (no-move) this episode. The BFS
         # route planner skips these edges so it routes AROUND obstacles greedy
         # 1-step steering cannot (rb-1690, part 2). Position-keyed: an action
@@ -361,6 +391,19 @@ class FrontierCoverageExplorer:
             mode = dominant_displacement(self._obs[self._prev_action])
             if mode is not None:
                 self._effects[self._prev_action] = mode
+            # g-315-240: ALSO accumulate the sample position-keyed -- attribute the
+            # displacement to the REGION prev_cell sat in, so a per-region mover is
+            # learned alongside the global mode. Confirm at >= _EFFECT_POS_MIN_SAMPLES
+            # (mirrors guard-689's >=2-distinct-positions wall-confirm) so a single
+            # noisy sample never overrides the global mode. _plan_route prefers this
+            # via _effect_at, recovering the mode-lost left-mover the BFS needs.
+            if self._prev_cell is not None:
+                pkey = (self._region(self._prev_cell), self._prev_action)
+                self._obs_pos.setdefault(pkey, []).append((dr, dc))
+                if len(self._obs_pos[pkey]) >= _EFFECT_POS_MIN_SAMPLES:
+                    pmode = dominant_displacement(self._obs_pos[pkey])
+                    if pmode is not None:
+                        self._effects_pos[pkey] = pmode
             if (dr * dr + dc * dc) ** 0.5 < NOISE_FLOOR_CELLS:
                 # Wall-contact: the action did NOT move the cursor FROM prev_cell.
                 # Record the blocked edge so the BFS planner (part 2) routes AROUND
@@ -699,6 +742,37 @@ class FrontierCoverageExplorer:
         self._prev_cell = cell
         return ExecutorDecision(action=action, x=None, y=None)
 
+    def _region(self, cell: tuple[int, int]) -> tuple[int, int]:
+        """Quantize a cursor cell to its effect REGION (g-315-240). Coarser than the
+        +/-5 lattice so an observed mover GENERALIZES to nearby (BFS-projected,
+        unvisited) cells in the same neighborhood; fine enough to keep the ls20
+        position-dependent bands apart (ACTION2 up vs left ~9 cols apart). A
+        resolution bin, not an ls20 coordinate (generalization-preserving)."""
+        return (cell[0] // _EFFECT_REGION_SIZE, cell[1] // _EFFECT_REGION_SIZE)
+
+    def _effect_at(
+        self, cell: tuple[int, int], action: int
+    ) -> Optional[tuple[float, float]]:
+        """The learned displacement for `action` taken FROM `cell` (g-315-240).
+        Prefers the region-specific mover (>= _EFFECT_POS_MIN_SAMPLES confirmed)
+        over the global mode, falling back to the global _effects where no region
+        evidence exists. This is the position-dependent transition the BFS planner
+        and greedy steer walk -- it lets one action move DIFFERENT directions from
+        different regions (ls20 ACTION2 up globally, left from the rows40-47/
+        cols24-39 band), which the single-global-mode model could not represent
+        (g-315-239 root cause). Mirrors _blocked_edges' position-keyed walls."""
+        pe = self._effects_pos.get((self._region(cell), action))
+        if pe is not None:
+            return pe
+        return self._effects.get(action)
+
+    def _all_effect_vectors(self) -> set[tuple[float, float]]:
+        """Union of every learned displacement vector -- global modes AND the
+        per-region position movers (g-315-240). _reachable's axis-direction test
+        iterates this so a target needing a mover that exists ONLY in some region
+        (the ls20 left-mover) is judged reachable, not frozen, at lock time."""
+        return set(self._effects.values()) | set(self._effects_pos.values())
+
     def _reachable(self, cell: tuple[int, int], target: tuple[int, int]) -> bool:
         """True iff EVERY axis the cursor must travel to reach `target` has a
         learned mover in the needed direction (g-315-219 part 1 reachability).
@@ -723,7 +797,9 @@ class FrontierCoverageExplorer:
         need_col = abs(dc) >= 1
         row_ok = not need_row
         col_ok = not need_col
-        for er, ec in self._effects.values():
+        # g-315-240: union of global modes AND per-region movers, so a target whose
+        # needed mover exists ONLY in some region (the ls20 left-mover) is reachable.
+        for er, ec in self._all_effect_vectors():
             if need_row and not row_ok and abs(er) >= NOISE_FLOOR_CELLS and (er > 0) == (dr > 0):
                 row_ok = True
             if need_col and not col_ok and abs(ec) >= NOISE_FLOOR_CELLS and (ec > 0) == (dc > 0):
@@ -765,7 +841,11 @@ class FrontierCoverageExplorer:
             cur = q.popleft()
             nodes += 1
             for a in self._moves:  # ascending -> lowest-id path wins ties
-                eff = self._effects.get(a)
+                # g-315-240: position-dependent lookup -- the mover for `a` FROM the
+                # BFS's current cell `cur`, so a route can use that `a` goes LEFT
+                # from the rows40-47/cols24-39 band even though its GLOBAL mode is up
+                # (the convergence the single-global-mode model could not plan).
+                eff = self._effect_at(cur, a)
                 if eff is None:
                     continue
                 if (cur, a) in self._blocked_edges:
@@ -817,7 +897,10 @@ class FrontierCoverageExplorer:
         best_action: Optional[int] = None
         best_dist: Optional[float] = None
         for a in self._moves:  # ascending -> lowest id wins ties (strict <)
-            eff = self._effects.get(a)
+            # g-315-240: position-dependent mover for `a` FROM the cursor cell, so
+            # greedy steering (the _plan_route fallback) also follows the region's
+            # actual displacement, not the washed-out global mode.
+            eff = self._effect_at(cell, a)
             if eff is None:
                 continue
             d = abs(cell[0] + eff[0] - self._candidate[0]) + abs(
@@ -907,12 +990,18 @@ class FrontierCoverageExplorer:
 
     def _maze_knowledge(self) -> int:
         """Monotonic count of position-dependent maze facts discovered this
-        episode: observed wall edges + learned per-action movers (g-315-226).
-        Only ever grows within an episode, so a strictly larger value than a
-        prior snapshot means route-around coverage has mapped new structure
-        since a steer stall -- the signal that a stalled target deserves a fresh
-        BFS attempt with the richer wall map."""
-        return len(self._blocked_edges) + len(self._effects)
+        episode: observed wall edges + learned per-action movers (global modes)
+        + learned per-REGION movers (g-315-226, extended g-315-240). Only ever
+        grows within an episode, so a strictly larger value than a prior snapshot
+        means route-around coverage has mapped new structure -- a new wall, a new
+        global mover, OR a new region-specific mover -- since a steer stall, the
+        signal that a stalled target deserves a fresh BFS attempt with the richer
+        position-dependent map (the _is_exhausted re-lock gate)."""
+        return (
+            len(self._blocked_edges)
+            + len(self._effects)
+            + len(self._effects_pos)
+        )
 
     def _is_exhausted(self, centroid: tuple[int, int]) -> bool:
         """True iff `centroid` is within _CLUSTER_RADIUS of a cluster abandoned by

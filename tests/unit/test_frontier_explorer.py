@@ -745,3 +745,114 @@ def test_g315226_exhausted_target_relocks_after_new_maze_knowledge() -> None:
     assert explorer._is_exhausted(centroid)
     explorer._effects[7] = (3.0, 3.0)  # a newly learned mover -> knowledge grows
     assert not explorer._is_exhausted(centroid)
+
+
+# ---------------------------------------------------------------------------
+# g-315-240: POSITION-DEPENDENT effect model. _effects stored ONE global modal
+# displacement per action, blind to position-dependent movers (ls20 ACTION2 = up
+# from most cells, LEFT from the rows40-47/cols24-39 band). The fix keys learned
+# displacements by cursor REGION so _plan_route's BFS can route a direction the
+# washed-out global mode dropped, mirroring how _blocked_edges already makes WALLS
+# position-dependent (guard-689). Validation: analysis/position_dependent_effects_
+# probe.py (recording 9c15427e: position-dependence confirmed, conflation ruled out).
+# ---------------------------------------------------------------------------
+
+
+def test_region_quantization_bins_cells_by_effect_region_size() -> None:
+    # _region floors each axis by _EFFECT_REGION_SIZE -- a resolution bin, NOT an
+    # ls20 coordinate. (42,26) -> (5,3) is the exact band where the probe found the
+    # 100%-consistent ACTION2 left-mover.
+    e = FrontierCoverageExplorer(_MOVES)
+    s = fe._EFFECT_REGION_SIZE
+    assert e._region((0, 0)) == (0, 0)
+    assert e._region((s - 1, s - 1)) == (0, 0)  # within the first bin
+    assert e._region((s, s)) == (1, 1)  # crosses into the next bin
+    assert e._region((42, 26)) == (42 // s, 26 // s)  # the ls20 left-mover region
+
+
+def test_effect_at_prefers_region_mover_then_falls_back_to_global() -> None:
+    # _effect_at returns the region-specific mover where learned, else the global
+    # mode, else None -- the position-dependent transition the BFS/steer walk.
+    e = FrontierCoverageExplorer(_MOVES)
+    e._effects = {2: (-5.0, 0.0)}  # global mode for ACTION2 = up
+    e._effects_pos = {(e._region((42, 26)), 2): (0.0, -5.0)}  # left from that region
+    assert e._effect_at((42, 26), 2) == (0.0, -5.0)  # region override (the lost mover)
+    assert e._effect_at((10, 10), 2) == (-5.0, 0.0)  # no region evidence -> global
+    assert e._effect_at((42, 26), 1) is None  # unknown action -> None (BFS skips it)
+
+
+def test_all_effect_vectors_unions_global_and_region_movers() -> None:
+    # _reachable iterates this union so a target needing a region-only mover is
+    # judged reachable, not frozen, at lock time.
+    e = FrontierCoverageExplorer(_MOVES)
+    e._effects = {1: (5.0, 0.0), 2: (-5.0, 0.0)}
+    e._effects_pos = {((5, 3), 2): (0.0, -5.0), ((5, 4), 4): (5.0, 0.0)}
+    vecs = e._all_effect_vectors()
+    assert (5.0, 0.0) in vecs and (-5.0, 0.0) in vecs  # global modes
+    assert (0.0, -5.0) in vecs  # the region-only left-mover (invisible to global)
+
+
+def test_maze_knowledge_counts_position_effects() -> None:
+    # Position movers ARE new maze knowledge: the _is_exhausted re-lock gate fires
+    # when the position map grows, so a cc target stalled by a route-around becomes
+    # re-lockable once a region mover is learned.
+    e = FrontierCoverageExplorer(_MOVES)
+    e._blocked_edges = {((10, 10), 2)}
+    e._effects = {1: (5.0, 0.0)}
+    base = e._maze_knowledge()
+    e._effects_pos[((5, 3), 2)] = (0.0, -5.0)  # learn a region mover
+    assert e._maze_knowledge() == base + 1  # knowledge strictly grew
+
+
+def test_plan_route_uses_position_mover_global_model_cannot_represent() -> None:
+    # THE FIX, at the routing level. Global effects have NO left-mover (only up/down);
+    # the target is purely LEFT of the cursor on the same row. With ONLY the global
+    # model the BFS cannot reduce the column distance -> returns None. With a region
+    # left-mover for ACTION2 from the cursor's region, the BFS routes left -> returns
+    # ACTION2. This is exactly the ls20 convergence the single-global-mode lost.
+    e = FrontierCoverageExplorer(_MOVES)
+    e._effects = {1: (1.0, 0.0), 2: (-1.0, 0.0)}  # down + up only -- NO column mover
+    cursor = (42, 30)
+    e._candidate = (42, 22)  # 8 cols LEFT, same row
+
+    # global-only: no mover reduces the column gap -> no improving route.
+    assert e._plan_route(cursor) is None
+
+    # add the position-dependent left-mover for ACTION2 in the cursor's region band.
+    reg = e._region(cursor)
+    e._effects_pos = {(reg, 2): (0.0, -1.0)}  # ACTION2 goes LEFT from here
+    route = e._plan_route(cursor)
+    assert route == 2, "BFS must route via the position-dependent left-mover (ACTION2)"
+
+
+def test_position_keyed_learning_populates_effects_pos_from_a_bimodal_env(
+    monkeypatch,
+) -> None:
+    # Integration: a sim where ACTION2 moves LEFT in the low-column band but UP
+    # beyond it (a position-dependent bimodal mover, the ls20 shape). Driving the
+    # explorer must POPULATE _effects_pos (the position learning fired) without
+    # regressing legal-action / coverage behavior. The discriminating routing proof
+    # is the direct-state test above; this proves the deferred-observe records the
+    # per-region samples online.
+    class _PosSim(_GridSim):
+        def apply(self, action: int) -> None:
+            if action == 2:
+                d = (0, -1) if self.c >= fe._EFFECT_REGION_SIZE else (-1, 0)
+                nr, nc = self.r + d[0], self.c + d[1]
+                if 0 <= nr < self.size:
+                    self.r = nr
+                if 0 <= nc < self.size:
+                    self.c = nc
+                return
+            super().apply(action)
+
+    sim = _PosSim(size=24, start=(20, 20))
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", lambda f: (sim.cursor, []))
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    actions = _run(explorer, sim, 60)
+    assert all(a in _MOVES for a in actions)  # no regression: legal moves only
+    assert explorer._effects_pos, "position-keyed learning must populate _effects_pos"
+    # at least one region mover was confirmed at >= the min-sample threshold.
+    assert all(
+        len(samples) >= 1 for samples in explorer._obs_pos.values()
+    )
