@@ -748,6 +748,144 @@ def test_g315226_exhausted_target_relocks_after_new_maze_knowledge() -> None:
 
 
 # ---------------------------------------------------------------------------
+# g-315-241: knowledge-conditional CC-TARGET exhaustion (the CC-path twin of the
+# cluster _exhausted_targets above). The CC-assembly path had a net-progress stall
+# but NO exhaustion, so a plan_assembly that exists every tick re-locked the same
+# across-the-maze placed pattern immediately after each 1-tick stall fall-through --
+# steering monopolized 77% of ticks on ls20 (recording 9c15427e), starving the
+# coverage sweep that maps a vertical maze escape (cursor boxed in 12 cells, rows
+# 40-46). The fix records the completion slot in _cc_exhausted at the steer-stall
+# and SUPPRESSES re-lock until maze knowledge grows, yielding SUSTAINED coverage.
+# Diagnostic: analysis/coverage_stall_probe.py.
+# ---------------------------------------------------------------------------
+
+
+def test_g315241_cc_exhausted_target_relocks_after_new_maze_knowledge() -> None:
+    # Mirror of test_g315226 for the SEPARATE _cc_exhausted store: a CC completion
+    # slot abandoned by a cc steer-stall stays exhausted until maze knowledge grows,
+    # then re-locks (richer position-dependent map -> fresh BFS attempt). Bounded by
+    # the finite/monotonic edge+mover count -> no livelock.
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    explorer._effects = {1: (-5.0, 0.0), 2: (5.0, 0.0), 3: (0.0, -5.0), 4: (0.0, 5.0)}
+    slot = (12, 34)
+    explorer._cc_exhausted[slot] = explorer._maze_knowledge()
+    assert explorer._is_exhausted(slot, explorer._cc_exhausted)
+    # Idempotent with no new knowledge (no-livelock guard).
+    assert explorer._is_exhausted(slot, explorer._cc_exhausted)
+    # Radius-jittered re-detection of the same dead slot is also exhausted.
+    assert explorer._is_exhausted((12 + fe._CLUSTER_RADIUS, 34), explorer._cc_exhausted)
+    # Route-around coverage discovers a NEW wall edge -> knowledge grows -> re-lock.
+    explorer._blocked_edges.add(((40, 40), 1))
+    assert not explorer._is_exhausted(slot, explorer._cc_exhausted)
+    assert slot not in explorer._cc_exhausted  # stale snapshot dropped, not lingering
+
+
+def test_g315241_cc_and_cluster_exhaustion_stores_are_independent() -> None:
+    # The CC and cluster paths use SEPARATE stores so exhausting one target class
+    # never spuriously suppresses the other (they steer toward different structures;
+    # the dock-yield interaction is handled by cc_suppressed, not store-sharing).
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    explorer._effects = {1: (-5.0, 0.0), 2: (5.0, 0.0), 3: (0.0, -5.0), 4: (0.0, 5.0)}
+    p = (20, 20)
+    explorer._cc_exhausted[p] = explorer._maze_knowledge()
+    # Exhausted in the CC store but NOT in the (default) cluster store.
+    assert explorer._is_exhausted(p, explorer._cc_exhausted)
+    assert not explorer._is_exhausted(p)  # cluster store is empty -> not exhausted
+    # And vice versa.
+    explorer2 = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    explorer2._effects = dict(explorer._effects)
+    explorer2._exhausted_targets[p] = explorer2._maze_knowledge()
+    assert explorer2._is_exhausted(p)
+    assert not explorer2._is_exhausted(p, explorer2._cc_exhausted)
+
+
+def test_g315241_cc_stall_exhausts_and_yields_coverage_until_knowledge_grows(
+    monkeypatch,
+) -> None:
+    # END-TO-END through decide(): a CC plan present every tick with a constant
+    # (non-improving) loose->slot distance forces a steer-stall; at _STEER_STALL_CAP
+    # the completion slot is exhausted and control YIELDS to coverage (the _choose
+    # frontier-turn), NOT another CC re-lock -- until maze knowledge grows, when CC
+    # re-locks. This is the discriminating behavior the fix adds (pre-fix: CC
+    # re-locked the same slot every tick, _choose never ran).
+    sim = _GridSim(size=64, start=(40, 40))
+
+    class _StubPlan:
+        target_point = (10.0, 10.0)  # a DISTANT across-the-maze completion slot
+        distance = 30.0  # CONSTANT -> no net progress -> stall accrues
+
+        def cursor_target(self, cur):  # type: ignore[no-untyped-def]
+            return (10, 10)  # steer target != cursor (a real steer attempt)
+
+    class _StubDock:
+        def update(self, *a, **k):  # type: ignore[no-untyped-def]
+            pass
+
+        def carried_value(self):  # type: ignore[no-untyped-def]
+            return 1  # a carried piece exists -> CC path active
+
+        def classified(self):  # type: ignore[no-untyped-def]
+            return True  # gates the cluster lock OFF -> coverage owns when CC yields
+
+        def dock_cursor_target(self, cur):  # type: ignore[no-untyped-def]
+            return None  # dock fallback inert
+
+    class _StubFeat:
+        # segment / terrain_values are patched to ignore args, but decide() still
+        # ACCESSES features.values/.width/.height to pass them -> give them stubs.
+        values: list = []
+        width = 64
+        height = 64
+
+    feat = _StubFeat()
+    monkeypatch.setattr(fe, "detect_cursor_and_targets", lambda f: (sim.cursor, []))
+    monkeypatch.setattr(fe, "segment", lambda *a, **k: [])
+    monkeypatch.setattr(fe, "terrain_values", lambda *a, **k: set())
+    monkeypatch.setattr(fe, "plan_assembly", lambda *a, **k: _StubPlan())
+
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    explorer._effects = {1: (5.0, 0.0), 2: (-5.0, 0.0), 3: (0.0, -5.0), 4: (0.0, 5.0)}
+    explorer._untried = []  # bootstrap complete (all 4 actions confirmed via _effects)
+    explorer._dock = _StubDock()  # type: ignore[assignment]
+    # Control maze knowledge explicitly so the exhaustion window is deterministic
+    # (the live deferred-observe would otherwise grow _effects_pos and re-lock early).
+    kb = {"v": 100}
+    monkeypatch.setattr(explorer, "_maze_knowledge", lambda: kb["v"])
+
+    chose = {"n": 0}
+    _orig_choose = explorer._choose
+
+    def _traced_choose(*a, **k):  # type: ignore[no-untyped-def]
+        chose["n"] += 1
+        return _orig_choose(*a, **k)
+
+    explorer._choose = _traced_choose  # type: ignore[assignment]
+
+    slot = (10, 10)
+    # Drive the stall: cc_dist=30 never improves -> _cc_stall reaches the cap.
+    for _ in range(fe._STEER_STALL_CAP + 1):
+        explorer.decide(feat)
+        sim.apply(2)  # move the cursor (interior -> no boundary walls)
+    assert slot in explorer._cc_exhausted, "CC steer-stall must exhaust the completion slot"
+
+    # Post-exhaustion tick (knowledge unchanged): CC is suppressed -> coverage owns.
+    chose["n"] = 0
+    explorer.decide(feat)
+    assert chose["n"] == 1, "exhausted CC target must yield control to the coverage _choose"
+    assert explorer._candidate is None, "no CC/cluster candidate locked while exhausted"
+
+    # Maze knowledge grows -> _is_exhausted drops the stale snapshot, restoring CC
+    # re-lock eligibility (rb-2020). Whether CC then steers or route-arounds depends
+    # on reachability -- the exhaustion gate's job is only the re-eligibility, so the
+    # discriminating signal is the snapshot removal, not a guaranteed steer.
+    kb["v"] = 101
+    explorer.decide(feat)
+    assert slot not in explorer._cc_exhausted, (
+        "growing maze knowledge must drop the stale CC exhaustion snapshot (re-lock)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # g-315-240: POSITION-DEPENDENT effect model. _effects stored ONE global modal
 # displacement per action, blind to position-dependent movers (ls20 ACTION2 = up
 # from most cells, LEFT from the rows40-47/cols24-39 band). The fix keys learned

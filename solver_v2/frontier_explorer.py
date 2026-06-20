@@ -289,6 +289,20 @@ class FrontierCoverageExplorer:
         # coverage (rb-1690) instead of pinning the cursor.
         self._cc_stall: int = 0
         self._cc_best_dist: Optional[float] = None
+        # g-315-241: knowledge-conditional CC-TARGET exhaustion (the CC-path twin of
+        # the cluster _exhausted_targets, g-315-226/rb-2020). Keyed by the placed-
+        # pattern COMPLETION SLOT (AssemblyPlan.target_point) -> maze-knowledge
+        # snapshot at the cc steer-stall. Diagnosed
+        # cause of the ls20 small-region stall (12 cells, rows 40-46): the CC path had
+        # a net-progress stall but NO exhaustion, so a plan_assembly that exists every
+        # tick (recording 9c15427e: 95%) re-locked the same across-the-maze pattern
+        # immediately after each 1-tick stall fall-through -- steering monopolized 77%
+        # of ticks, starving coverage to fragmented 17% (never the SUSTAINED sweep
+        # needed to map a vertical maze escape). With exhaustion, a stalled CC target
+        # yields sustained coverage control until route-around discovers a new
+        # wall/mover (maze_knowledge grows), then re-locks with the richer
+        # position-dependent map. Bounded (finite/monotonic knowledge) -> no livelock.
+        self._cc_exhausted: dict[tuple[int, int], int] = {}
         # --- g-315-219: planning + reachability + mode-vote axis model ---
         # Per-action ACCUMULATED moving-displacement samples. _effects[a] is now
         # the MAJORITY-vote (modal) displacement over this list (part 3), robust
@@ -458,6 +472,10 @@ class FrontierCoverageExplorer:
             # None, cc_owns stays False, and control falls through to the dock-
             # routing fallback below -- purely ADDITIVE (rb-2071 / guard-826).
             cc_owns = False
+            # g-315-241: a CC plan exists but its placed-pattern target is exhausted
+            # (stalled, maze knowledge not yet grown) -> coverage owns the tick, NOT
+            # dock (the same structure's value-centroid is a ruled-out phantom).
+            cc_suppressed = False
             cc_carried_value = self._dock.carried_value()
             if cc_carried_value is not None:
                 _terr = terrain_values(features.values)
@@ -469,11 +487,30 @@ class FrontierCoverageExplorer:
                 )
                 cc_plan = plan_assembly(_comps, cc_carried_value, cursor)
                 if cc_plan is not None:
-                    # A loose piece + a separate same-value pattern exist: CC
-                    # owns this tick (dock_target is forced None below so the
-                    # value-centroid phantom path cannot also fire).
-                    cc_owns = True
-                    cc_target = cc_plan.cursor_target(cursor)
+                    # A loose piece + a separate same-value pattern exist. CC owns
+                    # this tick (dock_target forced None below so the value-centroid
+                    # phantom path cannot also fire) UNLESS the placed pattern is
+                    # exhausted -- g-315-241: knowledge-conditional CC-target
+                    # exhaustion (rb-2020 / g-315-226 cluster twin). A pattern
+                    # abandoned by a prior cc steer-stall stays exhausted (keyed to
+                    # maze knowledge at stall time) until route-around coverage
+                    # discovers a new wall/mover, so a stalled across-the-maze target
+                    # yields SUSTAINED coverage control instead of re-locking every
+                    # tick (the ls20 12-cell rows-40-46 stall: steering owned 77% of
+                    # ticks, coverage starved to fragmented 17%). _is_exhausted also
+                    # CLEARS the entry when knowledge grew -> automatic re-lock.
+                    # Key exhaustion by the STABLE completion slot (target_point --
+                    # the empty pattern-adjacent aim point steering converges toward),
+                    # NOT the cursor-relative cc_target. Radius-matched in
+                    # _is_exhausted, so slot jitter as the loose piece moves does not
+                    # break the match (mirrors the cluster centroid key).
+                    pc = (
+                        int(round(cc_plan.target_point[0])),
+                        int(round(cc_plan.target_point[1])),
+                    )
+                    cc_suppressed = self._is_exhausted(pc, self._cc_exhausted)
+                    cc_owns = not cc_suppressed
+                    cc_target = cc_plan.cursor_target(cursor) if cc_owns else None
                     if cc_target is not None:
                         self._candidate = None  # drop stale palette-rare cross
                         cc_dist = cc_plan.distance
@@ -492,6 +529,11 @@ class FrontierCoverageExplorer:
                                 if self._cc_stall >= _STEER_STALL_CAP:
                                     self._cc_stall = 0
                                     self._cc_best_dist = None
+                                    # g-315-241: snapshot maze knowledge so this placed
+                                    # pattern is re-lockable once route-around coverage
+                                    # grows the wall/mover map (rb-2020); until then it
+                                    # is exhausted -> coverage owns sustained control.
+                                    self._cc_exhausted[pc] = self._maze_knowledge()
                                     cc_steer_ok = False  # rb-1690 route-around
                         if cc_steer_ok:
                             self._candidate = cc_target
@@ -517,7 +559,14 @@ class FrontierCoverageExplorer:
             # falls to coverage below, never back to the ruled-out value-centroid
             # dock (g-315-235 phantom). When no carried value / < 2 components,
             # cc_owns is False and the dock path runs unchanged (additive).
-            dock_target = None if cc_owns else self._dock.dock_cursor_target(cursor)
+            # g-315-241: cc_suppressed (CC plan exists but target exhausted) also
+            # forces dock None -- the exhausted structure's value-centroid is the
+            # ruled-out g-315-235 phantom, so coverage (not dock) must own the sweep.
+            dock_target = (
+                None
+                if (cc_owns or cc_suppressed)
+                else self._dock.dock_cursor_target(cursor)
+            )
             if dock_target is not None:
                 # Dock routing owns the episode now: drop any stale palette-rare
                 # cross candidate so the (now-gated) cluster path can never steer
@@ -1003,7 +1052,11 @@ class FrontierCoverageExplorer:
             + len(self._effects_pos)
         )
 
-    def _is_exhausted(self, centroid: tuple[int, int]) -> bool:
+    def _is_exhausted(
+        self,
+        centroid: tuple[int, int],
+        store: Optional[dict[tuple[int, int], int]] = None,
+    ) -> bool:
         """True iff `centroid` is within _CLUSTER_RADIUS of a cluster abandoned by
         a steer stall AND no new maze knowledge has been discovered since that
         stall (g-315-226, refining g-315-223). Radius-matched (not exact) so a
@@ -1021,13 +1074,16 @@ class FrontierCoverageExplorer:
         monotonic, so re-locks cannot exceed the discoverable edge/mover count ->
         no livelock (the guarantee the permanent-set version enforced too
         bluntly). exp-g-315-225."""
+        # store defaults to the cluster _exhausted_targets; the CC path passes
+        # _cc_exhausted so the two target classes never cross-interfere (g-315-241).
+        store = self._exhausted_targets if store is None else store
         current_kb = self._maze_knowledge()
-        for ex in list(self._exhausted_targets):
+        for ex in list(store):
             if abs(ex[0] - centroid[0]) + abs(ex[1] - centroid[1]) <= _CLUSTER_RADIUS:
-                if current_kb > self._exhausted_targets[ex]:
+                if current_kb > store[ex]:
                     # Maze knowledge grew since this stall -> re-eligible; drop the
                     # stale snapshot so it cannot keep matching (g-315-226).
-                    del self._exhausted_targets[ex]
+                    del store[ex]
                     return False
                 return True
         return False
