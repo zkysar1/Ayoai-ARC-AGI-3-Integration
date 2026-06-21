@@ -73,13 +73,24 @@ def test_action6_coords_from_prior_target() -> None:
     assert decision == ExecutorDecision(action=6, x=5, y=7)
 
 
-def test_action6_default_coords_when_target_missing() -> None:
+def test_action6_explores_when_untrusted_no_target() -> None:
+    # g-315-256 / rb-1588: with no labelled goal_cell and no explicit
+    # action6_target (the untrusted pure-ACTION6 case — ft09/vc33/lp85), the
+    # executor must EXPLORE the click space via a coverage sweep, NOT clamp to a
+    # constant (0,0) corner. That degeneracy is exactly what g-315-255's ft09
+    # probe caught: 120/120 ticks at (0,0), the win-condition never tested, the
+    # 0-score confounded. The sweep origin is (0,0) at tick 0; subsequent ticks
+    # fan out across the grid.
     ex = DeterministicExecutor()
-    # Prior carries ACTION6 in the plan but no explicit target -> (0,0).
     prior = _prior((6,), action6_target=None)
-    feats = _features([6])
-    decision = ex.execute(prior, feats, 0)
-    assert decision == ExecutorDecision(action=6, x=0, y=0)
+    feats = _features([6])  # 2x2 grid (extract of [[[1,2],[3,4]]])
+    assert ex.execute(prior, feats, 0) == ExecutorDecision(action=6, x=0, y=0)
+    # Anti-degeneracy invariant (would FAIL on the old constant-(0,0) code):
+    # across the grid's worth of ticks the executor visits >1 distinct coord.
+    coords = {(d.x, d.y) for t in range(4) for d in [ex.execute(prior, feats, t)]}
+    assert len(coords) > 1, f"expected exploration, got degenerate {coords}"
+    # On a 2x2 grid the full-coverage permutation visits all four cells.
+    assert coords == {(0, 0), (0, 1), (1, 0), (1, 1)}
 
 
 def test_action6_coords_from_goal_cell_when_objective_target_directed() -> None:

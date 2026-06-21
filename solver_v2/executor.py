@@ -10,7 +10,9 @@ advancing one step per tick within the episode, filtered to the actions that
 are actually legal on the current frame. The complex action (ACTION6) gets its
 coordinates from the seed's labelled goal_cell when the objective is
 target-directed (reach/toggle a cell), else from the prior's action6_target,
-else a degenerate (0,0) (g-315-138). This is the simplest executor
+else a deterministic coverage sweep of the click space (action6_explore,
+g-315-256 — replacing the old degenerate constant-(0,0) corner click that left
+untrusted click-class games unexplored, rb-1588 / g-315-255). This is the simplest executor
 that genuinely CONSUMES the seed (the plan is the seed's product) while
 remaining fully reproducible. Later executors can use the richer FrameFeatures
 signal (roles/churn/score) the interface already passes in.
@@ -24,10 +26,11 @@ from dataclasses import dataclass
 from typing import Optional
 
 from solver_v0.perception import FrameFeatures
+from solver_v2.action6_explore import explore_action6_coord
 from solver_v2.episode import (
-    EpisodePrior,
     OBJECTIVE_REACH_CELL,
     OBJECTIVE_TOGGLE_AT_CELL,
+    EpisodePrior,
 )
 
 # ARC GameAction ids (fixed external API contract). Literal ints (not
@@ -122,9 +125,20 @@ class DeterministicExecutor:
                 # Explicit seed-supplied click coordinate (already in (x, y)).
                 x, y = prior.action6_target[0], prior.action6_target[1]
             else:
-                # No labelled goal_cell and no explicit target — degenerate
-                # corner. Preserves backward-compatible behavior for spine-oracle
-                # priors that set neither field.
-                x, y = 0, 0
+                # No labelled goal_cell and no explicit target: EXPLORE the click
+                # space instead of degenerately clicking the (0,0) corner every
+                # tick. The old constant-(0,0) fallback (rb-1588) left untrusted
+                # click-class games (e.g. ft09/vc33/lp85, available_actions=[6])
+                # completely unexplored — g-315-255's ft09 probe clicked (0,0)
+                # 120/120 ticks, so the win-condition was never tested and the
+                # 0-score was confounded. A deterministic low-discrepancy coverage
+                # sweep (action6_explore, g-315-256) walks the grid so the
+                # click-class win-condition CAN be reached/tested. tick_in_episode
+                # is the click counter on a pure-ACTION6 episode (every tick is a
+                # click). Stays tiny-compute + generalization-preserving (pure
+                # index->coord math, no game-specific constants).
+                x, y = explore_action6_coord(
+                    tick_in_episode, features.width, features.height
+                )
 
         return ExecutorDecision(action=action, x=x, y=y)
