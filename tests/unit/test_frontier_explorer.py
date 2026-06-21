@@ -263,6 +263,53 @@ def test_no_targets_stays_pure_coverage(monkeypatch) -> None:
     assert explorer.visited_count >= 6  # coverage behavior unchanged
 
 
+def test_pure_coverage_toggle_disables_all_steering_g315247(monkeypatch) -> None:
+    # g-315-247: FRONTIER_PURE_COVERAGE=1 must disable EVERY steering layer
+    # (CC-assembly, dock, cluster) so the FrontierCoverage core drives every tick.
+    # Diagnostic toggle that discriminates a hard position-dependent wall (H1:
+    # cursor stays confined even under pure coverage) from steering-induced
+    # confinement (H2: cursor escapes once the target-lock is removed). Uses the
+    # SAME stable-target scenario as test_detects_target_locks_and_steers_to_it
+    # (which LOCKS + steers East to the target) and asserts that, with the toggle
+    # ON, the candidate is NEVER locked and the cursor does NOT East-lock toward
+    # the target -- coverage drives instead.
+    monkeypatch.setenv("FRONTIER_PURE_COVERAGE", "1")
+    sim = _GridSim(size=20, start=(10, 10))
+    target = (10, 16)  # 6 cells East -- the steered twin locks + reaches this
+    monkeypatch.setattr(
+        fe, "detect_cursor_and_targets", lambda f: (sim.cursor, [target])
+    )
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    assert explorer._pure_coverage is True  # toggle read at construction
+    candidate_ever_set = False
+    actions: list[int] = []
+    for _ in range(40):
+        a = explorer.decide(_DUMMY).action
+        actions.append(a)
+        if explorer.candidate is not None:
+            candidate_ever_set = True
+        sim.apply(a)
+    # The cluster-lock (block 2) never fires under pure coverage.
+    assert not candidate_ever_set, "pure coverage must never lock a steering candidate"
+    # Coverage still runs (visit map grows) and emits only move-actions.
+    assert explorer.visited_count >= 6
+    assert all(a in _MOVES for a in actions)
+    # Behavioral proof it did NOT steer: ACTION4 (East, toward the target) does
+    # not dominate the way it does in the steered twin (count(4) >= 4 of ~7 ticks).
+    # Usage-balanced coverage spreads across axes instead of locking East.
+    assert actions.count(4) < len(actions) * 0.5, (
+        f"pure coverage should not East-lock toward the target: {actions}"
+    )
+
+
+def test_pure_coverage_default_off(monkeypatch) -> None:
+    # Default (env unset) keeps steering enabled -- the toggle is opt-in, so the
+    # production path stays byte-identical. Asserts the flag defaults False.
+    monkeypatch.delenv("FRONTIER_PURE_COVERAGE", raising=False)
+    explorer = FrontierCoverageExplorer(_MOVES, game_class="ls20")
+    assert explorer._pure_coverage is False
+
+
 def test_walled_target_stall_reengages_coverage(monkeypatch) -> None:
     # rb-1690 mitigation: greedy 1-step steering cannot route around a wall. When
     # the only distance-reducing move is permanently walled, the explorer must

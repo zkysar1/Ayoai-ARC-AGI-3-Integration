@@ -49,6 +49,7 @@ boundary).
 
 from __future__ import annotations
 
+import os
 from collections import deque
 from typing import Optional
 
@@ -240,6 +241,14 @@ class FrontierCoverageExplorer:
         # Sorted, de-duplicated move-action ids (deterministic bootstrap order).
         self._moves: list[int] = sorted({int(a) for a in move_actions})
         self._game_class = game_class
+        # g-315-247 diagnostic toggle (generalization-preserving, DEFAULT OFF):
+        # FRONTIER_PURE_COVERAGE=1 disables ALL steering layers (CC-assembly,
+        # dock, cluster) so the FrontierCoverage core drives every tick -- used
+        # to discriminate a confinement's cause: a hard position-dependent wall
+        # (H1: cursor stays confined even under pure coverage) vs steering-induced
+        # confinement (H2: cursor escapes once the target-lock is removed). Read
+        # once here (zero per-tick cost); no env coords -- any env can run it.
+        self._pure_coverage: bool = os.environ.get("FRONTIER_PURE_COVERAGE", "") == "1"
         self._effects: dict[int, tuple[float, float]] = {}
         # Env-agnostic frontier-coverage core (g-315-236-c): owns the per-cell
         # visit-count map AND the per-action usage tally, plus the usage-balanced
@@ -490,7 +499,12 @@ class FrontierCoverageExplorer:
         # to its prior cluster + coverage behavior unchanged -- purely ADDITIVE
         # (guard-786/787-safe: separate component, greedy + coverage fallback kept).
         self._dock.update(features, cursor)
-        if self._bootstrap_complete() and self._effects and cell is not None:
+        if (
+            self._bootstrap_complete()
+            and self._effects
+            and cell is not None
+            and not self._pure_coverage
+        ):
             # ---- g-315-237: connected-component ASSEMBLY routing (PREEMPTS dock) ----
             # g-315-235 proved the value-grouped carried_centroid()/dock_centroid()
             # the dock path steers toward are physically meaningless multi-object
@@ -701,6 +715,7 @@ class FrontierCoverageExplorer:
             and self._bootstrap_complete()
             and self._effects
             and not self._dock.classified()
+            and not self._pure_coverage
         ):
             eligible = [
                 cl
