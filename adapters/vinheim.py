@@ -1,0 +1,447 @@
+"""adapters/vinheim.py -- vinheim / shared "file-based entity" slots for the env-agnostic primitives.
+
+g-315-249 (alpha, cross-env generalization handoff from echo g-315-236-d under
+Zachary's g-315-236 directive: bake the ARC exploration techniques into AyoAI so
+they run unchanged across arc / roblox / vinheim). Supplies the vinheim/shared
+slot implementations the `ExplorationPrimitive` contract names so the env-agnostic
+`primitives.frontier_coverage.FrontierCoverage` core -- proven LIVE on ARC,
+BYTE-IDENTICAL-portable, and shown to drive a Roblox episode by the delta
+`adapters/roblox.py` sibling -- ALSO drives a NON-spatial entity world.
+
+Why a second, deliberately-DIFFERENT environment shape: roblox.py proves the
+primitive on a 3D spatial env (instance tree -> XZ-geometry, weighted-Dijkstra
+path distance). vinheim.py proves the SAME unmodified core on a structurally
+unrelated env -- a flat, file-based / API entity list with a SEMANTIC graph-hop
+distance (no geometry at all). If one primitive runs on both, the env-agnostic
+claim is demonstrated, not asserted (catalog: ProximityModel + WorldBuilder absorb
+the cross-env variance). vinheim's first cut is the file-based environment
+(universal-environment-abstraction Plan 4.10); this is its slot realization.
+
+Contract references (all in the Mind world tree / Ayoai product repo):
+  - env-agnostic-primitive-interface  -- the ExplorationPrimitive contract over
+    the 6 slots (sections 1/2: the step(percept,memory,clock)->Decision shape and
+    the two adapter seams; section 5: the alpha = vinheim/shared hand-off).
+  - env-agnostic-exploration-primitives -- the catalog + 6-slot mapping.
+  - universal-environment-abstraction Plan 7.2.A -- alpha's 6-slot
+    EnvironmentAdapter contract (WorldBuilder / Executor / ProximityModel
+    signatures), referenced here, NEVER redefined.
+
+The slots (mapped onto Plan 7.2.A, kept SEPARATE from primitives/ so no env
+literal leaks into the agnostic core -- generalization gate 3):
+
+  VinheimWorldBuilder  (perception adapter = WorldBuilder)
+      buildUnits(worldState) -> UnitSet. Reads a flat, declarative entity list
+      (the "API / entity-lister" shape) into the SAME env-agnostic Unit shape ARC
+      cc-segmentation and roblox's instance-tree walk produce:
+      {id, size, centroid, bbox, adjacency, kind}. Adjacency is the entity's
+      DECLARED semantic links (the env's graph), not geometry -- obstacle units are
+      dropped from navigation, exactly as roblox drops wall-occluded edges.
+
+  VinheimProximityModel  (action adapter, variance-absorbing = ProximityModel)
+      distance(a, b) -> SEMANTIC graph-hop distance (BFS edge count over the
+      declared link graph), inf if unreachable -- NOT Euclidean and NOT roblox's
+      weighted Dijkstra: a different env supplies a different metric, which is the
+      whole point of the slot (rb-1690 / guard-689: the primitive trusts the slot's
+      distance, never a hardcoded geometry). PLUS the injected projection seam
+      project(action) -> Cell|None that FrontierCoverage.select consumes, backed by
+      a LEARNED displacement model (primitive-side memory observed from Executor
+      results -- never a hardcoded lattice).
+
+  VinheimExecutor  (action adapter = Executor + Vocabulary)
+      declareActions() -> the move action space, and execute(decision) ->
+      Result{outcome, reason, retrySafe} (Plan Q10). Every FrontierCoverage
+      Decision MUST exit through here so decided_by routing is preserved (gate 2)
+      -- a primitive emitting a raw env action would BYPASS the framework.
+
+3-gate compliance: (1) tiny-compute -- every step is deterministic O(units|
+actions) math, no LLM, no training; (2) framework-routed -- every Decision exits
+through Executor; (3) generalization-preserving -- NO vinheim entity-name literals
+leak into the `primitives/` core; all vinheim specifics live HERE. The shared
+primitive core is COMPOSED, never modified -- the existing primitive suite is its
+regression gate.
+
+Live wiring note: `execute()` drives an injected `WorldTransport`. The simulated
+transport (test) applies moves over an in-memory semantic plane; a live transport
+is a thin wrapper over the vinheim file-based world's read/act API -- a separate
+follow-on. The slots + driver here are transport-agnostic, so the same code drives
+both.
+"""
+
+from __future__ import annotations
+
+import math
+from collections import deque
+from dataclasses import dataclass, field
+from typing import Callable, Mapping, Optional, Sequence
+
+from primitives.frontier_coverage import Cell, FrontierCoverage
+
+# A vinheim entity lives on a 2D SEMANTIC plane (an embedding coordinate / a
+# file-declared position), not a 3D world. The Unit shape is identical to roblox's;
+# only the dimensionality of the coordinate differs -- the UnitSet contract names
+# the FIELDS (centroid/bbox), not their arity.
+Coord = tuple[float, float]
+
+# ayoType mapping (Plan 4: character / player / tool / unit). The CORE primitive
+# never sees these strings -- they classify Units for the adapter + agent lookup.
+_CHARACTER_KINDS = ("character", "agent", "npc", "player")
+_OBSTACLE_KINDS = ("obstacle", "wall", "barrier", "blocked")
+
+
+# --------------------------------------------------------------------------- #
+# Env-agnostic Unit (the UnitSet element FrontierCoverage perceives via         #
+# WorldBuilder) -- SAME shape ARC cc_segment and roblox's walk produce.         #
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class Unit:
+    """One env-agnostic Unit. `id`=unitKey, `kind`=ayoType (Plan 7.2.A mapping)."""
+
+    id: str
+    size: float
+    centroid: Coord
+    bbox: tuple[Coord, Coord]  # (min-corner, max-corner) on the semantic plane
+    adjacency: tuple[str, ...]  # ids of link-reachable neighbour units
+    kind: str
+
+    @property
+    def is_obstacle(self) -> bool:
+        return self.kind.lower() in _OBSTACLE_KINDS
+
+    @property
+    def is_character(self) -> bool:
+        return self.kind.lower() in _CHARACTER_KINDS
+
+
+@dataclass(frozen=True)
+class Result:
+    """Executor result (Plan 7.2.A Q10). 'unknown' = fail:unconfirmed/retry_safe=False."""
+
+    outcome: str  # "success" | "fail"
+    reason: str
+    retry_safe: bool
+
+
+@dataclass(frozen=True)
+class Decision:
+    """A primitive's chosen move, carrying decided_by so framework routing is preserved."""
+
+    action: int
+    decided_by: str
+    target_unit_id: Optional[str] = None
+
+
+@dataclass
+class EpisodeReport:
+    """What one exploration episode produced (for verification / analysis)."""
+
+    coverage: FrontierCoverage
+    decisions: list[Decision] = field(default_factory=list)
+    results: list[Result] = field(default_factory=list)
+
+    @property
+    def cells_covered(self) -> int:
+        return self.coverage.visited_count
+
+    @property
+    def action_distribution(self) -> dict[int, int]:
+        return self.coverage.action_counts()
+
+
+class WorldTransport:
+    """The seam Executor drives to realize a move in a concrete vinheim runtime.
+
+    Implemented by a simulated semantic-plane world (tests) or a live wrapper over
+    the vinheim file-based world API. `move` returns (succeeded, reason);
+    `position`/`world_state` report the agent coord + the entity list AFTER the move
+    so perception re-reads it.
+    """
+
+    def move(self, action: int) -> tuple[bool, str]:
+        raise NotImplementedError
+
+    def position(self) -> Coord:
+        raise NotImplementedError
+
+    def world_state(self) -> Mapping[str, object]:
+        raise NotImplementedError
+
+
+# --------------------------------------------------------------------------- #
+# Internal helpers.                                                             #
+# --------------------------------------------------------------------------- #
+def _as_coord(value: object) -> Optional[Coord]:
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        try:
+            return (float(value[0]), float(value[1]))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Slot 1 -- WorldBuilder (perception adapter).                                  #
+# --------------------------------------------------------------------------- #
+class VinheimWorldBuilder:
+    """Flat entity list -> env-agnostic UnitSet (Plan 7.2.A WorldBuilder slot).
+
+    buildUnits reads a declarative entity list (the "API / entity-lister" / file-
+    based world shape: ``{"entities": [{id, kind, pos, size?, links?}, ...]}``) and
+    emits one Unit per entity in the SAME {id, size, centroid, bbox, adjacency, kind}
+    shape ARC cc_segment and roblox's instance-tree walk produce. Adjacency is the
+    entity's DECLARED semantic ``links`` (the env's navigation graph) with edges to
+    obstacle units dropped -- so downstream graph-hop distance routes around
+    obstacles, the semantic analogue of roblox dropping wall-occluded edges.
+    """
+
+    def __init__(self, *, default_size: float = 1.0) -> None:
+        self._default_size = default_size
+
+    @staticmethod
+    def _entities(world_state: Mapping[str, object]) -> list[Mapping[str, object]]:
+        raw = world_state.get("entities")
+        if not isinstance(raw, (list, tuple)):
+            return []
+        return [e for e in raw if isinstance(e, Mapping)]
+
+    def _to_unit(self, entity: Mapping[str, object]) -> Optional[Unit]:
+        ident = entity.get("id")
+        centroid = _as_coord(entity.get("pos") or entity.get("centroid"))
+        if not isinstance(ident, str) or centroid is None:
+            return None
+        kind = entity.get("kind") or entity.get("ayoType")
+        kind_str = kind if isinstance(kind, str) and kind else "unit"
+        size_val = entity.get("size")
+        size = float(size_val) if isinstance(size_val, (int, float)) else self._default_size
+        half = size / 2.0
+        lo = (centroid[0] - half, centroid[1] - half)
+        hi = (centroid[0] + half, centroid[1] + half)
+        links = entity.get("links")
+        raw_adj = tuple(str(x) for x in links) if isinstance(links, (list, tuple)) else ()
+        return Unit(
+            id=ident,
+            size=size,
+            centroid=centroid,
+            bbox=(lo, hi),
+            adjacency=raw_adj,  # pruned against obstacles after the full pass
+            kind=kind_str,
+        )
+
+    def build_units(self, world_state: Mapping[str, object]) -> list[Unit]:
+        """Flatten the declarative entity list into the env-agnostic UnitSet."""
+        units = [u for u in (self._to_unit(e) for e in self._entities(world_state)) if u is not None]
+        obstacle_ids = {u.id for u in units if u.is_obstacle}
+        present = {u.id for u in units}
+        linked: list[Unit] = []
+        for u in units:
+            if u.is_obstacle:
+                # Obstacles are not navigation nodes (mirrors roblox).
+                linked.append(Unit(u.id, u.size, u.centroid, u.bbox, (), u.kind))
+                continue
+            neighbours = tuple(
+                nid for nid in u.adjacency if nid in present and nid not in obstacle_ids
+            )
+            linked.append(Unit(u.id, u.size, u.centroid, u.bbox, neighbours, u.kind))
+        return linked
+
+
+# --------------------------------------------------------------------------- #
+# Slot 2 -- ProximityModel (variance-absorbing action adapter).                 #
+# --------------------------------------------------------------------------- #
+class VinheimProximityModel:
+    """SEMANTIC graph-hop distance + the learned-displacement projection seam.
+
+    distance(a, b) is the BFS edge count over the WorldBuilder link graph -- a pure
+    SEMANTIC / topological metric, inf if unreachable. It is deliberately NEITHER
+    Euclidean NOR roblox's weighted Dijkstra: the ProximityModel slot is exactly
+    where each environment supplies its own notion of nearness (Plan 7.2.A Q9b),
+    and FrontierCoverage trusts it without ever computing geometry itself.
+
+    project(action) is the seam FrontierCoverage.select consumes; it is backed by a
+    LEARNED displacement model (action -> cell delta) observed from Executor results
+    over ticks -- primitive-side memory, never a hardcoded lattice. An action with
+    no observed effect projects to None (skipped until calibrated). The cell delta
+    quantizes the semantic-plane coordinate, identically to roblox -- the learned-
+    model SEAM is itself env-agnostic; only the coordinate source differs.
+    """
+
+    def __init__(self, *, cell_size: float = 1.0) -> None:
+        if cell_size <= 0.0:
+            raise ValueError("cell_size must be positive")
+        self._cell_size = cell_size
+        self._displacement: dict[int, Cell] = {}
+        self._units_by_id: dict[str, Unit] = {}
+
+    # ---- cell quantization (semantic coord -> integer Cell) ----
+    def quantize(self, position: Coord) -> Cell:
+        return (
+            int(math.floor(position[0] / self._cell_size)),
+            int(math.floor(position[1] / self._cell_size)),
+        )
+
+    # ---- learned displacement model (primitive-side memory) ----
+    def record_effect(self, action: int, from_cell: Cell, to_cell: Cell) -> None:
+        """Observe that `action` moved the agent from_cell -> to_cell (learn its delta)."""
+        delta = (to_cell[0] - from_cell[0], to_cell[1] - from_cell[1])
+        # Only record a real displacement; a no-op move teaches nothing and would
+        # poison projection with a (0,0) delta.
+        if delta != (0, 0) or action not in self._displacement:
+            self._displacement[action] = delta
+
+    def learned_actions(self) -> set[int]:
+        return set(self._displacement)
+
+    def project_from(self, cell: Cell) -> Callable[[int], Optional[Cell]]:
+        """Return the projection seam project(action)->Cell|None anchored at `cell`."""
+
+        def project(action: int) -> Optional[Cell]:
+            delta = self._displacement.get(action)
+            if delta is None:
+                return None  # never observed -> skipped (bootstraps via calibration)
+            return (cell[0] + delta[0], cell[1] + delta[1])
+
+        return project
+
+    # ---- semantic graph-hop distance (Plan 7.2.A signature: distance(unitA, unitB)) ----
+    def set_units(self, units: Sequence[Unit]) -> None:
+        """Load the current navigation graph so distance(a, b) can route over it."""
+        self._units_by_id = {u.id: u for u in units}
+
+    def distance(self, unit_a: Unit, unit_b: Unit) -> float:
+        """SEMANTIC graph-hop distance (BFS edge count), inf if unreachable.
+
+        NOT Euclidean and NOT a weighted path -- the number of declared links
+        between the two units. This is the env-supplied metric; a maze with no
+        link route returns inf exactly as roblox's path distance does.
+        """
+        if unit_a.id == unit_b.id:
+            return 0.0
+        graph = self._units_by_id or {unit_a.id: unit_a, unit_b.id: unit_b}
+        seen = {unit_a.id}
+        queue: deque[tuple[str, int]] = deque([(unit_a.id, 0)])
+        while queue:
+            uid, hops = queue.popleft()
+            cur = graph.get(uid)
+            if cur is None:
+                continue
+            for nid in cur.adjacency:
+                if nid == unit_b.id:
+                    return float(hops + 1)
+                if nid in seen or nid not in graph:
+                    continue
+                seen.add(nid)
+                queue.append((nid, hops + 1))
+        return math.inf
+
+
+# --------------------------------------------------------------------------- #
+# Slot 3 -- Executor (action adapter + Vocabulary).                             #
+# --------------------------------------------------------------------------- #
+class VinheimExecutor:
+    """Move action space + execute (Plan 7.2.A Executor slot).
+
+    declare_actions() is the Vocabulary of move tasks (a discrete action set).
+    execute(decision) routes a primitive's Decision through the world transport and
+    returns Result{outcome, reason, retrySafe}. Every FrontierCoverage Decision MUST
+    exit here -- that is what keeps decided_by routing intact (gate 2). The transport
+    is injected so the SAME Executor drives a simulated world (tests) or a live
+    vinheim world API.
+    """
+
+    def __init__(self, *, transport: WorldTransport, actions: Sequence[int]) -> None:
+        if not actions:
+            raise ValueError("Executor needs a non-empty action space")
+        self._transport = transport
+        self._actions = list(actions)
+
+    def declare_actions(self) -> list[int]:
+        return list(self._actions)
+
+    def execute(self, decision: Decision) -> Result:
+        if decision.action not in self._actions:
+            return Result(
+                outcome="fail",
+                reason=f"action {decision.action} not in declared action space",
+                retry_safe=False,
+            )
+        try:
+            ok, reason = self._transport.move(decision.action)
+        except Exception as exc:  # transport failure -> unknown (Q10: fail:unconfirmed)
+            return Result(outcome="fail", reason=f"transport error: {exc}", retry_safe=False)
+        if ok:
+            return Result(outcome="success", reason=reason or "moved", retry_safe=True)
+        # A refused move (blocked) is safe to retry from a new pose.
+        return Result(outcome="fail", reason=reason or "blocked", retry_safe=True)
+
+    def position(self) -> Coord:
+        return self._transport.position()
+
+    def world_state(self) -> Mapping[str, object]:
+        return self._transport.world_state()
+
+
+# --------------------------------------------------------------------------- #
+# Driver -- FrontierCoverage drives a vinheim entity-world exploration episode. #
+# --------------------------------------------------------------------------- #
+def _find_agent(units: Sequence[Unit]) -> Optional[Unit]:
+    for u in units:
+        if u.is_character:
+            return u
+    return None
+
+
+def run_exploration_episode(
+    world_builder: VinheimWorldBuilder,
+    proximity: VinheimProximityModel,
+    executor: VinheimExecutor,
+    *,
+    max_ticks: int = 64,
+    calibrate: bool = True,
+) -> EpisodeReport:
+    """Run the perception -> decide -> act -> learn loop with FrontierCoverage at the wheel.
+
+    The env-agnostic `FrontierCoverage` core is COMPOSED (constructed here,
+    untouched). Each tick: WorldBuilder perceives the entity list -> quantize the
+    agent cell -> FrontierCoverage.select picks the least-used / least-visited move
+    through the ProximityModel projection seam -> the Decision (decided_by=
+    'frontier-coverage') exits through Executor -> the observed displacement is
+    learned. A calibration pass first observes each action's effect so projection
+    has a learned model to work from (LEARNED, not hardcoded).
+    """
+    coverage = FrontierCoverage()
+    report = EpisodeReport(coverage=coverage)
+    actions = executor.declare_actions()
+
+    if calibrate:
+        for a in actions:
+            before = proximity.quantize(executor.position())
+            res = executor.execute(Decision(action=a, decided_by="calibration"))
+            after = proximity.quantize(executor.position())
+            if res.outcome == "success":
+                proximity.record_effect(a, before, after)
+
+    for _ in range(max_ticks):
+        units = world_builder.build_units(executor.world_state())
+        proximity.set_units(units)
+        agent = _find_agent(units)
+        cur = (
+            proximity.quantize(agent.centroid)
+            if agent is not None
+            else proximity.quantize(executor.position())
+        )
+        coverage.record_visit(cur)
+
+        action = coverage.select(actions, project=proximity.project_from(cur))
+        if action is None:
+            break  # no projectable move -> episode is exhausted
+
+        decision = Decision(action=action, decided_by="frontier-coverage")
+        result = executor.execute(decision)  # framework-routed (gate 2)
+        coverage.record_action(action)
+
+        new_cell = proximity.quantize(executor.position())
+        proximity.record_effect(action, cur, new_cell)  # learn from the outcome
+
+        report.decisions.append(decision)
+        report.results.append(result)
+
+    return report
