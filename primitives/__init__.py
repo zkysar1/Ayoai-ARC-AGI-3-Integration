@@ -17,7 +17,13 @@ supplies the seam.
 Members:
   - frontier_coverage.FrontierCoverage (g-315-236-c): usage-balanced
     novelty-seeking turn selection over a visit-count map.
+  - sticky_latch.StickyLatch (g-315-250): flicker-robust sticky-latch
+    target selector with median-baseline staticness, consecutive-drift
+    declassify, and nearest-to-last-known re-select.
   - reachability_nav.ReachabilityNav (g-315-251): path-distance-aware
     navigation toward a target with BFS routing, greedy fallback, and
     knowledge-conditional stall/abandon/exhaust.
+  - cluster_commitment.ClusterCommitment (g-315-250): windowed-cluster-
+    commitment target selector with sliding-window accumulation,
+    single-linkage clustering, and persistence/vanish signals.
 """

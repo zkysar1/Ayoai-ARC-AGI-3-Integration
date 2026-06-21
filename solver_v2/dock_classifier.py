@@ -52,6 +52,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from primitives.sticky_latch import StickyLatch
 from solver_v2.calibration import NOISE_FLOOR_CELLS
 
 # A value-group counts as the DOCK only if it is static AND at least this many
@@ -109,14 +110,6 @@ class DockClassifier:
     """
 
     def __init__(self) -> None:
-        # Per-value centroid observed each update: value -> list[(row, col)].
-        # Bounded in practice by the episode length; only non-terrain values are
-        # tracked (terrain is re-derived each tick and skipped).
-        self._centroid_hist: dict[int, list[tuple[float, float]]] = {}
-        # value -> current (row, col) centroid (the latest observation).
-        self._cur_centroid: dict[int, tuple[float, float]] = {}
-        # value -> current cell count (for the dock size gate).
-        self._cur_count: dict[int, int] = {}
         # Co-movement tally: value -> count of ticks its centroid displacement
         # pointed the SAME direction as the cursor's (positive dot product).
         self._comove: dict[int, int] = {}
@@ -129,30 +122,27 @@ class DockClassifier:
         # The palette value whose centroid is nearest the detected cursor (the
         # cursor's own cells) -- excluded from carried-piece candidates.
         self._cursor_value: Optional[int] = None
-        # g-315-233 dock-identity LATCH: once an eligible dock is first
-        # classified, its value is pinned here and KEPT across ticks until it
-        # DECLASSIFIES (disappears, shrinks below _DOCK_MIN_CELLS, or stops being
-        # static). g-315-227's live litmus saw the per-tick argmax-largest-static
-        # selection FLIP the attractor target at tick 13 (a far static group
-        # transiently won), so the controller chased the wrong dock and the
-        # carried piece never reached a verified dock (min approach 5.45 >
-        # _DOCK_ARRIVAL_CELLS=2). A closed-loop attractor controller needs a
-        # STABLE/LATCHED target -- this pins the dock identity to the first
-        # stable dock and rejects later larger static groups unless the latch
-        # declassifies. Naturally per-episode (one classifier instance/episode).
-        self._latched_dock_value: Optional[int] = None
-        # g-315-234 sticky-latch: consecutive ticks the latched dock has been
-        # ineligible. Declassification waits until this reaches
-        # _LATCH_DECLASSIFY_TICKS, so a transient ineligible tick (flicker
-        # count-dip / 1-frame occlusion) does not release the latch.
-        self._latch_ineligible_streak: int = 0
-        # g-315-234: last centroid the latched dock had WHILE eligible. On a
-        # forced re-select after sustained declassification, the latch prefers
-        # the eligible static group NEAREST this point over the largest -- a
-        # sustained-static group near where the dock was is far likelier the
-        # same lock briefly occluded than the farthest large decoy (the v8 decoy
-        # that poisoned g-315-233).
-        self._last_dock_centroid: Optional[tuple[float, float]] = None
+        # Env-agnostic sticky-latch core (g-315-250): owns the per-entity
+        # centroid history, median-baseline staticness, sticky-latch with
+        # nearest-to-last-known re-select. ARC perception below (update) feeds
+        # it per-value centroid+count observations and injects the env-specific
+        # eligibility predicate (not the cursor). Extracted from the inline
+        # _is_static/_eligible_dock/_best_static_dock/_resolve_dock_latch/
+        # _select_dock per Zachary's generalization directive (g-315-236) so the
+        # SAME primitive can drive latch selection in any environment.
+        self._latch = StickyLatch(
+            min_obs_for_static=_MIN_OBS_FOR_STATIC,
+            static_eps=_STATIC_EPS,
+            static_drift_run=_STATIC_DRIFT_RUN,
+            latch_declassify_ticks=_LATCH_DECLASSIFY_TICKS,
+            min_cells=_DOCK_MIN_CELLS,
+        )
+        # Per-value current centroid (latest observation) -- kept for the
+        # carried-piece co-movement computation and dock_centroid() reads.
+        self._cur_centroid: dict[int, tuple[float, float]] = {}
+        # Per-value current cell count -- kept for carried_value()'s
+        # comparison (the latch also tracks counts internally via observe).
+        self._cur_count: dict[int, int] = {}
 
     # ---------- per-tick update ---------- #
 
@@ -206,10 +196,6 @@ class DockClassifier:
                 ),
             )
 
-        # Record centroid history (for the staticness judgment).
-        for v, cen in centroids.items():
-            self._centroid_hist.setdefault(v, []).append(cen)
-
         # --- co-movement: did each non-cursor group move with the cursor? ---
         if cursor_centroid is not None and self._prev_cursor is not None:
             cur_dr = cursor_centroid[0] - self._prev_cursor[0]
@@ -234,181 +220,42 @@ class DockClassifier:
         self._prev_cursor = cursor_centroid
         self._prev_centroid = dict(centroids)
 
-        # Resolve the dock-identity latch with this tick's refreshed counts +
-        # centroids (g-315-233). Done here in update() -- the single state-mutation
-        # point -- so dock_value()/dock_centroid() stay pure reads of the latch.
-        self._resolve_dock_latch()
+        # Delegate the dock-identity latch to the env-agnostic StickyLatch core
+        # (g-315-250). ARC-specific eligibility predicate: "not the cursor"
+        # (latch handles staticness + cell-count internally). observe() records
+        # centroid history, classifies staticness, and resolves the latch in one
+        # call -- byte-identical to the previously-inlined _resolve_dock_latch.
+        cursor_val = self._cursor_value
+
+        def _is_eligible(v: int) -> bool:
+            return v != cursor_val
+
+        self._latch.observe(centroids, {v: counts[v] for v in non_terrain}, _is_eligible)
 
     # ---------- classification queries ---------- #
 
     def _is_static(self, value: int) -> bool:
-        """True iff `value`'s centroid has been observed >= _MIN_OBS_FOR_STATIC
-        ticks and shows no SUSTAINED drift from its MEDIAN centroid (a fixed
-        structure), tolerating transient single-frame flicker.
+        """Delegates to the env-agnostic StickyLatch core (g-315-250).
 
-        Flicker-robust (g-315-234, guard-822 / rb-2062): the prior rule compared
-        every observation against hist[0] (a FIXED single-frame baseline) and
-        declared non-static on ANY frame beyond _STATIC_EPS -- so one transient
-        flicker frame poisoned staticness forever (the g-315-233 tick-13 failure:
-        v5's centroid jumped 5.3 cells for one frame, reverted at t14, yet the
-        dock latch declassified permanently). Instead, judge the group NON-static
-        only when it drifts > _STATIC_EPS from its MEDIAN centroid for at least
-        _STATIC_DRIFT_RUN CONSECUTIVE observations -- a sustained move, not a
-        one-frame excursion that reverts. The median baseline is robust to a
-        single outlier (including a flickery first frame), and the consecutive-run
-        gate distinguishes a genuine drift (consecutive) from sparse flicker
-        (isolated frames that reset the run)."""
-        hist = self._centroid_hist.get(value)
-        if hist is None or len(hist) < _MIN_OBS_FOR_STATIC:
-            return False
-        # Median centroid (robust central tendency; one flicker frame cannot shift
-        # the median of >=3 observations past the tolerance).
-        rs = sorted(h[0] for h in hist)
-        cs = sorted(h[1] for h in hist)
-        n = len(hist)
-        if n % 2:
-            r_med, c_med = rs[n // 2], cs[n // 2]
-        else:
-            r_med = (rs[n // 2 - 1] + rs[n // 2]) / 2.0
-            c_med = (cs[n // 2 - 1] + cs[n // 2]) / 2.0
-        # Non-static iff drift exceeds the tolerance for _STATIC_DRIFT_RUN
-        # CONSECUTIVE frames. A lone flicker frame raises the run to 1 and the
-        # next in-tolerance frame resets it -- so a one-frame revert stays static.
-        run = 0
-        for r, c in hist:
-            if abs(r - r_med) + abs(c - c_med) > _STATIC_EPS:
-                run += 1
-                if run >= _STATIC_DRIFT_RUN:
-                    return False
-            else:
-                run = 0
-        return True
-
-    def _eligible_dock(self, value: int) -> bool:
-        """True iff `value` currently qualifies as the dock: present this tick,
-        not the cursor, at least _DOCK_MIN_CELLS cells, and static. The
-        eligibility predicate the latch uses both to decide whether to KEEP the
-        latched dock and to filter candidates when (re-)latching."""
-        if value == self._cursor_value:
-            return False
-        cnt = self._cur_count.get(value)
-        if cnt is None or cnt < _DOCK_MIN_CELLS:
-            return False
-        return self._is_static(value)
-
-    def _best_static_dock(self) -> Optional[int]:
-        """The LARGEST eligible static value-group (tie-break: smaller value),
-        or None when none qualifies yet. Value-agnostic dock signal: the ls20
-        lock (v5, ~439 cells) dominates the static point-markers (the target
-        cross, a few cells per value) and the mobile carried piece (not static).
-        Used to pick the dock at FIRST latch and to RE-latch when the prior dock
-        declassifies. Identical selection to the pre-g-315-233 argmax, so the
-        first dock chosen is unchanged -- the latch only changes what happens on
-        LATER ticks."""
-        best_value: Optional[int] = None
-        best_count = -1
-        for v, cnt in self._cur_count.items():
-            if not self._eligible_dock(v):
-                continue
-            if cnt > best_count or (cnt == best_count and (best_value is None or v < best_value)):
-                best_count = cnt
-                best_value = v
-        return best_value
-
-    def _resolve_dock_latch(self) -> None:
-        """Update the dock-identity latch (called at the end of update()). Keep
-        the currently-latched dock while it stays eligible; tolerate up to
-        _LATCH_DECLASSIFY_TICKS-1 CONSECUTIVE ineligible ticks (sticky); on
-        sustained declassification (or an empty latch) re-select via
-        `_select_dock`.
-
-        g-315-233 fix: g-315-227's per-tick argmax re-selection flipped the
-        attractor target at tick 13 (a far static group transiently became the
-        largest), so the carried piece never reached a verified dock (min
-        approach 5.45 > _DOCK_ARRIVAL_CELLS=2). Pinning the identity to the first
-        stable dock keeps the closed-loop attractor target stable; a genuinely
-        larger lock that appears LATER is rejected -- only declassification of
-        the latched dock re-opens selection.
-
-        g-315-234 hardening (guard-822 / rb-2062): the g-315-233 latch was still
-        only as stable as its per-frame eligibility test -- a one-frame flicker
-        that momentarily failed staticness (or dipped the cell count below the
-        floor) declassified it and re-latched to the FAR decoy. Two changes make
-        the latch declassify-resistant: (1) STICKY -- require sustained
-        ineligibility (_LATCH_DECLASSIFY_TICKS consecutive ticks) before
-        releasing, so a transient ineligible tick is absorbed; (2) on a forced
-        re-select prefer the static group NEAREST the last-known dock centroid
-        over the largest (`_select_dock`), so the latch never jumps to a far
-        decoy. The flicker-robust `_is_static` is the primary defense; these are
-        defense-in-depth behind it."""
-        if self._latched_dock_value is not None and self._eligible_dock(
-            self._latched_dock_value
-        ):
-            # Latch holds + eligible: reset the streak, refresh last-known centroid.
-            self._latch_ineligible_streak = 0
-            cen = self._cur_centroid.get(self._latched_dock_value)
-            if cen is not None:
-                self._last_dock_centroid = cen
-            return
-        if self._latched_dock_value is not None:
-            # Latch held but ineligible THIS tick: tolerate a transient (sticky).
-            self._latch_ineligible_streak += 1
-            if self._latch_ineligible_streak < _LATCH_DECLASSIFY_TICKS:
-                return  # hold through the transient ineligibility
-        # (Re-)latch: empty latch (first latch) or sustained declassification.
-        self._latched_dock_value = self._select_dock()
-        self._latch_ineligible_streak = 0
-        cen = (
-            self._cur_centroid.get(self._latched_dock_value)
-            if self._latched_dock_value is not None
-            else None
-        )
-        if cen is not None:
-            self._last_dock_centroid = cen
-
-    def _select_dock(self) -> Optional[int]:
-        """Pick the dock value to latch. On the FIRST latch (no last-known dock
-        centroid yet) use the largest eligible static group -- identical to the
-        pre-g-315-234 `_best_static_dock` argmax, so the first dock chosen is
-        unchanged. On a FORCED re-select after a sustained declassification,
-        prefer the eligible static group NEAREST the last-known dock centroid
-        over the largest (guard-822): a sustained-static structure near where the
-        dock was is far likelier the same lock briefly occluded than the farthest
-        large decoy (the v8 decoy that flipped the attractor in g-315-233)."""
-        if self._last_dock_centroid is None:
-            return self._best_static_dock()  # first latch -- largest, unchanged
-        lr, lc = self._last_dock_centroid
-        best_value: Optional[int] = None
-        best_dist = float("inf")
-        for v in self._cur_count:
-            if not self._eligible_dock(v):
-                continue
-            cen = self._cur_centroid.get(v)
-            if cen is None:
-                continue
-            dist = abs(cen[0] - lr) + abs(cen[1] - lc)
-            if dist < best_dist or (
-                dist == best_dist and (best_value is None or v < best_value)
-            ):
-                best_dist = dist
-                best_value = v
-        return best_value
+        Byte-identical to the previously-inlined median-baseline staticness
+        (g-315-234, guard-822 / rb-2062). Kept as a thin wrapper so existing
+        callers and tests that reference _is_static still work."""
+        return self._latch.is_static(value)
 
     def dock_value(self) -> Optional[int]:
-        """The currently LATCHED dock palette value (see _resolve_dock_latch),
-        or None when no dock has been classified yet. Inspection hook for the
-        explorer + tests."""
-        return self._latched_dock_value
+        """The currently LATCHED dock palette value -- delegates to the
+        env-agnostic StickyLatch core (g-315-250). None when no dock has been
+        classified yet. Inspection hook for the explorer + tests."""
+        return self._latch.latched_id
 
     def dock_centroid(self) -> Optional[tuple[float, float]]:
-        """Current centroid of the LATCHED dock value-group, or None when no
-        dock is latched. The latched VALUE is fixed across ticks (g-315-233) so
-        the closed-loop attractor target does not flip mid-episode; the returned
-        centroid still tracks the latched group's current position (a true static
-        dock drifts 0, within _STATIC_EPS)."""
-        if self._latched_dock_value is None:
-            return None
-        return self._cur_centroid.get(self._latched_dock_value)
+        """Current centroid of the LATCHED dock value-group -- delegates to the
+        env-agnostic StickyLatch core (g-315-250). None when no dock is latched.
+        The latched VALUE is fixed across ticks (g-315-233) so the closed-loop
+        attractor target does not flip mid-episode; the returned centroid still
+        tracks the latched group's current position (a true static dock drifts 0,
+        within _STATIC_EPS)."""
+        return self._latch.latched_centroid
 
     def carried_value(self) -> Optional[int]:
         """The palette VALUE of the carried piece = the non-cursor value-group

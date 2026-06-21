@@ -53,6 +53,7 @@ import os
 from collections import deque
 from typing import Optional
 
+from primitives.cluster_commitment import ClusterCommitment
 from primitives.frontier_coverage import FrontierCoverage
 from primitives.reachability_nav import ReachabilityNav
 from solver_v0.perception import FrameFeatures
@@ -289,12 +290,20 @@ class FrontierCoverageExplorer:
         # mode. Set once a detected target persists (stability gate); cleared on
         # arrival, candidate-vanish, or a steer stall (-> coverage re-engages).
         self._candidate: Optional[tuple[int, int]] = None
-        # g-315-223: sliding window of per-tick detected target cell-sets. Cluster
-        # commitment reads this (cumulative windowed sightings) INSTEAD of a
-        # per-cell consecutive-sighting tally, so detection flicker no longer
-        # starves the lock. Each post-bootstrap tick appends the tick's target set.
-        self._target_window: deque[frozenset[tuple[int, int]]] = deque(
-            maxlen=_TARGET_WINDOW
+        # Env-agnostic windowed-cluster-commitment core (g-315-250): owns the
+        # sliding window of per-tick detected target cell-sets, single-linkage
+        # clustering, sighting-weighted centroids, and persistence/vanish
+        # signals. ARC perception below feeds it per-tick detections
+        # (record_tick) and queries cluster state (clusters / committed_sightings).
+        # Extracted from the inline _target_window/_cluster_targets/
+        # _committed_cluster_sightings per Zachary's generalization directive
+        # (g-315-236) so the SAME primitive can drive cluster commitment in
+        # any environment.
+        self._cc = ClusterCommitment(
+            window_size=_TARGET_WINDOW,
+            cluster_radius=_CLUSTER_RADIUS,
+            min_sightings=_CLUSTER_MIN_SIGHTINGS,
+            vanish_floor=_CLUSTER_VANISH_FLOOR,
         )
         # Consecutive steering ticks with no NET progress; at _STEER_STALL_CAP
         # the candidate is abandoned + exhausted (rb-1690 route-around).
@@ -424,6 +433,15 @@ class FrontierCoverageExplorer:
     def candidate(self) -> Optional[tuple[int, int]]:
         """The locked candidate goal cell being steered toward (None = coverage)."""
         return self._candidate
+
+    @property
+    def _target_window(self) -> "deque[frozenset[tuple[int, int]]]":
+        """Backward-compatible accessor for the cluster-commitment sliding window.
+
+        The window now lives inside the env-agnostic ClusterCommitment core
+        (g-315-250); this property delegates to it so existing tests that poke
+        explorer._target_window.append() still work UNCHANGED."""
+        return self._cc.window
 
     # ---------- hot path ---------- #
 
@@ -719,7 +737,7 @@ class FrontierCoverageExplorer:
         # genuinely-vanished cluster decays out of the window.
         target_set = {(int(t[0]), int(t[1])) for t in targets}
         if self._bootstrap_complete() and self._effects:
-            self._target_window.append(frozenset(target_set))
+            self._cc.record_tick(frozenset(target_set))
 
         # Lock the nearest extent-reachable, non-exhausted cluster's CENTROID as
         # the candidate (coverage -> steering). A cluster abandoned by a prior
@@ -735,7 +753,7 @@ class FrontierCoverageExplorer:
         ):
             eligible = [
                 cl
-                for cl in self._cluster_targets()
+                for cl in self._cc.clusters()
                 if cl["sightings"] >= _CLUSTER_MIN_SIGHTINGS
                 and not self._is_exhausted(cl["centroid"])
                 and self._reachable_extent(cell, cl["centroid"])
@@ -780,7 +798,7 @@ class FrontierCoverageExplorer:
                 # uncovered (the g-315-223 test regression that proved this).
                 self._candidate = None
                 self._steer_best_dist = None
-            elif self._committed_cluster_sightings() <= _CLUSTER_VANISH_FLOOR:
+            elif self._cc.is_vanished(self._candidate):
                 # Persistence: abandon ONLY when the committed cluster genuinely
                 # decayed out of the window. A single missing tick (flicker) is
                 # absorbed by the windowed floor -- the failure the per-tick
@@ -983,79 +1001,22 @@ class FrontierCoverageExplorer:
     # ---------- g-315-223: windowed cluster-commitment goal-seeking ---------- #
 
     def _cluster_targets(self) -> list[dict]:
-        """Single-linkage cluster the windowed target cells (g-315-223).
+        """Delegates to the env-agnostic ClusterCommitment core (g-315-250).
 
-        Flattens self._target_window into per-cell sighting counts (how many of
-        the windowed ticks detected each cell), groups cells within
-        _CLUSTER_RADIUS Manhattan via union-find, and returns one dict per
-        cluster: {"centroid": (r,c), "cells": [...], "sightings": total}. The
-        centroid is the sighting-count-weighted mean (rounded) -- a stable aim-
-        point under per-tick cell jitter. `sightings` sums the per-cell counts in
-        the cluster (CUMULATIVE windowed evidence, not consecutive). Deterministic
-        (cells processed sorted; fixed rounding; result sorted by centroid).
-        Tiny-compute: O(cells^2) over the few cells a small window holds.
-        """
-        counts: dict[tuple[int, int], int] = {}
-        for tickset in self._target_window:
-            for c in tickset:
-                counts[c] = counts.get(c, 0) + 1
-        if not counts:
-            return []
-        cells = sorted(counts)
-        # Union-find: edge between any two cells within _CLUSTER_RADIUS Manhattan.
-        parent = {c: c for c in cells}
-
-        def find(x: tuple[int, int]) -> tuple[int, int]:
-            root = x
-            while parent[root] != root:
-                root = parent[root]
-            while parent[x] != root:  # path compression
-                parent[x], x = root, parent[x]
-            return root
-
-        for i, a in enumerate(cells):
-            for b in cells[i + 1:]:
-                if abs(a[0] - b[0]) + abs(a[1] - b[1]) <= _CLUSTER_RADIUS:
-                    ra, rb = find(a), find(b)
-                    if ra != rb:
-                        if rb < ra:  # deterministic root (smaller tuple wins)
-                            ra, rb = rb, ra
-                        parent[rb] = ra
-        groups: dict[tuple[int, int], list[tuple[int, int]]] = {}
-        for c in cells:
-            groups.setdefault(find(c), []).append(c)
-        clusters: list[dict] = []
-        for members in groups.values():
-            total = sum(counts[c] for c in members)
-            sr = sum(c[0] * counts[c] for c in members)
-            sc = sum(c[1] * counts[c] for c in members)
-            centroid = (int(round(sr / total)), int(round(sc / total)))
-            clusters.append(
-                {"centroid": centroid, "cells": members, "sightings": total}
-            )
-        clusters.sort(key=lambda cl: cl["centroid"])
-        return clusters
+        Byte-identical to the previously-inlined union-find clustering. Kept as a
+        thin wrapper so existing callers and tests that reference _cluster_targets
+        still work."""
+        return self._cc.clusters()
 
     def _committed_cluster_sightings(self) -> int:
-        """Cumulative windowed sightings of the cluster the current _candidate
-        centroid belongs to (g-315-223). Re-clusters the live window and returns
-        the max sightings among clusters whose centroid is within _CLUSTER_RADIUS
-        of _candidate; 0 when the committed cluster has decayed out of the window
-        (the GENUINE-vanish signal, distinct from a one-tick flicker the windowed
-        floor absorbs). Defensive _CLUSTER_MIN_SIGHTINGS when no candidate is set
-        (callers gate on _candidate first)."""
+        """Delegates to the env-agnostic ClusterCommitment core (g-315-250).
+
+        Byte-identical to the previously-inlined committed_sightings. Kept as a
+        thin wrapper so existing callers and tests that reference
+        _committed_cluster_sightings still work."""
         if self._candidate is None:
             return _CLUSTER_MIN_SIGHTINGS
-        best = 0
-        for cl in self._cluster_targets():
-            cen = cl["centroid"]
-            if (
-                abs(cen[0] - self._candidate[0])
-                + abs(cen[1] - self._candidate[1])
-                <= _CLUSTER_RADIUS
-            ):
-                best = max(best, cl["sightings"])
-        return best
+        return self._cc.committed_sightings(self._candidate)
 
     def _maze_knowledge(self) -> int:
         """Monotonic count of position-dependent maze facts discovered this
