@@ -53,11 +53,6 @@ from solver_v2.episode import (
 _RESET_ID: int = 0
 _ACTION6_ID: int = 6
 
-# Deterministic ACTION6 target for the spine stub. A fixed corner cell keeps
-# the plan fully reproducible; the real seed (g-315-134-d) derives the target
-# from perception. Kept in [0,63]^2 per the ARC ACTION6 coordinate contract.
-_DEFAULT_ACTION6_TARGET: tuple[int, int] = (0, 0)
-
 # Directional simple actions (cursor moves). A "click-class" opening frame has
 # ACTION6 (the spatial click) available but NONE of these — the only way to
 # interact is to click a cell (e.g. su15 available=[6,7]). Detected
@@ -85,8 +80,14 @@ def _derive_action_plan(
       3. If nothing strategic is available, fall back to the available ids minus
          RESET (sorted); if even that is empty, fall back to ``[RESET]`` so the
          executor always has a legal pick.
-    ``action6_target`` is the fixed default corner ``(0, 0)`` when ACTION6 is
-    available, else None.
+    ``action6_target`` is always ``None``: there is NO degenerate default. An
+    explicit click coordinate would be supplied only when a provider has a
+    genuine non-``goal_cell`` target (none does today — trusted targeting flows
+    through ``goal_cell`` / executor branch 1); otherwise the executor EXPLORES
+    the click space via a coverage sweep rather than clamping to a constant
+    corner. Stamping ``(0, 0)`` here was the g-315-257 bug (rb-2184): it
+    pre-empted the executor's coverage sweep (branch 3) via branch 2 for every
+    untrusted seed, clicking the corner 120/120 ticks (g-315-258 fix).
 
     Single source of truth (DRY): the oracle and the BitNet provider derive the
     SAME plan from the SAME available actions, so the two providers can never
@@ -102,8 +103,10 @@ def _derive_action_plan(
         plan.append(_ACTION6_ID)
     if not plan:
         plan = sorted(a for a in avail if a != _RESET_ID) or [_RESET_ID]
-    action6_target = _DEFAULT_ACTION6_TARGET if _ACTION6_ID in avail else None
-    return tuple(plan), action6_target
+    # No degenerate default: action6_target stays None. The executor explores the
+    # click space (coverage sweep, branch 3) when there is no explicit target,
+    # instead of clamping to a constant (0,0) corner — g-315-258 / rb-2184.
+    return tuple(plan), None
 
 
 def _most_compact(
@@ -295,8 +298,11 @@ class DeterministicOracleSeedProvider(SeedProvider):
         # (e.g. only ACTION7+RESET) keep objective=unknown. Degrade-safe:
         # goal_cell stays None (objective unknown, confidence 0.0 → is_trusted()
         # False → v1 candidate-cycling) on neither-class frames or when no
-        # unambiguous salient cell is found. The (0,0) action6_target above is
-        # retained as the fallback the executor uses when goal_cell is absent.
+        # unambiguous salient cell is found. action6_target is None (no
+        # degenerate default): when goal_cell is absent the executor EXPLORES the
+        # click space via a coverage sweep, NOT a constant (0,0) corner-click —
+        # the old (0,0) fallback was the g-315-257 unreached-coverage bug
+        # (g-315-258 / rb-2184).
         goal_cell: Optional[tuple[int, int]] = None
         goal_value: Optional[int] = None
         objective = OBJECTIVE_UNKNOWN

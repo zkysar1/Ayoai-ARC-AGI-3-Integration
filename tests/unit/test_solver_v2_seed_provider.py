@@ -22,6 +22,8 @@ from solver_v2.episode import (
     EpisodePrior,
     normalize_objective,
 )
+from solver_v0.perception import extract
+from solver_v2.executor import DeterministicExecutor
 from solver_v2.seed_provider import (
     BitNetSeedProvider,
     DeterministicOracleSeedProvider,
@@ -62,7 +64,9 @@ def test_plan_simple_actions_sorted_then_action6_last() -> None:
     prior = provider.seed(_context((6, 3, 0, 1, 2)))
     # RESET excluded, simple sorted ascending, ACTION6 appended last.
     assert prior.action_plan == (1, 2, 3, 6)
-    assert prior.action6_target == (0, 0)
+    # g-315-258: no degenerate (0,0) default — action6_target is None (the
+    # executor explores via coverage sweep when there is no explicit target).
+    assert prior.action6_target is None
 
 
 def test_plan_without_action6_has_no_target() -> None:
@@ -76,7 +80,8 @@ def test_plan_action6_only_includes_target() -> None:
     provider = DeterministicOracleSeedProvider()
     prior = provider.seed(_context((0, 6)))
     assert prior.action_plan == (6,)
-    assert prior.action6_target == (0, 0)
+    # g-315-258: no degenerate (0,0) default — action6_target is None.
+    assert prior.action6_target is None
 
 
 def test_plan_reset_only_degenerate_fallback() -> None:
@@ -125,10 +130,10 @@ def test_click_class_labels_goal_cell_from_salience() -> None:
     assert prior.objective == OBJECTIVE_TOGGLE_AT_CELL
     assert prior.confidence >= 0.5
     assert prior.is_trusted() is True
-    # ACTION6 still planned; the (0,0) action6_target fallback is retained but
-    # the executor prefers goal_cell when the objective is target-directed.
+    # ACTION6 still planned; targeting flows through goal_cell (executor branch
+    # 1). action6_target carries no degenerate (0,0) default (g-315-258).
     assert 6 in prior.action_plan
-    assert prior.action6_target == (0, 0)
+    assert prior.action6_target is None
 
 
 def test_click_class_goal_cell_is_region_centroid() -> None:
@@ -443,7 +448,8 @@ def test_bitnet_action_plan_is_mechanical() -> None:
     b = bitnet.seed(_bitnet_context(avail))
     o = oracle.seed(_context(avail))
     assert b.action_plan == o.action_plan == (1, 2, 3, 6)
-    assert b.action6_target == o.action6_target == (0, 0)
+    # g-315-258: both providers derive action6_target=None (no (0,0) default).
+    assert b.action6_target is None and o.action6_target is None
 
 
 def test_bitnet_request_body_has_no_game_id() -> None:
@@ -480,7 +486,8 @@ def test_bitnet_network_error_degrades_to_v1() -> None:
     prior = provider.seed(_bitnet_context((6, 1, 2, 3)))
     # Mechanical plan preserved; NOT trusted -> v1 fallback.
     assert prior.action_plan == (1, 2, 3, 6)
-    assert prior.action6_target == (0, 0)
+    # g-315-258: no degenerate (0,0) default on the degrade path either.
+    assert prior.action6_target is None
     assert prior.goal_cell is None
     assert prior.objective == OBJECTIVE_UNKNOWN
     assert prior.confidence == 0.0
@@ -629,3 +636,31 @@ def test_bitnet_degraded_prior_carries_mechanical_plan_reset_only() -> None:
     prior = BitNetSeedProvider(_ENDPOINT, session=sess).seed(_bitnet_context((0,)))
     assert prior.action_plan == (0,)
     assert prior.is_trusted() is False
+
+
+def test_untrusted_pure_action6_seed_reaches_coverage_sweep_live_chain() -> None:
+    # g-315-258 regression-lock (rb-2184): exercises the seed_provider -> executor
+    # CHAIN, not a synthetic prior. g-315-257 found g-315-256's coverage fix
+    # UNREACHED live — the seed provider stamped action6_target=(0,0) (the old
+    # _DEFAULT_ACTION6_TARGET), so the executor's branch 2 (`elif action6_target
+    # is not None`) fired every tick and clicked (0,0) 120/120; branch 3 (the
+    # coverage sweep) never ran. The isolated executor test
+    # (test_action6_explores_when_untrusted_no_target) PASSED throughout because
+    # it constructed action6_target=None DIRECTLY, bypassing the seed provider's
+    # (0,0) stamp. THIS test would FAIL if the degenerate default were
+    # reintroduced, even while that executor test still passes — it is the
+    # missing chain coverage that let g-315-256 ship inert.
+    #
+    # Untrusted pure-ACTION6 seed via the BitNet network-error degrade path
+    # (no goal_cell, confidence 0.0 -> is_trusted() False) — the exact ft09/lp85
+    # live shape. Under the fix action6_target is None, so the executor runs the
+    # coverage sweep and visits >1 distinct coordinate across the episode.
+    sess = _FakeSession(raise_exc=requests.exceptions.ConnectionError("boom"))
+    prior = BitNetSeedProvider(_ENDPOINT, session=sess).seed(_bitnet_context((6,)))
+    assert prior.is_trusted() is False
+    assert prior.action6_target is None  # the fix: no degenerate (0,0) default
+    # Run the LIVE prior through the executor across a 2x2 grid's worth of ticks.
+    ex = DeterministicExecutor()
+    feats = extract([[[1, 2], [3, 4]]], available_actions=[6])
+    coords = {(d.x, d.y) for t in range(4) for d in [ex.execute(prior, feats, t)]}
+    assert len(coords) > 1, f"expected coverage exploration, got degenerate {coords}"
