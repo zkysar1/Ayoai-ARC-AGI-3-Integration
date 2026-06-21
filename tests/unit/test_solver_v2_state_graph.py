@@ -332,3 +332,50 @@ def test_curtailment_falls_back_to_coverage_explorer(monkeypatch):
     assert isinstance(explorer._fallback, FrontierCoverageExplorer)
     assert isinstance(last, ExecutorDecision)
     assert last.action in _LS20_MOVES
+
+
+# ---------------------------------------------------------------------------
+# g-315-253 — cross-episode persistence (reset_episode)
+# ---------------------------------------------------------------------------
+def test_reset_episode_preserves_graph_resets_transient() -> None:
+    """reset_episode() PRESERVES the accumulated masked-state graph (the
+    cross-episode win-condition-discovery frontier) while RESETTING per-episode
+    transient state. This is the mechanism that lets a cached explorer exhaust
+    the frontier across the server's ~82-tick episodes (g-315-253)."""
+    explorer = StateGraphExplorer(_LS20_MOVES, game_class="ls20", seed=0)
+    # Drive several ticks to populate the graph + transient state.
+    for i in range(6):
+        explorer.decide(_features(_scene((1, 1 + (i % 4)), hud_val=i)))
+    graph_before = explorer.node_count
+    assert graph_before >= 1
+    # Dirty the transient fields so the reset is observable.
+    assert explorer._tick > 0
+    explorer._best_score = 7
+    explorer._replay_queue.append(1)
+    explorer._actions_used = 3
+    # Dirty curtailment state: a prior episode that curtailed must NOT leak a
+    # stale fallback across the boundary (g-315-253 fresh-eyes follow-up).
+    explorer._curtailed = True
+    explorer._fallback = FrontierCoverageExplorer(_LS20_MOVES, "ls20")
+
+    explorer.reset_episode()
+
+    # Graph (+ learned effects) PRESERVED across the boundary.
+    assert explorer.node_count == graph_before
+    # Per-episode transient state RESET.
+    assert explorer._tick == 0
+    assert explorer._actions_used == 0
+    assert len(explorer._replay_queue) == 0
+    assert explorer._prev_hash is None
+    assert explorer._prev_action is None
+    assert explorer._prev_cursor is None
+    assert explorer._best_score == 0
+    # Curtailment reset so the reused episode re-attempts graph-driven
+    # exploration; a fresh fallback is built only if it re-curtails.
+    assert explorer._curtailed is False
+    assert explorer._fallback is None
+    # Still a working explorer after reset (graph continues to accumulate).
+    d = explorer.decide(_features(_scene((2, 2), hud_val=9)))
+    assert isinstance(d, ExecutorDecision)
+    assert d.action in _LS20_MOVES
+    assert explorer.node_count >= graph_before

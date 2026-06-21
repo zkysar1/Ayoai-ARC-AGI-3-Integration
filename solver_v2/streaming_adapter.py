@@ -189,6 +189,18 @@ class SolverV2StreamingAdapter:
             os.environ.get("SOLVER_V2_STATE_GRAPH", "").strip().lower()
             in ("1", "true", "yes", "on")
         )
+        # g-315-253 cross-episode StateGraphExplorer cache. Keyed by the SAME
+        # structural features as the g-315-205 AxisMap cache (game_class +
+        # frozenset(available_action_ids)) so a reused explorer accumulates its
+        # masked-state _graph ACROSS the server's ~82-tick episodes -- a single
+        # episode is below the RHAE action budget and can never exhaust the
+        # win-condition DISCOVERY frontier alone (g-315-252 finding). Only the
+        # state-graph route consults it; default-OFF leaves the FCX path
+        # byte-identical. reset_episode() clears per-episode transient state but
+        # preserves the accumulated graph.
+        self._state_graph_cache: dict[
+            tuple[Optional[str], frozenset[int]], StateGraphExplorer
+        ] = {}
 
         # g-315-148 per-EPISODE calibration startup (Apply 2b). For a movement
         # episode, _route_episode() also builds a fresh CalibrationProbe and sets
@@ -823,10 +835,27 @@ class SolverV2StreamingAdapter:
                 # space curtailment fallback (design section 2.6). Same per-tick
                 # decide(features)->ExecutorDecision contract as the coverage
                 # explorer, so the choose_action dispatch is unchanged.
-                self._explorer = StateGraphExplorer(
-                    move_actions_from(available_action_ids),
-                    game_class=self._game_class,
+                # g-315-253: REUSE a cached explorer across episodes (keyed by
+                # structural features, mirroring the g-315-205 AxisMap cache) so
+                # the masked-state _graph accumulates over the server's ~82-tick
+                # episodes -- a single episode is below the RHAE budget and can
+                # never exhaust the discovery frontier alone. reset_episode()
+                # clears per-episode transient state but preserves _graph.
+                sg_key = (
+                    self._game_class,
+                    frozenset(available_action_ids),
                 )
+                cached_sg = self._state_graph_cache.get(sg_key)
+                if cached_sg is not None:
+                    cached_sg.reset_episode()
+                    self._explorer = cached_sg
+                else:
+                    new_sg = StateGraphExplorer(
+                        move_actions_from(available_action_ids),
+                        game_class=self._game_class,
+                    )
+                    self._state_graph_cache[sg_key] = new_sg
+                    self._explorer = new_sg
             else:
                 self._explorer = FrontierCoverageExplorer(
                     move_actions_from(available_action_ids),

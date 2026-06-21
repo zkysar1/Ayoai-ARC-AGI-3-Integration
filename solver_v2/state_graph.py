@@ -253,8 +253,14 @@ class FrameProcessor:
 class StateGraphExplorer:
     """Outer-loop state-graph explorer (design section 2-3).
 
-    Per-episode contract: a fresh instance per episode; the graph resets at the
-    boundary (matching ``FrontierCoverageExplorer``'s per-episode state contract).
+    Per-episode contract: by default a fresh instance per episode (the graph
+    resets at the boundary, matching ``FrontierCoverageExplorer``). When the
+    streaming adapter reuses a cached instance across episodes (g-315-253
+    cross-episode persistence, mirroring the g-315-205 AxisMap cache), call
+    ``reset_episode()`` at each boundary to reset per-episode transient state
+    while PRESERVING the accumulated masked-state ``_graph`` -- so win-condition
+    DISCOVERY can exhaust the frontier across the server's ~82-tick episodes
+    (each below the RHAE action budget on its own).
     ``decide(features) -> ExecutorDecision`` is the same contract the streaming
     adapter dispatches to.
     """
@@ -298,6 +304,51 @@ class StateGraphExplorer:
         self._curtailed: bool = False
         self._fallback: Optional[FrontierCoverageExplorer] = None
         self._curtail_log: list[str] = []
+
+    def reset_episode(self) -> None:
+        """Reset per-episode TRANSIENT state while PRESERVING the accumulated
+        masked-state ``_graph`` (+ learned displacement model, position walls).
+
+        Enables CROSS-EPISODE win-condition DISCOVERY (g-315-253): the ARC
+        Env-Server bounds an ls20 episode at ~82 ticks, below the RHAE action
+        budget, and the prior per-episode-fresh contract rebuilt the graph empty
+        each episode -- so the masked-state frontier could never be exhausted.
+        Reusing one explorer across episodes (the streaming adapter caches it by
+        structural key, mirroring g-315-205's AxisMap cache) lets the frontier
+        accumulate while each episode still gets its full action budget and a
+        clean deferred-observe linkage.
+
+        Resets (episode-local): deferred-observe linkage, tick counter, replay
+        queue, RHAE action-budget usage, the per-episode best-score reward
+        baseline (ARC resets ``score`` to 0 at each episode boundary), and the
+        curtailment flag + fallback explorer -- so each reused episode gets a
+        FRESH FrontierCoverageExplorer if it re-curtails (the fallback's own
+        per-episode-fresh contract), never a stale fallback carried from a
+        prior episode. Because ``_graph`` is PRESERVED, an over-cap graph simply
+        re-curtails on the first new-node registration and rebuilds a clean
+        fallback; an under-cap graph (the ls20 case: ~135 nodes/episode vs the
+        50k cap) resumes graph-driven exploration from the accumulated frontier.
+        Preserves (cross-episode): ``_graph``, the ``_obs``/``_effects``
+        displacement model, ``_blocked_edges`` walls, the cumulative
+        ``_curtail_log`` diagnostic, and the PRNG stream (continuing the
+        sequence keeps exploration diverse rather than replaying the same
+        random choices each episode).
+        """
+        self._prev_hash = None
+        self._prev_action = None
+        self._prev_cursor = None
+        self._prev_cell = None
+        self._prev_score = None
+        self._tick = 0
+        self._replay_queue.clear()
+        self._actions_used = 0
+        self._best_score = 0
+        # Reset curtailment so a reused episode re-attempts graph-driven
+        # exploration; the preserved (possibly over-cap) graph re-curtails on
+        # tick 1 and builds a FRESH fallback, so the fallback's per-episode
+        # contract holds and no stale fallback leaks across the boundary.
+        self._curtailed = False
+        self._fallback = None
 
     # -- public inspection (mirrors FCX's property surface for tests) ----------
     @property

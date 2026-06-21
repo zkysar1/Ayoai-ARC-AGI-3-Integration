@@ -22,6 +22,7 @@ from solver_v2.episode import (
     EpisodePrior,
 )
 from solver_v2.seed_provider import SeedProvider
+from solver_v2.state_graph import StateGraphExplorer
 from solver_v2.streaming_adapter import (
     CACHE_PREDICTION_FAIL_LIMIT,
     DECIDED_BY_SOLVER_V2,
@@ -1174,3 +1175,61 @@ def test_prediction_failure_invalidates_cache() -> None:
     assert adapter.policy is not None
     assert adapter.policy.axis_map is None  # degraded to online basis
     assert adapter._axis_map_source == "cached-invalidated"
+
+
+# ---------------------------------------------------------------------------
+# g-315-253 — cross-episode StateGraphExplorer persistence (CLI --state-graph)
+# ---------------------------------------------------------------------------
+def test_state_graph_explorer_reused_across_episodes() -> None:
+    # g-315-253: with use_state_graph=True, the untrusted-movement route REUSES
+    # one StateGraphExplorer across episodes (cache keyed by game_class +
+    # frozenset(available_action_ids), mirroring the g-315-205 AxisMap cache) so
+    # the masked-state _graph accumulates over the server's ~82-tick episodes. A
+    # fresh instance per episode (the prior contract) rebuilt the graph empty and
+    # could never exhaust the win-condition-DISCOVERY frontier (g-315-252).
+    seed = _ScriptedSeedProvider(_prior(OBJECTIVE_UNKNOWN))
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card",
+        arc_game_id="ls20-test",
+        seed_provider=seed,
+        use_state_graph=True,
+    )
+    # Episode 1: untrusted-movement routes to the StateGraphExplorer (the
+    # use_state_graph variant of the FrontierCoverageExplorer route).
+    d1 = adapter.choose_action(_strategic())
+    assert adapter.exploring is True
+    assert isinstance(adapter.explorer, StateGraphExplorer)
+    assert d1.provenance["executor"] == "StateGraphExplorer"
+    sg1 = adapter.explorer
+    assert len(adapter._state_graph_cache) == 1
+    nodes_after_ep1 = sg1.node_count
+    assert nodes_after_ep1 >= 1
+
+    # Episode 2 boundary: route again with the SAME structural key. The cache
+    # MUST return sg1 (identity) with its accumulated graph preserved, NOT a
+    # fresh empty explorer. _episode_prior (still the ep-1 untrusted-movement
+    # prior) keeps the route on the state-graph branch.
+    (cache_key,) = list(adapter._state_graph_cache.keys())
+    adapter._route_episode(list(cache_key[1]))
+    sg2 = adapter.explorer
+    assert sg2 is sg1  # cache hit -> same instance reused
+    assert len(adapter._state_graph_cache) == 1  # no duplicate entry
+    assert sg2.node_count == nodes_after_ep1  # graph PRESERVED across reset_episode
+    # The per-episode transient state was reset by reset_episode().
+    assert sg2._tick == 0
+    assert sg2._actions_used == 0
+
+
+def test_state_graph_off_by_default_keeps_frontier_explorer() -> None:
+    # g-315-253 reversibility guard: WITHOUT use_state_graph (the default), the
+    # untrusted-movement route stays the FrontierCoverageExplorer byte-identically
+    # and the state-graph cache is never populated. Default-OFF must remain a
+    # no-op so the toggle is safely reversible.
+    seed = _ScriptedSeedProvider(_prior(OBJECTIVE_UNKNOWN))
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card", arc_game_id="ls20-test", seed_provider=seed
+    )
+    d = adapter.choose_action(_strategic())
+    assert d.provenance["executor"] == "FrontierCoverageExplorer"
+    assert not isinstance(adapter.explorer, StateGraphExplorer)
+    assert len(adapter._state_graph_cache) == 0

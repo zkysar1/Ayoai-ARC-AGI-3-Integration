@@ -381,6 +381,37 @@ def main() -> None:
             "Mutually exclusive with --use-solver-v0. g-315-134-a."
         ),
     )
+    parser.add_argument(
+        "--state-graph",
+        action="store_true",
+        help=(
+            "Enable the StateGraphExplorer for untrusted MOVEMENT episodes "
+            "under --use-solver-v2: win-condition DISCOVERY via a masked-frame "
+            "state graph (arxiv 2512.24156 winning method; design/"
+            "v2-state-graph-explorer.md). CLI equivalent of SOLVER_V2_STATE_GRAPH=1 "
+            "-- threads use_state_graph into SolverV2StreamingAdapter so the "
+            "dormant explorer is reachable without an env var (g-315-252 found it "
+            "EXISTS but was default-OFF + not CLI-exposed). Default OFF preserves "
+            "the FrontierCoverageExplorer route byte-identically. No effect "
+            "without --use-solver-v2 (the v2 adapter is the only build site). "
+            "g-315-253."
+        ),
+    )
+    parser.add_argument(
+        "--max-actions",
+        type=int,
+        default=80,
+        help=(
+            "Client-side action cap per play (default 80, matching the legacy "
+            "MAX_ACTIONS constant -- byte-identical when omitted). Raise it for a "
+            "SUSTAINED single-long-episode litmus so the solver-v2 "
+            "StateGraphExplorer can explore more of the masked-state frontier "
+            "within ONE episode: ls20 has no in-play RESET until a score unlocks "
+            "a sublevel, so cross-episode persistence only engages AFTER the "
+            "first score -- reaching the first score needs a longer single "
+            "episode, not more episodes. g-315-253."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -389,6 +420,17 @@ def main() -> None:
     # if/elif precedence below never silently picks one (g-315-134-a).
     if args.use_solver_v0 and args.use_solver_v2:
         parser.error("--use-solver-v0 and --use-solver-v2 are mutually exclusive")
+
+    # --state-graph only takes effect under --use-solver-v2 (the v2 adapter is
+    # the sole StateGraphExplorer build site). Warn rather than error so the
+    # SOLVER_V2_STATE_GRAPH env-var path and harmless no-op invocations still
+    # work unchanged. g-315-253.
+    if args.state_graph and not args.use_solver_v2:
+        logger.warning(
+            "--state-graph has no effect without --use-solver-v2 (the "
+            "StateGraphExplorer is only built on the solver-v2 untrusted-"
+            "movement route); ignoring the flag this run."
+        )
 
     logger.info(f"Connecting to API at: {ROOT_URL}")
 
@@ -601,6 +643,7 @@ def main() -> None:
             ayo_server_key=card_id,
             arc_game_id=args.game,
             seed_provider=v2_seed_provider,
+            use_state_graph=args.state_graph,
         )
     else:
         streaming_client = AyoaiStreamingClient(
@@ -688,7 +731,11 @@ def main() -> None:
             })
 
     # Game loop variables
-    MAX_ACTIONS = 80
+    # CLI-overridable (g-315-253): defaults to 80 (byte-identical to the prior
+    # literal when --max-actions is omitted). Raise it for a SUSTAINED
+    # single-long-episode litmus where the per-episode action cap, not the
+    # graph reset, is the binding constraint on reaching the first score.
+    MAX_ACTIONS = args.max_actions
 
     logger.info(f"Starting game loop for: {args.game}")
 
