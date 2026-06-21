@@ -54,6 +54,7 @@ from collections import deque
 from typing import Optional
 
 from primitives.frontier_coverage import FrontierCoverage
+from primitives.reachability_nav import ReachabilityNav
 from solver_v0.perception import FrameFeatures
 from solver_v0.policy import DIRECTED_MIN_IMPROVEMENT, detect_cursor_and_targets
 from solver_v2.calibration import NOISE_FLOOR_CELLS, dominant_displacement
@@ -258,6 +259,21 @@ class FrontierCoverageExplorer:
         # dicts per Zachary's generalization directive (g-315-236) so the SAME
         # primitive can drive exploration in any environment.
         self._coverage = FrontierCoverage()
+        # Env-agnostic reachability-aware navigation core (g-315-251): owns the
+        # BFS route planner, greedy steering fallback, and knowledge-conditional
+        # target exhaustion. ARC perception below supplies the injected seams
+        # (project_from = _effect_at + grid clipping; is_blocked = _blocked_edges
+        # membership; maze_knowledge = _maze_knowledge). Extracted from the
+        # inline _plan_route/_steer/_is_exhausted per Zachary's generalization
+        # directive (g-315-236) so the SAME primitive can drive navigation in
+        # any environment.
+        self._nav = ReachabilityNav(
+            self._moves,
+            bfs_max_nodes=_BFS_MAX_NODES,
+            steer_stall_cap=_STEER_STALL_CAP,
+            min_improvement=DIRECTED_MIN_IMPROVEMENT,
+            exhaust_radius=_CLUSTER_RADIUS,
+        )
         self._committed: Optional[int] = None
         self._untried: list[int] = list(self._moves)
         self._prev_cursor: Optional[tuple[float, float]] = None
@@ -918,107 +934,51 @@ class FrontierCoverageExplorer:
         return row_ok and col_ok
 
     def _plan_route(self, cell: Optional[tuple[int, int]]) -> Optional[int]:
-        """BFS route toward the candidate over the learned-displacement lattice,
-        skipping observed wall edges (g-315-219 part 2). Returns the FIRST action
-        of the shortest action-path reaching the cell of MINIMUM Manhattan
-        distance to the candidate; None when no reachable cell strictly improves
-        on staying put (cold start / fully walled) -> caller falls back to greedy
-        _steer then coverage. Deterministic (movers ascending; lowest-id path
-        wins ties) and bounded by _BFS_MAX_NODES (tiny-compute, echo Constraint 1).
-
-        Routes AROUND a wall greedy 1-step steering cannot (rb-1690): the column-
-        oscillation trap that locked the ls20 cursor at a fixed row becomes a
-        committed multi-step DOWN path to the reachable row-distant target.
-
-        guard-786 lesson (the seeded-BFS reconstruction bug): recover the first
-        action from the BEST node actually REACHED (always recorded in
-        first_action), never from a literal goal node that may not lie on the
-        +/-5 lattice and so was never enqueued.
+        """BFS route toward the candidate -- delegates to the env-agnostic
+        ReachabilityNav core (g-315-251) with ARC-specific seams: project_from
+        applies _effect_at + int rounding + [0, _GRID_MAX] clipping; is_blocked
+        checks _blocked_edges membership. Behavior is byte-identical to the
+        previously-inlined BFS (rb-1690, guard-786).
         """
         if cell is None or self._candidate is None or not self._effects:
             return None
-        cand = self._candidate
-        start_dist = abs(cell[0] - cand[0]) + abs(cell[1] - cand[1])
-        # first_action[c] = action of the FIRST hop on the shortest path cell->c
-        # (None for the start). BFS => first sighting of a cell is via a shortest path.
-        first_action: dict[tuple[int, int], Optional[int]] = {cell: None}
-        q: deque[tuple[int, int]] = deque([cell])
-        best_cell = cell
-        best_dist = start_dist
-        nodes = 0
-        while q and nodes < _BFS_MAX_NODES:
-            cur = q.popleft()
-            nodes += 1
-            for a in self._moves:  # ascending -> lowest-id path wins ties
-                # g-315-240: position-dependent lookup -- the mover for `a` FROM the
-                # BFS's current cell `cur`, so a route can use that `a` goes LEFT
-                # from the rows40-47/cols24-39 band even though its GLOBAL mode is up
-                # (the convergence the single-global-mode model could not plan).
-                eff = self._effect_at(cur, a)
-                if eff is None:
-                    continue
-                if (cur, a) in self._blocked_edges:
-                    continue  # known wall edge -> route around (rb-1690)
-                nr = int(round(cur[0] + eff[0]))
-                nc = int(round(cur[1] + eff[1]))
-                if not (0 <= nr <= _GRID_MAX and 0 <= nc <= _GRID_MAX):
-                    continue  # off-grid phantom projection -> not a real cell
-                nxt = (nr, nc)
-                if nxt in first_action:
-                    continue  # already reached via an at-least-as-short path
-                first_action[nxt] = a if first_action[cur] is None else first_action[cur]
-                d = abs(nr - cand[0]) + abs(nc - cand[1])
-                if d < best_dist or (d == best_dist and nxt < best_cell):
-                    best_dist = d
-                    best_cell = nxt
-                if d == 0:
-                    return first_action[nxt]  # exact-arrival route
-                q.append(nxt)
-        if best_cell != cell and best_dist < start_dist:
-            return first_action[best_cell]
-        return None
+
+        def _project_from(
+            cur: tuple[int, int], a: int
+        ) -> Optional[tuple[int, int]]:
+            eff = self._effect_at(cur, a)
+            if eff is None:
+                return None
+            nr = int(round(cur[0] + eff[0]))
+            nc = int(round(cur[1] + eff[1]))
+            if not (0 <= nr <= _GRID_MAX and 0 <= nc <= _GRID_MAX):
+                return None
+            return (nr, nc)
+
+        def _is_blocked(cur: tuple[int, int], a: int) -> bool:
+            return (cur, a) in self._blocked_edges
+
+        return self._nav.plan_route(cell, self._candidate, _project_from, _is_blocked)
 
     def _steer(self, cell: Optional[tuple[int, int]]) -> Optional[int]:
-        """Greedy directed step toward the locked candidate goal cell (g-315-217).
-
-        Returns the learned mover whose displacement most reduces the
-        cursor->candidate Manhattan distance by at least DIRECTED_MIN_IMPROVEMENT
-        (ties -> lowest action id, for determinism), or None when no learned
-        mover makes progress -- a cold start (no effect model), a wall, or a maze
-        layout greedy cannot route around. Mirrors the proven greedy core of
-        HandBuiltPolicy._directed_target_action (g-315-132) on the explorer's OWN
-        per-episode _effects model (guard-787: a separate component, never a
-        HandBuiltPolicy widening).
-
-        The net-progress stall accounting and candidate abandonment live in the
-        caller (decide()'s steering branch), NOT here: a per-tick stall reset on
-        any momentary distance reduction let a cursor oscillating around a walled
-        target re-arm the stall forever and re-lock the dead candidate every
-        coverage tick (the g-315-217 livelock). Keeping _steer pure makes the
-        stall a function of NET progress since the lock, owned in one place.
+        """Greedy directed step toward the locked candidate -- delegates to the
+        env-agnostic ReachabilityNav core (g-315-251) with an ARC-specific
+        project_continuous seam: applies _effect_at and returns the FLOAT
+        projected position (no rounding), preserving byte-identical arithmetic
+        with the previously-inlined greedy (rb-1690, guard-787).
         """
         if cell is None or self._candidate is None or not self._effects:
             return None
-        cur_dist = abs(cell[0] - self._candidate[0]) + abs(cell[1] - self._candidate[1])
-        # A candidate qualifies only if its projected Manhattan distance is at
-        # least DIRECTED_MIN_IMPROVEMENT below the current distance.
-        qualify = cur_dist - DIRECTED_MIN_IMPROVEMENT
-        best_action: Optional[int] = None
-        best_dist: Optional[float] = None
-        for a in self._moves:  # ascending -> lowest id wins ties (strict <)
-            # g-315-240: position-dependent mover for `a` FROM the cursor cell, so
-            # greedy steering (the _plan_route fallback) also follows the region's
-            # actual displacement, not the washed-out global mode.
-            eff = self._effect_at(cell, a)
+
+        def _project_continuous(
+            cur: tuple[int, int], a: int
+        ) -> Optional[tuple[float, float]]:
+            eff = self._effect_at(cur, a)
             if eff is None:
-                continue
-            d = abs(cell[0] + eff[0] - self._candidate[0]) + abs(
-                cell[1] + eff[1] - self._candidate[1]
-            )
-            if d <= qualify and (best_dist is None or d < best_dist):
-                best_action = a
-                best_dist = d
-        return best_action
+                return None
+            return (cur[0] + eff[0], cur[1] + eff[1])
+
+        return self._nav.steer(cell, self._candidate, _project_continuous)
 
     # ---------- g-315-223: windowed cluster-commitment goal-seeking ---------- #
 
@@ -1117,36 +1077,15 @@ class FrontierCoverageExplorer:
         centroid: tuple[int, int],
         store: Optional[dict[tuple[int, int], int]] = None,
     ) -> bool:
-        """True iff `centroid` is within _CLUSTER_RADIUS of a cluster abandoned by
-        a steer stall AND no new maze knowledge has been discovered since that
-        stall (g-315-226, refining g-315-223). Radius-matched (not exact) so a
-        jittered re-detection of the same dead cluster does not re-lock it.
-
-        The knowledge gate is the maze-aware change. The g-315-223 permanent set
-        never re-attempted an exhausted target, so a position-dependent-wall maze
-        (guard-689: LEFT walled at row 30, open at row 46) stranded the cursor at
-        closest-approach 12 even when a route existed: the first steer stall (a
-        legitimate detour AWAY from the target to go around a wall reads as
-        no-net-progress) killed the target forever. Now, when route-around
-        coverage grows the wall/mover map beyond the snapshot taken at stall time,
-        the stale exhaustion is dropped and the BFS gets a fresh attempt with the
-        richer position-dependent wall map. Bounded: maze knowledge is finite and
-        monotonic, so re-locks cannot exceed the discoverable edge/mover count ->
-        no livelock (the guarantee the permanent-set version enforced too
-        bluntly). exp-g-315-225."""
-        # store defaults to the cluster _exhausted_targets; the CC path passes
-        # _cc_exhausted so the two target classes never cross-interfere (g-315-241).
+        """Knowledge-conditional exhaustion check -- delegates to the env-agnostic
+        ReachabilityNav core (g-315-251). Store defaults to the cluster
+        _exhausted_targets; the CC path passes _cc_exhausted so the two target
+        classes never cross-interfere (g-315-241). Behavior is byte-identical to
+        the previously-inlined form (g-315-226, rb-2113)."""
         store = self._exhausted_targets if store is None else store
-        current_kb = self._maze_knowledge()
-        for ex in list(store):
-            if abs(ex[0] - centroid[0]) + abs(ex[1] - centroid[1]) <= _CLUSTER_RADIUS:
-                if current_kb > store[ex]:
-                    # Maze knowledge grew since this stall -> re-eligible; drop the
-                    # stale snapshot so it cannot keep matching (g-315-226).
-                    del store[ex]
-                    return False
-                return True
-        return False
+        return self._nav.is_target_exhausted(
+            centroid, self._maze_knowledge(), store
+        )
 
     def _reachable_extent(
         self, cell: tuple[int, int], target: tuple[int, int]

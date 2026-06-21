@@ -14,7 +14,10 @@ callable that maps an action to the cell it would land on). Environment-specific
 perception stays in the environment's solver, which COMPOSES the primitive and
 supplies the seam.
 
-First member: frontier_coverage.FrontierCoverage (g-315-236-c), the
-highest-value primitive identified by g-315-236-a -- usage-balanced
-novelty-seeking turn selection over a visit-count map.
+Members:
+  - frontier_coverage.FrontierCoverage (g-315-236-c): usage-balanced
+    novelty-seeking turn selection over a visit-count map.
+  - reachability_nav.ReachabilityNav (g-315-251): path-distance-aware
+    navigation toward a target with BFS routing, greedy fallback, and
+    knowledge-conditional stall/abandon/exhaust.
 """
