@@ -412,6 +412,27 @@ def main() -> None:
             "episode, not more episodes. g-315-253."
         ),
     )
+    parser.add_argument(
+        "--episodes",
+        type=int,
+        default=1,
+        help=(
+            "Number of consecutive episodes to play through the SAME streaming "
+            "client/adapter (default 1 -- byte-identical to the prior single "
+            "run_game_loop call when omitted). For --use-solver-v2 --state-graph "
+            "click-class games (ft09/lp85), the SolverV2StreamingAdapter's "
+            "_click_state_graph_cache persists across episodes, so re-RESETing into "
+            "the SAME adapter EXERCISES the cross-episode masked-state graph for "
+            "SCORE-0 games -- the harness g-315-265 found missing (run_game_loop "
+            "plays ONE game/process and breaks on WIN/GAME_OVER, so the in-play "
+            "RESET cache-reuse path never fires at score 0). Each episode does its "
+            "own ADD/play/DELETE; the scorecard stays open across all N. Per-episode "
+            "cross-episode graph growth (node_count/live/inert) + the reward-lock "
+            "state are logged so coverage accumulation across episodes is "
+            "observable -- the causal-isolation signal separating 'harness works + "
+            "cold-start barrier holds' from 'harness buggy'. g-315-266."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -742,18 +763,64 @@ def main() -> None:
     # Game loop extracted to run_game_loop() in g-315-22 so the
     # §3.4 ADD/UPDATE/DELETE lifecycle wire-in is testable in isolation.
     # action_sender wraps send_action so the helper has no requests.Session
-    # coupling — the live API call still happens inside the lambda.
-    action_counter, elapsed = run_game_loop(
-        streaming_client,
-        lambda action, guid, x, y: send_action(
+    # coupling — the live API call still happens inside the closure.
+    def _action_sender(
+        action: GameAction,
+        guid: str | None,
+        x: int | None,
+        y: int | None,
+    ) -> FrameData | None:
+        return send_action(
             session, args.game, card_id, action, guid, x=x, y=y,
-        ),
-        FrameData(score=0),
-        recorder=recorder,
-        max_actions=MAX_ACTIONS,
-        game_id=args.game,
-        log=logger,
-    )
+        )
+
+    # Multi-episode harness (g-315-266): play args.episodes consecutive episodes
+    # through the SAME streaming_client so an adapter-level cross-episode cache
+    # (SolverV2StreamingAdapter._click_state_graph_cache) accumulates across
+    # episodes. episodes=1 (default) runs exactly ONE run_game_loop call --
+    # byte-identical to the pre-g-315-266 single-episode path. Each episode gets a
+    # fresh NOT_PLAYED initial frame (the adapter RESETs it to a real ARC frame);
+    # run_game_loop owns the per-episode ADD/UPDATE/DELETE lifecycle. The scorecard
+    # (opened above) stays open across all episodes and closes once below.
+    action_counter = 0
+    elapsed = 0.0
+    # Adapter-level cross-episode inspection: present only on the solver-v2 adapter
+    # (None on AyoaiStreamingClient / solver-v0). getattr keeps the harness
+    # decision-source-agnostic.
+    _csg_stats = getattr(streaming_client, "click_explorer_stats", None)
+    _episodes = max(1, args.episodes)
+    for _ep in range(_episodes):
+        ep_actions, ep_elapsed = run_game_loop(
+            streaming_client,
+            _action_sender,
+            FrameData(score=0),
+            recorder=recorder,
+            max_actions=MAX_ACTIONS,
+            game_id=args.game,
+            log=logger,
+        )
+        action_counter += ep_actions
+        elapsed += ep_elapsed
+        if _episodes > 1:
+            # Cross-episode graph-growth + reward-lock observability (g-315-266).
+            # Stats come from the adapter's PERSISTENT click-explorer cache, so
+            # they reflect ACCUMULATION across episodes, not just this episode.
+            stats = _csg_stats() if callable(_csg_stats) else None
+            if stats is not None:
+                logger.info(
+                    f"[episode {_ep + 1}/{_episodes}] {args.game} - "
+                    f"actions {ep_actions}, cross-episode graph: "
+                    f"nodes {stats['node_count']}, live {stats['live']}, "
+                    f"inert {stats['inert']}, win_lock "
+                    f"{'SET' if stats['learned_win_hash'] else 'none'}, "
+                    f"curtailed {stats['curtailed']}"
+                )
+            else:
+                logger.info(
+                    f"[episode {_ep + 1}/{_episodes}] {args.game} - "
+                    f"actions {ep_actions} (no click-explorer cache; not a "
+                    f"solver-v2 click-class route)"
+                )
 
     # Log final stats
     fps = action_counter / elapsed if elapsed > 0 else 0

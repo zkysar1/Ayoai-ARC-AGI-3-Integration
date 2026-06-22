@@ -764,6 +764,18 @@ class ClickStateGraphExplorer:
         # (O(1) target lookup; updated only when a new node beats the best).
         self._best_ord: float = -1.0
         self._best_ord_hash: Optional[str] = None
+        # -- reward-confirmed cross-episode win-config lock (g-315-266) ----------
+        # The orderedness target above is an UNSUPERVISED proxy (max-orderedness),
+        # never reward-confirmed. _learned_win_hash captures the masked-state hash
+        # of the config that PRODUCED a score increase -- the reward-confirmed
+        # target. Like _graph / _inert / _live / _best_ord_hash it PERSISTS across
+        # the server's short episodes (NOT reset in reset_episode), so once any
+        # episode reaches a scoring config the lock survives into subsequent
+        # episodes and _hypothesize_target steers toward the PROVEN win-config in
+        # preference to the orderedness proxy. _learned_win_score tracks the best
+        # reward seen so a higher-scoring config (cross-episode) supersedes it.
+        self._learned_win_hash: Optional[str] = None
+        self._learned_win_score: int = 0
 
     def reset_episode(self) -> None:
         """Reset per-episode transient state while PRESERVING the accumulated
@@ -804,6 +816,13 @@ class ClickStateGraphExplorer:
     @property
     def replay_active(self) -> bool:
         return bool(self._replay_queue)
+
+    @property
+    def learned_win_hash(self) -> Optional[str]:
+        """The reward-confirmed cross-episode win-config hash, or ``None`` until a
+        score increase has locked one (g-315-266). Public for cross-episode
+        harness inspection + tests."""
+        return self._learned_win_hash
 
     # -- helpers ----------------------------------------------------------------
     def _sync_dims(self, features: FrameFeatures) -> None:
@@ -881,11 +900,17 @@ class ClickStateGraphExplorer:
     # -- goal-recognition (g-315-264): hypothesise-target + score-by-distance,
     # the click-class analogue of the movement explorer's lock-target + _steer ---
     def _hypothesize_target(self) -> Optional[str]:
-        """The hypothesised target config = the most-ordered masked state seen this
-        run (max ``_config_orderedness``), by hash. The movement explorer's
-        lock-nearest-stable-target analogue, with a target CONFIG instead of a target
-        CELL. O(1) (running max). ``None`` until a node has been scored (early
-        ticks)."""
+        """The hypothesised target config. PREFERS the reward-confirmed
+        ``_learned_win_hash`` (g-315-266) -- a config PROVEN to score, persisted
+        across episodes -- over the unsupervised max-orderedness proxy
+        ``_best_ord_hash``. Until any episode reaches a scoring config the lock is
+        ``None`` and the orderedness proxy is the fallback target (byte-identical to
+        the pre-g-315-266 behaviour). The movement explorer's
+        lock-nearest-stable-target analogue, with a target CONFIG instead of a
+        target CELL. O(1). ``None`` until a node has been scored OR a reward has
+        fired (early ticks)."""
+        if self._learned_win_hash is not None:
+            return self._learned_win_hash
         return self._best_ord_hash
 
     def _control_mean_effect(self, cell: int) -> Optional[float]:
@@ -997,6 +1022,17 @@ class ClickStateGraphExplorer:
         #    shortest cell-click path to here and queue it for replay (RHAE).
         if self._prev_score is not None and score > self._prev_score:
             self._best_score = max(self._best_score, score)
+            # Reward-confirmed cross-episode win-config lock (g-315-266): the
+            # transition INTO cur_hash scored, so cur_hash is a reward-confirmed
+            # target config. Lock it (persists across episodes via the persistent
+            # fields above -- reset_episode does NOT clear it) and update only when
+            # a higher-scoring config supersedes it, so the first reward sets the
+            # lock and a better reward (possibly in a later episode) replaces it.
+            # _hypothesize_target then prefers this proven target over the
+            # unsupervised max-orderedness proxy.
+            if score > self._learned_win_score:
+                self._learned_win_hash = cur_hash
+                self._learned_win_score = score
             path = self._shortest_path_cells(cur_hash)
             if path:
                 self._replay_queue = deque(path)

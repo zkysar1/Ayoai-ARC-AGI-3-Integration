@@ -347,6 +347,29 @@ class SolverV2StreamingAdapter:
         present). Mutually exclusive with use_policy (g-315-214)."""
         return self._exploring
 
+    def click_explorer_stats(self) -> Optional[dict[str, object]]:
+        """Cross-episode ClickStateGraphExplorer accumulation stats, or ``None``
+        when no click-class explorer has been cached yet (g-315-266 harness
+        inspection). The ``_click_state_graph_cache`` persists across episodes on
+        this adapter instance, so a multi-episode driver reads this AFTER each
+        episode to observe whether the masked-state graph + live/inert partition
+        GROW across episodes -- the causal-isolation signal (graph growth proves
+        the harness exercises g-315-253's cross-episode design, independent of
+        whether the score moves). When more than one click-class key is cached
+        (distinct available-action sets), reports the one with the largest graph."""
+        explorers = list(self._click_state_graph_cache.values())
+        if not explorers:
+            return None
+        csg = max(explorers, key=lambda e: e.node_count)
+        return {
+            "node_count": csg.node_count,
+            "live": len(csg.live_cells),
+            "inert": len(csg.inert_cells),
+            "learned_win_hash": csg.learned_win_hash,
+            "curtailed": csg.curtailed,
+            "cached_keys": len(explorers),
+        }
+
     def close(self) -> None:
         # No session, socket, or file handle to release. Match the
         # context-manager contract so callers can do `with adapter as x:`.
