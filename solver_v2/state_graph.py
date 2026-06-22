@@ -135,7 +135,58 @@ eligible again for configuration search -- the cap breaks fixation without
 permanently retiring a live control. Small relative to the RHAE action budget so a
 genuine multi-control config search still has room."""
 
+_CLICK_OPTIMISTIC_DELTA: float = 0.01
+"""Explore bonus (g-315-264): an untested-from-here live control whose learned
+orderedness-effect is unknown is scored as if it yields this small positive
+orderedness gain, so the graph keeps expanding -- but a control with a LARGER
+learned positive effect is still preferred (exploitation wins once a consolidating
+control is learned). Small relative to a meaningful orderedness delta; a universal
+exploration-policy tunable, no game-specific value (invariant: generalises)."""
+
+_CLICK_ORDEREDNESS_EPS: float = 1e-9
+"""Float tie-tolerance for orderedness comparisons -- controls whose expected
+resulting orderedness ties within EPS are broken by the seeded PRNG (deterministic
++ diverse, never a fixed-index argmax bias)."""
+
 _UNTESTED = ""  # sentinel for an outgoing edge whose successor is not yet known
+
+
+def _config_orderedness(
+    comps: list[tuple[int, int, tuple[int, int, int, int]]],
+) -> float:
+    """Structural orderedness proxy of a masked config (g-315-264).
+
+    The click-class win-condition is a CONFIGURATION SEARCH (g-315-260): the solver
+    must reach a TARGET config, but no score signal reveals which one single-episode.
+    The recognition mechanism HYPOTHESISES that a "solved" config is more ORDERED --
+    consolidated into fewer, larger structural components -- than the scattered
+    intermediate states a blind sweep produces. This is the movement-class
+    goal-recognition's target-CELL analogue (g-315-216 transfer): a target CONFIG
+    scored by an orderedness proxy.
+
+    Computed from the SAME connected-component signature the node hash already uses
+    (``FrameProcessor._components``: ``(palette_value, size, bbox)`` per CC, HUD +
+    background excluded) -- O(comps), no extra frame pass, no palette/coord literal
+    (generalisation-preserving). Two bounded sub-signals, each in (0, 1]:
+      * consolidation = largest-component cells / total structural cells (one big
+        blob -> 1.0; scattered fragments -> low);
+      * parsimony     = 1 / component-count (a single component -> 1.0; many -> low).
+    Returns their mean in (0, 1]; 0.0 for an empty (all-background) config.
+
+    HYPOTHESIS, not fact (YES@0.58): whether THIS proxy is the win-config signal for
+    ft09/lp85 is what the live litmus tests. Alternative proxies (value-entropy,
+    symmetry) swap in here WITHOUT touching the recognition architecture if the
+    litmus is negative -- the architecture-transfer claim (g-315-264) is independent
+    of the proxy choice."""
+    if not comps:
+        return 0.0
+    sizes = [size for _, size, _ in comps]
+    total = sum(sizes)
+    if total <= 0:
+        return 0.0
+    consolidation = max(sizes) / total
+    parsimony = 1.0 / len(comps)
+    return 0.5 * consolidation + 0.5 * parsimony
 
 
 @dataclass
@@ -168,6 +219,9 @@ class FrameProcessor:
         self._occ_count: dict[int, int] = {}
         self._frames_seen: int = 0
         self._hud_frozen: Optional[frozenset[int]] = None
+        # Component signature of the most recently hashed frame (g-315-264), so the
+        # click explorer can read an orderedness proxy without a 2nd CC pass.
+        self._last_comps: list[tuple[int, int, tuple[int, int, int, int]]] = []
 
     # -- HUD behaviour tracking ------------------------------------------------
     def _update_change_rates(self, values: list[int]) -> None:
@@ -270,8 +324,16 @@ class FrameProcessor:
         boundary), never as a hardcoded ls20 index (invariant 1)."""
         self._update_change_rates(features.values)
         comps = self._components(features, self.hud_cells())
+        self._last_comps = comps
         digest = hashlib.blake2b(repr(comps).encode("utf-8"), digest_size=16)
         return digest.hexdigest()
+
+    def last_orderedness(self) -> float:
+        """Orderedness proxy of the config most recently ``hash``ed this episode
+        (g-315-264). Reuses the cached component signature -- a single CC pass per
+        tick. MUST be called after ``hash(features)`` for the same frame; the click
+        explorer's ``decide`` does exactly that (hash first, orderedness next)."""
+        return _config_orderedness(self._last_comps)
 
 
 class StateGraphExplorer:
@@ -682,6 +744,26 @@ class ClickStateGraphExplorer:
         self._last_cell: Optional[int] = None
         self._run_len: int = 0
         self._cooldown: dict[int, int] = {}
+        # -- goal-recognition (g-315-264): the click-class analogue of the movement
+        # explorer's target-cell recognition + learned displacement model
+        # (frontier_explorer _effects / _steer). Instead of steering a cursor toward
+        # a target CELL by learned per-action DISPLACEMENT, steer the CONFIG toward a
+        # target CONFIG (the most-ordered state seen) by learned per-control
+        # ORDEREDNESS-EFFECT. All persist with _graph across the server's short
+        # episodes (NOT reset in reset_episode), so the learned control model
+        # accumulates -- mirrors the _inert/_live persistence.
+        # Per-state orderedness, keyed by masked-state hash (parallel to _graph).
+        self._node_orderedness: dict[str, float] = {}
+        # Per-control learned orderedness-effect: cell -> (sum_delta, count). Its
+        # mean is the expected orderedness change from firing the control -- the
+        # config-space analogue of _effects[action] (modal displacement). An
+        # oscillating control averages to ~0 (its toggles cancel) and is
+        # deprioritised; a consolidating control accrues a positive mean.
+        self._control_effect: dict[int, tuple[float, int]] = {}
+        # Running max orderedness + its hash = the hypothesised target config
+        # (O(1) target lookup; updated only when a new node beats the best).
+        self._best_ord: float = -1.0
+        self._best_ord_hash: Optional[str] = None
 
     def reset_episode(self) -> None:
         """Reset per-episode transient state while PRESERVING the accumulated
@@ -796,11 +878,77 @@ class ClickStateGraphExplorer:
                 f"click-curtailment: |V|={len(self._graph)} > {_MAX_GRAPH_NODES}"
             )
 
+    # -- goal-recognition (g-315-264): hypothesise-target + score-by-distance,
+    # the click-class analogue of the movement explorer's lock-target + _steer ---
+    def _hypothesize_target(self) -> Optional[str]:
+        """The hypothesised target config = the most-ordered masked state seen this
+        run (max ``_config_orderedness``), by hash. The movement explorer's
+        lock-nearest-stable-target analogue, with a target CONFIG instead of a target
+        CELL. O(1) (running max). ``None`` until a node has been scored (early
+        ticks)."""
+        return self._best_ord_hash
+
+    def _control_mean_effect(self, cell: int) -> Optional[float]:
+        """Mean learned orderedness-effect of firing ``cell`` -- the movement
+        ``dominant_displacement`` analogue (the expected effect over observed
+        samples). ``None`` if never observed."""
+        eff = self._control_effect.get(cell)
+        if not eff or eff[1] == 0:
+            return None
+        return eff[0] / eff[1]
+
+    def _select_live_by_recognition(
+        self, node: _Node, untested_live: list[int]
+    ) -> int:
+        """Pick the untested live control expected to move the config's orderedness
+        FURTHEST toward (or beyond) the hypothesised target config -- goal-directed
+        configuration search replacing the prior ``_rng.choice`` (g-315-262
+        first-cell fixation: random live selection has NO model of WHICH config it is
+        steering toward). The movement explorer's ``_steer`` analogue: there, the
+        action whose learned displacement most reduces cursor->target-cell distance;
+        here, the control whose learned orderedness-effect most reduces the
+        config->target-config orderedness gap.
+
+        Falls back to ``_rng.choice`` when no target exists yet (early ticks) or the
+        current config is already AT the best orderedness seen (no gradient) -- so the
+        broad sweep still discovers controls before the recognition signal is
+        meaningful, and keeps probing for a more-ordered config once at the best.
+        Ties (within EPS) break via the seeded PRNG: deterministic + diverse, never a
+        fixed-index bias. The fixation guard (step 5) still caps any single control's
+        commit run, so recognition cannot re-introduce fixation."""
+        target = self._hypothesize_target()
+        if target is None:
+            return self._rng.choice(untested_live)
+        target_ord = self._node_orderedness.get(target, 0.0)
+        cur_ord = self._node_orderedness.get(node.state_hash, 0.0)
+        if target_ord - cur_ord <= _CLICK_ORDEREDNESS_EPS:
+            # Already at the most-ordered config seen -> no recognition gradient.
+            # Explore (sweep-like) to discover a MORE-ordered config.
+            return self._rng.choice(untested_live)
+        best_cells: list[int] = []
+        best_est: Optional[float] = None
+        for c in untested_live:
+            mean_eff = self._control_mean_effect(c)
+            # Expected orderedness AFTER firing c (higher = closer to / beyond the
+            # target). Unknown effect -> optimistic explore bonus (graph expansion),
+            # capped below a strongly-consolidating known control so exploitation
+            # wins once such a control is learned.
+            est = cur_ord + (
+                mean_eff if mean_eff is not None else _CLICK_OPTIMISTIC_DELTA
+            )
+            if best_est is None or est > best_est + _CLICK_ORDEREDNESS_EPS:
+                best_est = est
+                best_cells = [c]
+            elif abs(est - best_est) <= _CLICK_ORDEREDNESS_EPS:
+                best_cells.append(c)
+        return self._rng.choice(best_cells)
+
     # -- main contract ----------------------------------------------------------
     def decide(self, features: FrameFeatures) -> ExecutorDecision:
         self._tick += 1
         self._sync_dims(features)
         cur_hash = self._processor.hash(features)
+        cur_ord = self._processor.last_orderedness()
         score = features.score if features.score is not None else 0
 
         # 1. Deferred-observe: the click issued LAST tick produced THIS frame.
@@ -818,6 +966,17 @@ class ClickStateGraphExplorer:
                 # LIVE: this cell drove a masked-state transition.
                 self._live.add(self._prev_cell)
                 self._inert.discard(self._prev_cell)
+                # Recognition (g-315-264): attribute the orderedness CHANGE this
+                # transition produced to the control that caused it -- the learned
+                # per-control effect model (movement _obs[action] analogue). prev's
+                # orderedness was stored when prev was the current node.
+                prev_ord = self._node_orderedness.get(self._prev_hash)
+                if prev_ord is not None:
+                    s, n = self._control_effect.get(self._prev_cell, (0.0, 0))
+                    self._control_effect[self._prev_cell] = (
+                        s + (cur_ord - prev_ord),
+                        n + 1,
+                    )
 
         # 2. Register the current node.
         node = self._graph.get(cur_hash)
@@ -825,6 +984,14 @@ class ClickStateGraphExplorer:
             node = _Node(state_hash=cur_hash, first_seen_tick=self._tick)
             self._graph[cur_hash] = node
             self._maybe_curtail()
+        # Recognition (g-315-264): store this config's orderedness (stable per
+        # masked-state hash) and track the running-max config = the hypothesised
+        # target. First-sight only; idempotent (pure fn of the hash).
+        if cur_hash not in self._node_orderedness:
+            self._node_orderedness[cur_hash] = cur_ord
+            if cur_ord > self._best_ord:
+                self._best_ord = cur_ord
+                self._best_ord_hash = cur_hash
 
         # 3. Reward: a score increase is a discovered winning transition. BFS the
         #    shortest cell-click path to here and queue it for replay (RHAE).
@@ -848,7 +1015,7 @@ class ClickStateGraphExplorer:
                 c for c in self._live if c not in node.tested and c not in cooling
             )
             if untested_live:
-                cell = self._rng.choice(untested_live)
+                cell = self._select_live_by_recognition(node, untested_live)
             else:
                 cell = self._next_sweep_cell()
 
