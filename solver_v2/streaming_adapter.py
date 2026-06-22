@@ -70,7 +70,7 @@ from solver_v2.episode import (
 from solver_v2.executor import DeterministicExecutor, ExecutorDecision
 from solver_v2.frontier_explorer import FrontierCoverageExplorer
 from solver_v2.seed_provider import DeterministicOracleSeedProvider, SeedProvider
-from solver_v2.state_graph import StateGraphExplorer
+from solver_v2.state_graph import ClickStateGraphExplorer, StateGraphExplorer
 from solver_v2.toggle_probe import ToggleProbe, cell_under_cursor, toggle_candidates
 from structs import FrameData, GameAction, GameState
 
@@ -177,7 +177,9 @@ class SolverV2StreamingAdapter:
         # coverage; rb-1690-safe — not greedy). _exploring fixes the route at the
         # boundary; _explorer holds the current episode's instance (fresh per
         # episode, like _policy). Reset in _route_episode at every boundary.
-        self._explorer: Optional[FrontierCoverageExplorer | StateGraphExplorer] = None
+        self._explorer: Optional[
+            FrontierCoverageExplorer | StateGraphExplorer | ClickStateGraphExplorer
+        ] = None
         self._exploring: bool = False
         # g-315-230: state-graph explorer toggle (DEFAULT OFF -> byte-identical to
         # the g-315-214 FrontierCoverageExplorer route). When enabled (constructor
@@ -200,6 +202,19 @@ class SolverV2StreamingAdapter:
         # preserves the accumulated graph.
         self._state_graph_cache: dict[
             tuple[Optional[str], frozenset[int]], StateGraphExplorer
+        ] = {}
+        # g-315-261 cross-episode ClickStateGraphExplorer cache. SAME structural
+        # key as _state_graph_cache (game_class + frozenset(available_action_ids))
+        # and SAME cross-episode rationale (g-315-253): a click-class episode is
+        # below the RHAE action budget and cannot exhaust the config-search
+        # frontier alone, so the masked-state _graph (+ the _inert/_live cell
+        # partition) must accumulate across the server's ~82-tick episodes. Only
+        # the click-class state-graph route consults it; default-OFF
+        # (_use_state_graph False) leaves the DeterministicExecutor click path
+        # byte-identical. reset_episode() clears per-episode transient state but
+        # preserves _graph / _inert / _live.
+        self._click_state_graph_cache: dict[
+            tuple[Optional[str], frozenset[int]], ClickStateGraphExplorer
         ] = {}
 
         # g-315-148 per-EPISODE calibration startup (Apply 2b). For a movement
@@ -864,6 +879,56 @@ class SolverV2StreamingAdapter:
             # The explorer is NOT the HandBuiltPolicy route: clear _use_policy /
             # _policy so choose_action dispatches to the explorer branch. No
             # CalibrationProbe / axis_map (the explorer learns displacement online).
+            self._use_policy = False
+            self._policy = None
+            self._probe = None
+            self._calibrating = False
+        elif (
+            prior is not None
+            and _ACTION6_ID in available_action_ids
+            and self._use_state_graph
+        ):
+            # g-315-261: a CLICK-class episode (ACTION6 available) on the
+            # state-graph route. The DeterministicExecutor click path
+            # (g-315-138/139/142) clicks the seed goal_cell under a confidence
+            # gate then blind-sweeps -- but click-class games have SPARSE
+            # interactive cells (g-315-260 finding: 92-97% of clicks are NO-OPS;
+            # a few LIVE cells drive structured state transitions; unique-state
+            # ratio LOW -- ft09 8.3%, lp85 3.3%). Win is CONFIGURATION SEARCH over
+            # the sparse live controls, NOT blind coverage. The
+            # ClickStateGraphExplorer reuses the masked-frame state-graph
+            # machinery (FrameProcessor hash + _Node graph + score-reward
+            # shortest-path replay) with an ACTION6-(x,y) action model: a click
+            # whose post-frame masked hash is UNCHANGED marks that cell INERT
+            # (no-op dedup -> never re-clicked); a click that drives a transition
+            # marks the cell LIVE and config-searches the live set. guard-818-safe:
+            # g-315-260 measured the unique-state ratio FIRST (state-graph dedup is
+            # IDEAL for the low-ratio click-class regime). Mutually exclusive with
+            # the movement elif above (_ACTION6_ID NOT in available there; IN
+            # available here) and with the trusted steering if (which has
+            # precedence, so a trusted toggle_at_cell with ACTION6 keeps its
+            # g-315-201 arrival-click route). Reversible: _use_state_graph OFF ->
+            # click-class falls to the DeterministicExecutor else below,
+            # byte-identical to pre-g-315-261. g-315-253 cross-episode REUSE via
+            # _click_state_graph_cache so the discovery graph accumulates over the
+            # server's ~82-tick episodes.
+            self._exploring = True
+            csg_key = (
+                self._game_class,
+                frozenset(available_action_ids),
+            )
+            cached_csg = self._click_state_graph_cache.get(csg_key)
+            if cached_csg is not None:
+                cached_csg.reset_episode()
+                self._explorer = cached_csg
+            else:
+                new_csg = ClickStateGraphExplorer(game_class=self._game_class)
+                self._click_state_graph_cache[csg_key] = new_csg
+                self._explorer = new_csg
+            # The explorer is NOT the HandBuiltPolicy route: clear _use_policy /
+            # _policy so choose_action dispatches to the explorer branch. No
+            # CalibrationProbe / axis_map (click-class has no move-actions to
+            # calibrate; the explorer learns the live-cell set online).
             self._use_policy = False
             self._policy = None
             self._probe = None

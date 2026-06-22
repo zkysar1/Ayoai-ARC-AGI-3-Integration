@@ -59,6 +59,7 @@ from solver_v2.calibration import (
     move_actions_from,
 )
 from solver_v2.executor import ExecutorDecision
+from solver_v2.action6_explore import explore_action6_coord
 from solver_v2.frontier_explorer import FrontierCoverageExplorer
 
 # ---------------------------------------------------------------------------
@@ -110,6 +111,10 @@ re-explored."""
 _RHAE_MULT: int = 5
 
 _GRID_MAX: int = 63
+
+_ACTION6_ID: int = 6
+"""ARC complex-action id (structs.py ACTION6). The click-class explorer emits
+ExecutorDecision(action=_ACTION6_ID, x=col, y=row) -- no move actions."""
 
 _UNTESTED = ""  # sentinel for an outgoing edge whose successor is not yet known
 
@@ -566,3 +571,250 @@ class StateGraphExplorer:
         self._prev_cell = cur_cell
         self._prev_score = score
         return ExecutorDecision(action=int(action), x=None, y=None)
+
+
+class ClickStateGraphExplorer:
+    """Click-class (ACTION6) analogue of StateGraphExplorer (g-315-261).
+
+    The StateGraphExplorer above is cursor/move-based: its action space is the
+    move-actions and ``decide`` returns a simple ACTION1-5. Click-class games
+    (vc33/ft09/lp85 -- ACTION6 available, no useful movable cursor) have a
+    fundamentally different action space: an ACTION6 click at a grid cell
+    (x, y). g-315-258/259 proved a blind coverage SWEEP of that space reaches
+    every cell but never SCORES; g-315-260's offline frame-diff then
+    characterised WHY -- click-class win-conditions are CONFIGURATION SEARCH
+    over a SPARSE set of interactive cells. The vast majority of cells are inert
+    (ft09 111/120, lp85 117/120 clicks were no-ops); a few LIVE cells drive
+    structured state transitions (ft09 a local ~38-cell toggle, lp85 a
+    near-global value-permutation). The decisive measurement: the unique
+    masked-state ratio is LOW (ft09 8.3%, lp85 3.3% distinct vs ls20 ~100%), so
+    the masked-frame state graph -- inert on the always-unique movement class --
+    is the RIGHT tool here: it prunes the no-op clicks and concentrates
+    exploration on the live cells (guard-818: the unique-state ratio was
+    measured BEFORE this explorer was built; g-315-260).
+
+    REUSES the action-agnostic machinery the move explorer is built from --
+    ``FrameProcessor`` (masked-frame hash), ``_Node`` (the action key is a cell
+    linear-index instead of a move id), the score-delta reward + shortest-path
+    replay, and the ``_MAX_GRAPH_NODES`` curtailment ceiling. The ONLY new
+    primitive is the click-action model:
+
+      * candidate cells come from ``explore_action6_coord`` (the g-315-256
+        golden-ratio coverage sweep) so coverage order is inherited, not
+        reinvented;
+      * NO-OP DEDUP: when a click leaves the masked state unchanged (post-click
+        hash == pre-click hash) the cell is marked INERT and never swept again
+        -- the structural fix for the 92-97% no-op waste g-315-260 measured;
+      * LIVE cells (a click that changed the masked state) are remembered and
+        re-fired from newly-reached states -- configuration search via the
+        sparse controls, not blind coverage.
+
+    Three gates (mirrors StateGraphExplorer): (1) tiny-compute -- per tick is one
+    blake2b hash + dict lookups + a candidate pick from a shrinking set, O(1)
+    amortised, node count bounded by curtailment; (2) framework-routed -- wired
+    into ``_route_episode`` on the click-class route, every tick keeps
+    decided_by="solver-v2", reward read from FrameData.score; (3) generalization-
+    preserving -- the live/inert split is DISCOVERED via no-op dedup, never a
+    hardcoded ft09/lp85 cell; the coverage sweep adapts to any grid size.
+    """
+
+    def __init__(
+        self,
+        game_class: Optional[str] = None,
+        *,
+        width: int = 64,
+        height: int = 64,
+        seed: int = 0,
+    ) -> None:
+        self._game_class = game_class
+        self._w = int(width) if width else 64
+        self._h = int(height) if height else 64
+        self._processor = FrameProcessor()
+        self._graph: dict[str, _Node] = {}
+        # Deterministic PRNG -- live-control choice must be replayable/offline-
+        # testable (mirrors StateGraphExplorer seed contract).
+        self._rng = random.Random(seed)
+        # Candidate-cell coverage sweep cursor (golden-ratio permutation index).
+        self._click_index: int = 0
+        # Cells proven no-op (post-click masked state unchanged) -- pruned from
+        # the sweep. An inert cell stays inert for the explorer's life.
+        self._inert: set[int] = set()
+        # Cells that drove >=1 masked-state transition -- the live controls.
+        self._live: set[int] = set()
+        # Deferred-observe linkage (the click whose effect THIS tick reveals).
+        self._prev_hash: Optional[str] = None
+        self._prev_cell: Optional[int] = None
+        self._prev_score: Optional[int] = None
+        self._tick: int = 0
+        # Reward / replay (cell-index actions).
+        self._best_score: int = 0
+        self._replay_queue: deque[int] = deque()
+        self._action_budget: int = _RHAE_HUMAN_BASELINE * _RHAE_MULT
+        self._actions_used: int = 0
+        self._curtailed: bool = False
+        self._curtail_log: list[str] = []
+
+    def reset_episode(self) -> None:
+        """Reset per-episode transient state while PRESERVING the accumulated
+        ``_graph`` + the discovered ``_inert`` / ``_live`` partition, so
+        configuration search accumulates across the server's short episodes
+        (mirrors StateGraphExplorer.reset_episode / g-315-253)."""
+        self._prev_hash = None
+        self._prev_cell = None
+        self._prev_score = None
+        self._tick = 0
+        self._replay_queue.clear()
+        self._actions_used = 0
+        self._best_score = 0
+        self._curtailed = False
+
+    # -- public inspection (mirrors StateGraphExplorer's surface for tests) -----
+    @property
+    def node_count(self) -> int:
+        return len(self._graph)
+
+    @property
+    def live_cells(self) -> frozenset[int]:
+        return frozenset(self._live)
+
+    @property
+    def inert_cells(self) -> frozenset[int]:
+        return frozenset(self._inert)
+
+    @property
+    def curtailed(self) -> bool:
+        return self._curtailed
+
+    @property
+    def replay_active(self) -> bool:
+        return bool(self._replay_queue)
+
+    # -- helpers ----------------------------------------------------------------
+    def _sync_dims(self, features: FrameFeatures) -> None:
+        """Capture the live grid dims from the frame (stable within an episode).
+        ACTION6 addresses (x, y) = (col, row); cell linear-index = row*w + col."""
+        if features.width:
+            self._w = int(features.width)
+        if features.height:
+            self._h = int(features.height)
+
+    def _idx_to_xy(self, idx: int) -> tuple[int, int]:
+        r, c = divmod(idx, self._w)
+        return c, r  # (x=col, y=row)
+
+    def _next_sweep_cell(self) -> int:
+        """Next coverage-sweep cell (golden-ratio permutation) skipping inert
+        cells. Bounded: at most n probes before falling through (degenerate
+        all-inert grid -- never raise on the hot path)."""
+        n = self._w * self._h
+        for _ in range(max(1, n)):
+            x, y = explore_action6_coord(self._click_index, self._w, self._h)
+            self._click_index += 1
+            idx = y * self._w + x
+            if idx not in self._inert:
+                return idx
+        x, y = explore_action6_coord(self._click_index, self._w, self._h)
+        self._click_index += 1
+        return y * self._w + x
+
+    def _shortest_path_cells(self, target_hash: str) -> list[int]:
+        """BFS the click-graph for the shortest cell-click sequence from the
+        earliest-seen node to ``target_hash``. Mirrors
+        StateGraphExplorer._shortest_path_actions but over cell-index edges."""
+        if not self._graph or target_hash not in self._graph:
+            return []
+        start = min(
+            self._graph.values(), key=lambda n: n.first_seen_tick
+        ).state_hash
+        prev: dict[str, tuple[Optional[str], Optional[int]]] = {
+            start: (None, None)
+        }
+        q: deque[str] = deque([start])
+        visited = 0
+        while q and visited < _BFS_MAX_NODES:
+            h = q.popleft()
+            visited += 1
+            if h == target_hash:
+                break
+            cur = self._graph.get(h)
+            if cur is None:
+                continue
+            for act, succ in cur.outgoing.items():
+                if succ and succ != _UNTESTED and succ not in prev:
+                    prev[succ] = (h, act)
+                    q.append(succ)
+        if target_hash not in prev:
+            return []
+        path: list[int] = []
+        node_hash: Optional[str] = target_hash
+        while node_hash is not None and prev[node_hash][0] is not None:
+            ph, act = prev[node_hash]
+            if act is not None:
+                path.append(act)
+            node_hash = ph
+        path.reverse()
+        return path
+
+    def _maybe_curtail(self) -> None:
+        if not self._curtailed and len(self._graph) > _MAX_GRAPH_NODES:
+            self._curtailed = True
+            self._curtail_log.append(
+                f"click-curtailment: |V|={len(self._graph)} > {_MAX_GRAPH_NODES}"
+            )
+
+    # -- main contract ----------------------------------------------------------
+    def decide(self, features: FrameFeatures) -> ExecutorDecision:
+        self._tick += 1
+        self._sync_dims(features)
+        cur_hash = self._processor.hash(features)
+        score = features.score if features.score is not None else 0
+
+        # 1. Deferred-observe: the click issued LAST tick produced THIS frame.
+        #    Record the edge prev_cell -> cur_hash and classify the click.
+        if self._prev_hash is not None and self._prev_cell is not None:
+            prev_node = self._graph.get(self._prev_hash)
+            if prev_node is not None:
+                prev_node.outgoing[self._prev_cell] = cur_hash
+                prev_node.tested.add(self._prev_cell)
+            if cur_hash == self._prev_hash:
+                # NO-OP: masked state unchanged -> the cell is inert. Prune it
+                # from the sweep forever (g-315-260 sparse-interactive-cells).
+                self._inert.add(self._prev_cell)
+            else:
+                # LIVE: this cell drove a masked-state transition.
+                self._live.add(self._prev_cell)
+                self._inert.discard(self._prev_cell)
+
+        # 2. Register the current node.
+        node = self._graph.get(cur_hash)
+        if node is None:
+            node = _Node(state_hash=cur_hash, first_seen_tick=self._tick)
+            self._graph[cur_hash] = node
+            self._maybe_curtail()
+
+        # 3. Reward: a score increase is a discovered winning transition. BFS the
+        #    shortest cell-click path to here and queue it for replay (RHAE).
+        if self._prev_score is not None and score > self._prev_score:
+            self._best_score = max(self._best_score, score)
+            path = self._shortest_path_cells(cur_hash)
+            if path:
+                self._replay_queue = deque(path)
+
+        # 4. Choose the next cell: replay a winning path > re-fire an untested
+        #    LIVE control from THIS state (configuration search) > coverage sweep.
+        if self._replay_queue and self._actions_used < self._action_budget:
+            cell = self._replay_queue.popleft()
+        else:
+            untested_live = sorted(c for c in self._live if c not in node.tested)
+            if untested_live:
+                cell = self._rng.choice(untested_live)
+            else:
+                cell = self._next_sweep_cell()
+
+        # 5. Advance bookkeeping for next-tick deferred-observe.
+        self._actions_used += 1
+        self._prev_hash = cur_hash
+        self._prev_cell = cell
+        self._prev_score = score
+        x, y = self._idx_to_xy(cell)
+        return ExecutorDecision(action=_ACTION6_ID, x=int(x), y=int(y))
