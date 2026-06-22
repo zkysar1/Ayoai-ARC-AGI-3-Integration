@@ -33,7 +33,11 @@ from solver_v2.episode import (
     EpisodePrior,
 )
 from solver_v2.seed_provider import SeedProvider
-from solver_v2.state_graph import ClickStateGraphExplorer, StateGraphExplorer
+from solver_v2.state_graph import (
+    _CLICK_COMMIT_RUN_CAP,
+    ClickStateGraphExplorer,
+    StateGraphExplorer,
+)
 from solver_v2.streaming_adapter import (
     DECIDED_BY_SOLVER_V2,
     SolverV2StreamingAdapter,
@@ -205,6 +209,37 @@ def test_reset_episode_preserves_graph_and_partition() -> None:
     assert e._tick == 0  # transient reset
     assert e._actions_used == 0
     assert e.replay_active is False
+
+
+def test_fixation_capped_resumes_sweep() -> None:
+    # g-315-263 regression: an animating/oscillating live control produces a
+    # FRESH masked-state node on every click, so the control is "untested" at
+    # every newly reached state and step-4 live-selection would re-fire it
+    # FOREVER (g-315-262 LIVE: ft09 (41,54)x31, lp85 (59,35)x13 -> GAME_OVER
+    # score 0). Driving always-DISTINCT frames reproduces that exactly: every
+    # clicked cell drives a transition (-> live) yet is untested at the next
+    # fresh node. WITHOUT the commit-run cap the explorer emits ONE coord for
+    # all N ticks (max_run == N, distinct == 1); WITH it the run is capped at
+    # _CLICK_COMMIT_RUN_CAP and the cell is cooled down so the coverage sweep
+    # RESUMES over the OTHER cells (max_run <= cap, distinct > 1).
+    e = ClickStateGraphExplorer(width=_W, height=_H, seed=0)
+    emitted: list[int] = []
+    for t in range(15):
+        d = e.decide(_feat({10 + t: 3}))  # always-distinct single-cell frames
+        emitted.append(d.y * _W + d.x)  # emitted coord -> linear cell index
+
+    max_run = run = 1
+    for prev, cur in zip(emitted, emitted[1:]):
+        run = run + 1 if cur == prev else 1
+        max_run = max(max_run, run)
+
+    assert max_run <= _CLICK_COMMIT_RUN_CAP, (
+        f"fixation not capped: a single cell re-fired {max_run}x consecutively "
+        f"(cap {_CLICK_COMMIT_RUN_CAP}) -- {emitted}"
+    )
+    assert len(set(emitted)) > 1, (
+        f"degenerate single-cell fixation: distinct coords == 1 -- {emitted}"
+    )
 
 
 # ── Section B: _route_episode wiring ─────────────────────────────────────────

@@ -116,6 +116,25 @@ _ACTION6_ID: int = 6
 """ARC complex-action id (structs.py ACTION6). The click-class explorer emits
 ExecutorDecision(action=_ACTION6_ID, x=col, y=row) -- no move actions."""
 
+_CLICK_COMMIT_RUN_CAP: int = 3
+"""Max consecutive re-fires of the SAME ACTION6 cell before it is cooled down in
+favour of resuming the coverage sweep. An animating / bidirectionally-oscillating
+live control changes the masked frame on EVERY click, so every newly-reached state
+sees it 'untested' and -- without this cap -- the explorer FIXATES on the first live
+cell forever, never discovering the OTHER sparse controls the win-condition needs
+(g-315-262 LIVE finding: ft09 (41,54)x31, lp85 (59,35)x13 -> GAME_OVER score 0). The
+click twin of the movement-class _COMMIT_RUN_CAP (rb-1975). 3 is enough to observe a
+short oscillation (A->B->A) without committing the whole episode to one control. No
+game-specific value -- a universal exploration-policy tunable (invariant: generalises)."""
+
+_CLICK_COOLDOWN_TICKS: int = 8
+"""Ticks a capped cell stays EXCLUDED from live-control selection after hitting
+_CLICK_COMMIT_RUN_CAP, so the broad sweep RESUMES and the OTHER sparse live controls
+get discovered (breadth before depth, g-315-263). After the cooldown the cell is
+eligible again for configuration search -- the cap breaks fixation without
+permanently retiring a live control. Small relative to the RHAE action budget so a
+genuine multi-control config search still has room."""
+
 _UNTESTED = ""  # sentinel for an outgoing edge whose successor is not yet known
 
 
@@ -653,6 +672,16 @@ class ClickStateGraphExplorer:
         self._actions_used: int = 0
         self._curtailed: bool = False
         self._curtail_log: list[str] = []
+        # -- fixation guard (g-315-263): commit-run cap + per-cell cooldown ----
+        # An animating/oscillating live control looks 'untested' at every newly
+        # reached masked state, so step-4 selection would re-fire it forever
+        # (g-315-262). _last_cell/_run_len track the current consecutive re-fire
+        # run; _cooldown maps a capped cell -> the tick until which it is excluded
+        # from live selection, so the coverage sweep RESUMES and the OTHER sparse
+        # controls get discovered. All three are episode-local (reset below).
+        self._last_cell: Optional[int] = None
+        self._run_len: int = 0
+        self._cooldown: dict[int, int] = {}
 
     def reset_episode(self) -> None:
         """Reset per-episode transient state while PRESERVING the accumulated
@@ -667,6 +696,11 @@ class ClickStateGraphExplorer:
         self._actions_used = 0
         self._best_score = 0
         self._curtailed = False
+        # Fixation guard is episode-local: a fresh episode re-discovers its own
+        # run/cooldown state (g-315-263).
+        self._last_cell = None
+        self._run_len = 0
+        self._cooldown = {}
 
     # -- public inspection (mirrors StateGraphExplorer's surface for tests) -----
     @property
@@ -802,16 +836,39 @@ class ClickStateGraphExplorer:
 
         # 4. Choose the next cell: replay a winning path > re-fire an untested
         #    LIVE control from THIS state (configuration search) > coverage sweep.
+        #    Live controls in cooldown (capped re-fire run, g-315-263) are
+        #    excluded so an animating control cannot monopolise the episode --
+        #    the sweep resumes over the OTHER sparse controls until the cooldown
+        #    elapses and the cell is eligible for config search again.
         if self._replay_queue and self._actions_used < self._action_budget:
             cell = self._replay_queue.popleft()
         else:
-            untested_live = sorted(c for c in self._live if c not in node.tested)
+            cooling = {c for c, until in self._cooldown.items() if self._tick < until}
+            untested_live = sorted(
+                c for c in self._live if c not in node.tested and c not in cooling
+            )
             if untested_live:
                 cell = self._rng.choice(untested_live)
             else:
                 cell = self._next_sweep_cell()
 
-        # 5. Advance bookkeeping for next-tick deferred-observe.
+        # 5. Fixation guard (g-315-263): track the consecutive re-fire run of the
+        #    chosen cell; once it reaches _CLICK_COMMIT_RUN_CAP, cool the cell
+        #    down for _CLICK_COOLDOWN_TICKS so the broad sweep resumes. Universal
+        #    exploration-policy bookkeeping -- no game-specific value. Replay
+        #    (step 4 first branch) is never gated by cooldown, so a discovered
+        #    winning path always replays intact.
+        if cell == self._last_cell:
+            self._run_len += 1
+        else:
+            self._last_cell = cell
+            self._run_len = 1
+        if self._run_len >= _CLICK_COMMIT_RUN_CAP:
+            self._cooldown[cell] = self._tick + _CLICK_COOLDOWN_TICKS
+            self._run_len = 0
+            self._last_cell = None
+
+        # 6. Advance bookkeeping for next-tick deferred-observe.
         self._actions_used += 1
         self._prev_hash = cur_hash
         self._prev_cell = cell
