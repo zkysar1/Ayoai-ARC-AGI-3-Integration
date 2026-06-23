@@ -802,8 +802,18 @@ class ClickStateGraphExplorer:
         height: int = 64,
         seed: int = 0,
         config_prior: str = "orderedness",
+        frontier_nav: bool = False,
     ) -> None:
         self._game_class = game_class
+        # g-315-268: winner Algorithm 1 (arxiv 2512.24156) frontier-navigation
+        # toggle. OFF (default) = byte-identical pre-g-315-268 behaviour (the
+        # current-state-greedy live-control search + golden-ratio discovery). ON =
+        # before falling back to a fresh golden-ratio probe, BFS-navigate toward a
+        # known FRONTIER state (a node with an untested live control), driving
+        # configuration-space coverage the way the move explorer's
+        # _route_to_frontier already does. Reward-INDEPENDENT + structural -- the
+        # external win-config SIGNAL target priors (g-315-267) cannot provide.
+        self._frontier_nav = bool(frontier_nav)
         self._w = int(width) if width else 64
         self._h = int(height) if height else 64
         # g-315-267: resolve the reward-independent config-prior by name (default
@@ -1069,6 +1079,48 @@ class ClickStateGraphExplorer:
                 best_cells.append(c)
         return self._rng.choice(best_cells)
 
+    # -- winner Algorithm 1 port: frontier-navigation (g-315-268) ---------------
+    def _route_to_frontier_cells(self, start_hash: str) -> Optional[int]:
+        """Return the first cell-click of the shortest known-edge path from
+        ``start_hash`` to a FRONTIER node -- a DIFFERENT graph node that still has
+        an untested live control (``self._live - node.tested`` non-empty). The
+        movement explorer's ``_route_to_frontier`` analogue over click-cell edges
+        (winner Algorithm 1, arxiv 2512.24156).
+
+        WHY (g-315-268): the current click selection is current-state greedy -- it
+        fires untested live controls from the CURRENT node, and when none remain it
+        discovers a NEW raw cell via the golden-ratio sweep. It never navigates BACK
+        to a previously-seen state that still has an untested live control, so the
+        configuration space reachable via the sparse controls (where g-315-260
+        located the win-condition) is under-covered. Frontier-navigation closes that
+        gap: it is reward-INDEPENDENT (graph topology, no score), env-agnostic (pure
+        BFS, no palette/coord literal), and changes which CONFIGS get explored -- the
+        external structural signal target priors (g-315-267) cannot supply. Bounded
+        by ``_BFS_MAX_NODES`` (tiny-compute). ``None`` when no frontier is reachable
+        (early ticks / frontier locally exhausted) -> caller falls back to the
+        golden-ratio sweep, preserving new-control discovery."""
+        if start_hash not in self._graph or not self._live:
+            return None
+        visited = {start_hash}
+        queue: deque[tuple[str, Optional[int]]] = deque([(start_hash, None)])
+        expanded = 0
+        while queue and expanded < _BFS_MAX_NODES:
+            node_hash, first_cell = queue.popleft()
+            expanded += 1
+            node = self._graph.get(node_hash)
+            if node is None:
+                continue
+            if node_hash != start_hash and bool(self._live - node.tested):
+                return first_cell
+            for cell, succ in node.outgoing.items():
+                if succ == _UNTESTED or succ in visited:
+                    continue
+                visited.add(succ)
+                queue.append(
+                    (succ, first_cell if first_cell is not None else cell)
+                )
+        return None
+
     # -- main contract ----------------------------------------------------------
     def decide(self, features: FrameFeatures) -> ExecutorDecision:
         self._tick += 1
@@ -1154,7 +1206,22 @@ class ClickStateGraphExplorer:
             if untested_live:
                 cell = self._select_live_by_recognition(node, untested_live)
             else:
-                cell = self._next_sweep_cell()
+                # g-315-268 winner Algorithm 1 port: before discovering a NEW raw
+                # cell via the golden-ratio sweep, navigate toward a known FRONTIER
+                # state that still has an untested live control (structural, reward-
+                # independent configuration-space coverage). Falls back to the sweep
+                # when disabled (default), when no frontier route exists, or when the
+                # routed cell is in cooldown -- so new-control discovery AND the
+                # fixation guard are both preserved.
+                routed = (
+                    self._route_to_frontier_cells(cur_hash)
+                    if self._frontier_nav
+                    else None
+                )
+                if routed is not None and routed not in cooling:
+                    cell = routed
+                else:
+                    cell = self._next_sweep_cell()
 
         # 5. Fixation guard (g-315-263): track the consecutive re-fire run of the
         #    chosen cell; once it reaches _CLICK_COMMIT_RUN_CAP, cool the cell

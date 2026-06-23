@@ -133,6 +133,7 @@ class SolverV2StreamingAdapter:
         history_depth: int = DEFAULT_HISTORY_DEPTH,
         use_state_graph: bool = False,
         config_prior: str = "orderedness",
+        frontier_nav: bool = False,
     ) -> None:
         # streaming_url / api_key / session / http_timeout_s / retry_sleep
         # are accepted-and-ignored -- the adapter does no network I/O. Kept in
@@ -147,6 +148,9 @@ class SolverV2StreamingAdapter:
         # g-315-267: name of the reward-independent config-prior to thread into the
         # ClickStateGraphExplorer (default "orderedness" = max-orderedness baseline).
         self._config_prior: str = config_prior
+        # g-315-268: winner Algorithm 1 frontier-navigation toggle threaded into the
+        # ClickStateGraphExplorer (default False = byte-identical pre-g-315-268).
+        self._frontier_nav: bool = frontier_nav
         self._seed_provider: SeedProvider = (
             seed_provider
             if seed_provider is not None
@@ -950,7 +954,9 @@ class SolverV2StreamingAdapter:
                 self._explorer = cached_csg
             else:
                 new_csg = ClickStateGraphExplorer(
-                    game_class=self._game_class, config_prior=self._config_prior
+                    game_class=self._game_class,
+                    config_prior=self._config_prior,
+                    frontier_nav=self._frontier_nav,
                 )
                 self._click_state_graph_cache[csg_key] = new_csg
                 self._explorer = new_csg

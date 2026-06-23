@@ -496,3 +496,93 @@ def test_recognition_does_not_reintroduce_fixation() -> None:
         max_run = max(max_run, run)
     assert max_run <= _CLICK_COMMIT_RUN_CAP
     assert len(set(emitted)) > 1
+
+
+# ── Section D: winner Algorithm 1 frontier-navigation (g-315-268) ─────────────
+# Port of the move explorer's _route_to_frontier into the click explorer: when the
+# current state's live controls are all tested, BFS-navigate toward a known
+# FRONTIER state (one that still has an untested live control) before falling back
+# to the golden-ratio sweep. Reward-INDEPENDENT + env-agnostic configuration-space
+# coverage -- the external structural win-config SIGNAL target priors (g-315-267)
+# cannot provide. Default OFF = byte-identical pre-g-315-268.
+
+
+def test_route_to_frontier_cells_finds_nearest_frontier() -> None:
+    # A --click5--> B --click9--> C, with the single sparse live control (50) tested
+    # at A and B but UNtested at C (C is the frontier). Routing from A returns the
+    # FIRST cell of the shortest path (5, the A->B edge), NOT the B->C cell.
+    e = ClickStateGraphExplorer(width=_W, height=_H, seed=0)
+    e._live = {50}
+    a = _Node(state_hash="A", tested={50})
+    a.outgoing = {5: "B"}
+    b = _Node(state_hash="B", tested={50})
+    b.outgoing = {9: "C"}
+    c = _Node(state_hash="C", tested=set())  # live control 50 untested -> frontier
+    e._graph = {"A": a, "B": b, "C": c}
+    assert e._route_to_frontier_cells("A") == 5
+    assert e._route_to_frontier_cells("B") == 9  # nearer frontier from B
+    assert e._route_to_frontier_cells("C") is None  # start itself; no OTHER frontier
+
+
+def test_route_to_frontier_cells_none_when_frontier_exhausted() -> None:
+    # Every reachable node has its live controls fully tested -> NO frontier -> None
+    # (caller falls back to the golden-ratio sweep for NEW-cell discovery).
+    e = ClickStateGraphExplorer(width=_W, height=_H, seed=0)
+    e._live = {50}
+    a = _Node(state_hash="A", tested={50})
+    a.outgoing = {5: "B"}
+    b = _Node(state_hash="B", tested={50})
+    b.outgoing = {9: "A"}  # cycle, both fully tested
+    e._graph = {"A": a, "B": b}
+    assert e._route_to_frontier_cells("A") is None
+
+
+def test_route_to_frontier_cells_none_without_live_or_known_start() -> None:
+    e = ClickStateGraphExplorer(width=_W, height=_H, seed=0)
+    # No live controls discovered yet -> nothing to route toward.
+    e._graph = {"A": _Node(state_hash="A")}
+    assert e._route_to_frontier_cells("A") is None
+    # Start hash absent from the graph -> None (guard, never raises on hot path).
+    e._live = {50}
+    assert e._route_to_frontier_cells("ghost") is None
+
+
+def test_frontier_nav_flag_defaults_off_and_threads() -> None:
+    # Default OFF = byte-identical pre-g-315-268 (the full suite stays green);
+    # opt-in via the constructor param flips it on (mirrors --click-frontier-nav).
+    assert ClickStateGraphExplorer(width=_W, height=_H)._frontier_nav is False
+    assert (
+        ClickStateGraphExplorer(width=_W, height=_H, frontier_nav=True)._frontier_nav
+        is True
+    )
+
+
+def test_frontier_nav_on_decide_navigates_to_frontier_cell() -> None:
+    # End-to-end: with frontier_nav ON, when the current state's live controls are
+    # all tested, decide() returns the cell ROUTING toward a known frontier state
+    # (winner Algorithm 1) -- with it OFF (default) the same state yields the
+    # golden-ratio sweep cell, so the two arms DIVERGE: the toggle demonstrably
+    # changes which configs get explored (the g-315-267 coverage-bound bottleneck).
+    cells_cur = {10: 3, 25: 5}
+    live_cell = 50
+    route_cell = 33  # the cur->frontier edge cell
+
+    def emit(frontier_nav: bool) -> int:
+        e = ClickStateGraphExplorer(
+            width=_W, height=_H, seed=0, frontier_nav=frontier_nav
+        )
+        # A fresh processor on the identical single frame yields the SAME masked
+        # hash the explorer's own first decide() call will compute (HUD masking is
+        # deterministic on first observation), so the pre-built graph keys match.
+        h_cur = FrameProcessor(config_prior=_config_orderedness).hash(_feat(cells_cur))
+        h_front = "frontier-state"
+        cur = _Node(state_hash=h_cur, tested={live_cell})  # cur live control tested
+        cur.outgoing = {route_cell: h_front}
+        front = _Node(state_hash=h_front, tested=set())  # live untested -> frontier
+        e._graph = {h_cur: cur, h_front: front}
+        e._live = {live_cell}
+        d = e.decide(_feat(cells_cur))
+        return d.y * _W + d.x
+
+    assert emit(True) == route_cell  # ON: navigates to the frontier
+    assert emit(False) != route_cell  # OFF: golden-ratio sweep, not routing

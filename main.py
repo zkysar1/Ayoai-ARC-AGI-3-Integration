@@ -449,6 +449,24 @@ def main() -> None:
             "cold-start the g-315-266 measurement quantified. g-315-267."
         ),
     )
+    parser.add_argument(
+        "--click-frontier-nav",
+        action="store_true",
+        help=(
+            "g-315-268: enable winner Algorithm 1 (arxiv 2512.24156) frontier-"
+            "navigation in the click-class ClickStateGraphExplorer (--use-solver-v2 "
+            "--state-graph, ft09/lp85). OFF (default) = byte-identical pre-g-315-268 "
+            "current-state-greedy live-control search + golden-ratio discovery. ON = "
+            "when the current state has no untested live control, BFS-navigate toward "
+            "a known FRONTIER state (one that still has an untested live control) "
+            "before falling back to the golden-ratio sweep -- driving configuration-"
+            "space coverage (where g-315-260 located the win-condition) the way the "
+            "move explorer's _route_to_frontier already does. Reward-INDEPENDENT + "
+            "env-agnostic: the external structural win-config SIGNAL that target "
+            "priors (g-315-267) cannot provide. Live litmus measures whether it "
+            "moves score on the no-reward cold-start g-315-266/267 quantified."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -682,6 +700,7 @@ def main() -> None:
             seed_provider=v2_seed_provider,
             use_state_graph=args.state_graph,
             config_prior=args.config_prior,
+            frontier_nav=args.click_frontier_nav,
         )
     else:
         streaming_client = AyoaiStreamingClient(
