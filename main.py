@@ -467,6 +467,27 @@ def main() -> None:
             "moves score on the no-reward cold-start g-315-266/267 quantified."
         ),
     )
+    parser.add_argument(
+        "--click-salience-priority",
+        action="store_true",
+        help=(
+            "g-315-269: enable winner Algorithm 1 (arxiv 2512.24156) priority="
+            "VISUAL-SALIENCE in the click-class ClickStateGraphExplorer (--use-"
+            "solver-v2 --state-graph, ft09/lp85) -- the OTHER half of Algorithm 1 "
+            "(g-315-268 ported only frontier-navigation). OFF (default) = byte-"
+            "identical: undiscovered cells are probed in golden-ratio POSITION "
+            "order. ON = the DISCOVERY sweep is ordered by the visual salience "
+            "(component size / bbox-extent morphology / colour-distinctness, from "
+            "FrameProcessor's existing component segmentation) of the candidate "
+            "cell, so structurally-prominent cells are probed FIRST -- the winner "
+            "'tries the most-salient untested action first'. Scoped to DISCOVERY "
+            "only; untested LIVE controls keep the learned orderedness-gradient "
+            "(g-315-264). Reward-INDEPENDENT + env-agnostic (generic visual "
+            "properties, no palette/coord literal), tiny-compute (one O(n) CC pass "
+            "per discovery cell). Addresses the KEY DELTA: the winner completes "
+            "ft09's early levels while the nav-only port scored 0 from level 0."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -701,6 +722,7 @@ def main() -> None:
             use_state_graph=args.state_graph,
             config_prior=args.config_prior,
             frontier_nav=args.click_frontier_nav,
+            salience_priority=args.click_salience_priority,
         )
     else:
         streaming_client = AyoaiStreamingClient(

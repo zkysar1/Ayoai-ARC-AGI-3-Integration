@@ -430,6 +430,88 @@ class FrameProcessor:
         explorer's ``decide`` does exactly that (hash first, orderedness next)."""
         return self._config_prior(self._last_comps)
 
+    def cell_salience(
+        self, features: FrameFeatures, hud: frozenset[int]
+    ) -> list[float]:
+        """Per-cell visual salience (g-315-269): ``salience[idx]`` = the salience of
+        the 4-connected component containing flat cell ``idx`` (``0.0`` for
+        background / HUD / un-componented cells). Component salience is the equal-
+        weighted mean of three NORMALISED, env-agnostic visual properties -- the
+        winner Algorithm 1 (arxiv 2512.24156) priority=visual-salience signal:
+
+          * SIZE       -- cell count / max component size (larger = more prominent);
+          * MORPHOLOGY -- bbox extent (height+width) / max extent (bigger structure);
+          * COLOUR     -- 1 / palette-value frequency among components (a uniquely
+                          coloured component is maximally distinct).
+
+        Generic visual properties only (no palette/coord literal; ``background`` is
+        the frequency-derived modal value, exactly as ``_components``) so the signal
+        generalises across ARC instances + env classes (g-315-236).
+
+        A SEPARATE flood-fill from ``_components`` ON PURPOSE: ``_components`` feeds
+        ``hash()`` (the core masked-state dedup); this method is invoked ONLY when
+        the salience-priority discovery toggle is ON, so keeping its pass distinct
+        guarantees the hash path stays byte-identical when the toggle is OFF
+        (default). O(n), one flood-fill pass (tiny-compute)."""
+        h, w = features.height, features.width
+        values = features.values
+        n = h * w
+        if not values or len(values) < n:
+            return [0.0] * max(0, n)
+        counts = Counter(values)
+        background = counts.most_common(1)[0][0] if counts else 0
+        seen = bytearray(n)
+        comps: list[tuple[int, list[int], tuple[int, int, int, int]]] = []
+        for start in range(n):
+            if seen[start]:
+                continue
+            seen[start] = 1
+            if start in hud:
+                continue
+            val = values[start]
+            if val == background:
+                continue
+            queue = deque([start])
+            cells = [start]
+            while queue:
+                idx = queue.popleft()
+                r, c = divmod(idx, w)
+                for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < h and 0 <= nc < w:
+                        nidx = nr * w + nc
+                        if (
+                            not seen[nidx]
+                            and nidx not in hud
+                            and values[nidx] == val
+                        ):
+                            seen[nidx] = 1
+                            queue.append(nidx)
+                            cells.append(nidx)
+            rs = [divmod(i, w)[0] for i in cells]
+            cs = [divmod(i, w)[1] for i in cells]
+            bbox = (min(rs), min(cs), max(rs), max(cs))
+            comps.append((int(val), cells, bbox))
+        sal = [0.0] * n
+        if not comps:
+            return sal
+        val_freq = Counter(c[0] for c in comps)
+        max_size = max(len(c[1]) for c in comps) or 1
+        max_extent = (
+            max((c[2][2] - c[2][0] + 1) + (c[2][3] - c[2][1] + 1) for c in comps)
+            or 1
+        )
+        for val, cells, bbox in comps:
+            size_n = len(cells) / max_size
+            extent_n = (
+                (bbox[2] - bbox[0] + 1) + (bbox[3] - bbox[1] + 1)
+            ) / max_extent
+            rarity_n = 1.0 / val_freq[val]
+            s = (size_n + extent_n + rarity_n) / 3.0
+            for idx in cells:
+                sal[idx] = s
+        return sal
+
 
 class StateGraphExplorer:
     """Outer-loop state-graph explorer (design section 2-3).
@@ -803,6 +885,7 @@ class ClickStateGraphExplorer:
         seed: int = 0,
         config_prior: str = "orderedness",
         frontier_nav: bool = False,
+        salience_priority: bool = False,
     ) -> None:
         self._game_class = game_class
         # g-315-268: winner Algorithm 1 (arxiv 2512.24156) frontier-navigation
@@ -814,6 +897,21 @@ class ClickStateGraphExplorer:
         # _route_to_frontier already does. Reward-INDEPENDENT + structural -- the
         # external win-config SIGNAL target priors (g-315-267) cannot provide.
         self._frontier_nav = bool(frontier_nav)
+        # g-315-269: winner Algorithm 1's OTHER half -- priority = VISUAL SALIENCE.
+        # OFF (default) = byte-identical: undiscovered cells are probed in golden-
+        # ratio POSITION order (_next_sweep_cell). ON = the DISCOVERY sweep is
+        # ordered by the visual salience (size / morphology / colour-distinctness)
+        # of the component each candidate cell falls in, so structurally-prominent
+        # cells are probed FIRST -- the winner "tries the most-salient untested
+        # action first". g-315-268 ported the frontier-NAVIGATION half; this is the
+        # untested salience-PRIORITY half (the KEY DELTA: the winner completes
+        # ft09's early levels, our nav-only port scored 0 from level 0). Scoped to
+        # DISCOVERY only -- untested LIVE controls keep the learned orderedness-
+        # gradient signal (_select_live_by_recognition), which is strictly richer
+        # than salience for cells whose effect is already modelled. Reward-
+        # INDEPENDENT + env-agnostic (generic visual properties, no palette/coord
+        # literal), tiny-compute (one O(n) CC pass when a discovery cell is needed).
+        self._salience_priority = bool(salience_priority)
         self._w = int(width) if width else 64
         self._h = int(height) if height else 64
         # g-315-267: resolve the reward-independent config-prior by name (default
@@ -1121,6 +1219,41 @@ class ClickStateGraphExplorer:
                 )
         return None
 
+    # -- winner Algorithm 1 port: priority = visual salience (g-315-269) ---------
+    def _salient_sweep_cell(self, features: FrameFeatures) -> int:
+        """Discovery cell ordered by VISUAL SALIENCE (g-315-269) instead of golden-
+        ratio position -- the winner Algorithm 1 (arxiv 2512.24156) priority half.
+        Returns the highest-salience cell that is neither inert nor an already-known
+        live control (live cells are handled by the recognition path, step 4); ties
+        break deterministically by lowest index. Falls back to the golden-ratio
+        ``_next_sweep_cell`` when NO salient candidate remains (all-background frame,
+        or every salient cell is already inert/live) -- so coverage of low-salience
+        cells is preserved and the method never raises on the hot path.
+
+        WHY discovery-only: the winner ranks UNTESTED actions by visual salience; in
+        this explorer the untested set splits into (a) known LIVE controls -- already
+        ranked by the learned per-control orderedness-gradient
+        (``_select_live_by_recognition``), a strictly richer signal than salience --
+        and (b) UNDISCOVERED cells, ranked by golden-ratio position with NO signal.
+        Salience is the missing prior for (b), exactly where no learned signal yet
+        exists. Tiny-compute: one O(n) CC pass via ``cell_salience`` per discovery
+        decision; env-agnostic (generic size/morphology/colour, no palette/coord
+        literal)."""
+        sal = self._processor.cell_salience(features, self._processor.hud_cells())
+        best_idx: Optional[int] = None
+        best_s = 0.0
+        for idx, s in enumerate(sal):
+            if s <= 0.0 or idx in self._inert or idx in self._live:
+                continue
+            if s > best_s:
+                best_s = s
+                best_idx = idx
+        if best_idx is not None:
+            return best_idx
+        # No salient undiscovered cell -> golden-ratio coverage of the remainder
+        # (also skips inert; never raises on the hot path).
+        return self._next_sweep_cell()
+
     # -- main contract ----------------------------------------------------------
     def decide(self, features: FrameFeatures) -> ExecutorDecision:
         self._tick += 1
@@ -1220,6 +1353,16 @@ class ClickStateGraphExplorer:
                 )
                 if routed is not None and routed not in cooling:
                     cell = routed
+                elif self._salience_priority:
+                    # g-315-269 winner Algorithm 1 port (priority half): order
+                    # DISCOVERY by component visual salience (size/morphology/colour)
+                    # instead of golden-ratio POSITION -- probe the most-salient
+                    # untested cell first. Falls back to the golden-ratio sweep
+                    # internally when no salient candidate remains. Composes AFTER
+                    # frontier-nav (route to a known frontier first) and BEFORE the
+                    # plain sweep; both toggles OFF (default) -> byte-identical
+                    # _next_sweep_cell path.
+                    cell = self._salient_sweep_cell(features)
                 else:
                     cell = self._next_sweep_cell()
 

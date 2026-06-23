@@ -586,3 +586,106 @@ def test_frontier_nav_on_decide_navigates_to_frontier_cell() -> None:
 
     assert emit(True) == route_cell  # ON: navigates to the frontier
     assert emit(False) != route_cell  # OFF: golden-ratio sweep, not routing
+
+
+# ── Section E: winner Algorithm 1 priority = visual salience (g-315-269) ──────
+# The OTHER half of Algorithm 1 (g-315-268 ported only frontier-navigation): order
+# the DISCOVERY sweep by the visual salience (size / bbox-extent morphology /
+# colour-distinctness) of the component each candidate cell falls in, so the
+# winner's "try the most-salient untested action first" drives new-cell discovery
+# instead of golden-ratio POSITION. Scoped to discovery only -- untested LIVE
+# controls keep the learned orderedness-gradient (a richer signal). Reward-
+# INDEPENDENT + env-agnostic (generic visual properties); default OFF = byte-
+# identical pre-g-315-269.
+
+
+def test_cell_salience_ranks_larger_component_higher() -> None:
+    # A 4-cell component (idx 0-3, value 5) vs a 1-cell component (idx 40, value 6).
+    # Bigger size + bigger bbox-extent -> higher salience on every one of its cells.
+    fp = FrameProcessor(config_prior=_config_orderedness)
+    sal = fp.cell_salience(_feat({0: 5, 1: 5, 2: 5, 3: 5, 40: 6}), frozenset())
+    assert sal[0] == sal[1] == sal[2] == sal[3]  # same component -> same salience
+    assert sal[0] > sal[40]  # larger/longer component is more salient
+    assert sal[40] > 0.0  # the small component is still salient (non-background)
+    assert sal[10] == 0.0  # a background cell carries zero salience
+
+
+def test_cell_salience_unique_colour_more_salient() -> None:
+    # Three same-size (2-cell) components: value 5 appears ONCE, value 7 TWICE.
+    # The uniquely-coloured component (value 5) is more salient via the colour-
+    # distinctness term, even though size + morphology are identical.
+    fp = FrameProcessor(config_prior=_config_orderedness)
+    sal = fp.cell_salience(
+        _feat({0: 5, 1: 5, 20: 7, 21: 7, 40: 7, 41: 7}), frozenset()
+    )
+    assert sal[0] == sal[1]  # the unique-colour component
+    assert sal[20] == sal[21] == sal[40] == sal[41]  # the shared-colour components
+    assert sal[0] > sal[20]  # rarer palette value -> higher salience at equal size
+
+
+def test_cell_salience_empty_and_hud_zero() -> None:
+    fp = FrameProcessor(config_prior=_config_orderedness)
+    # All-background frame -> no components -> every cell zero.
+    assert all(s == 0.0 for s in fp.cell_salience(_feat({}), frozenset()))
+    # A HUD-masked cell is excluded from components -> zero salience even if lit.
+    sal = fp.cell_salience(_feat({0: 5, 1: 5}), frozenset({1}))
+    assert sal[1] == 0.0  # masked out
+    assert sal[0] > 0.0  # the remaining 1-cell component is still salient
+
+
+def test_salience_priority_flag_defaults_off_and_threads() -> None:
+    # Default OFF = byte-identical pre-g-315-269 (the full suite stays green);
+    # opt-in via the constructor param flips it on (mirrors --click-salience-priority).
+    assert ClickStateGraphExplorer(width=_W, height=_H)._salience_priority is False
+    assert (
+        ClickStateGraphExplorer(
+            width=_W, height=_H, salience_priority=True
+        )._salience_priority
+        is True
+    )
+
+
+def test_salient_sweep_cell_picks_most_salient_undiscovered() -> None:
+    # The 4-cell component (idx 27,28,35,36) is the most salient; _salient_sweep_cell
+    # returns its lowest-index cell (deterministic tie-break) over the 1-cell decoy.
+    e = ClickStateGraphExplorer(width=_W, height=_H, seed=0)
+    feat = _feat({27: 5, 28: 5, 35: 5, 36: 5, 10: 6})
+    assert e._salient_sweep_cell(feat) == 27
+
+
+def test_salient_sweep_excludes_inert_and_live_then_falls_back() -> None:
+    e = ClickStateGraphExplorer(width=_W, height=_H, seed=0)
+    feat = _feat({27: 5, 28: 5, 35: 5, 36: 5, 10: 6})
+    # Mark the lowest most-salient cell LIVE (handled by recognition, not discovery)
+    # -> the sweep skips it and returns the next-lowest in the same component.
+    e._live = {27}
+    assert e._salient_sweep_cell(feat) == 28
+    # Mark the whole salient component inert -> the small decoy (10) is next.
+    e._live = set()
+    e._inert = {27, 28, 35, 36}
+    assert e._salient_sweep_cell(feat) == 10
+    # No salient candidate left -> golden-ratio fallback (a cell outside the
+    # exhausted salient set, never raises).
+    e._inert = {27, 28, 35, 36, 10}
+    fallback = e._salient_sweep_cell(feat)
+    assert fallback not in {27, 28, 35, 36, 10}
+
+
+def test_salience_priority_on_decide_diverges_from_golden_ratio() -> None:
+    # End-to-end: with NO live controls yet, decide() reaches the discovery
+    # fallback. salience_priority ON returns the most-salient cell (27); OFF
+    # returns the golden-ratio sweep cell -- the toggle demonstrably changes which
+    # cells get probed first (the discovery-order analogue of the g-315-268 test).
+    cells = {27: 5, 28: 5, 35: 5, 36: 5}
+
+    def emit(salience_priority: bool) -> int:
+        e = ClickStateGraphExplorer(
+            width=_W, height=_H, seed=0, salience_priority=salience_priority
+        )
+        d = e.decide(_feat(cells))
+        return d.y * _W + d.x
+
+    ref = ClickStateGraphExplorer(width=_W, height=_H, seed=0)._next_sweep_cell()
+    assert emit(True) == 27  # ON: most-salient component's lowest cell
+    assert emit(False) == ref  # OFF: golden-ratio position sweep
+    assert emit(True) != emit(False)  # the toggle changes discovery order
