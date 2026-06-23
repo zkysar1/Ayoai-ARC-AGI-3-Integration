@@ -20,11 +20,11 @@ barrier between "explores competently" and "scores." We found it, and it is not 
 the obvious effort goes.
 
 - **The exploration *policy* space is exhausted.** Full-grid coverage sweeps, richer
-  intrinsic target priors, the public winner's frontier-navigation, and the public
-  winner's visual-salience priority were each built, **verified to engage live**, and
+  intrinsic target priors, the 3rd-place paper's frontier-navigation, and the
+  3rd-place paper's visual-salience priority were each built, **verified to engage live**, and
   each left the score at 0. That is **ten** independent "necessary-but-insufficient"
   confirmations (the *sig-22 family*, §4).
-- **Both stated halves of the public winner's Algorithm 1 fail as faithfully ported**
+- **Both stated halves of the 3rd-place paper's Algorithm 1 fail as faithfully ported**
   (§5). Frontier-navigation engaged but did not score; visual-salience priority was
   *actively anti-correlated* with the live controls.
 - **Therefore the cold-start barrier is RECOGNITION-bound, not discovery-policy-bound**
@@ -32,7 +32,7 @@ the obvious effort goes.
   interactive controls, because they are visually indistinguishable from inert
   decoration until probed, and with the score pinned at 0 there is no reward gradient to
   teach the agent which configuration wins.
-- **One cross-pollination lever remains open** (§7): the winner's *exact* salience
+- **One cross-pollination lever remains open** (§7): the 3rd-place paper's *exact* salience
   definition is almost certainly **dynamic / change-based or post-interaction**, not
   static-visual. That is the next thing to extract.
 
@@ -121,23 +121,35 @@ bottleneck").
 | 6 | **single-episode recognition** — goal-recognition architecture (transferred intact from the movement class to the click class) | recognition (single-episode) ≠ score |
 | 7 | **cross-episode coverage + reward-lock** — multi-episode persistence + a win-config lock | cross-episode machinery ≠ score |
 | 8 | **richer target prior** — compression / symmetry priors instead of max-orderedness | richer prior ≠ score |
-| 9 | **winner frontier-navigation** — public winner's Algorithm 1, navigation half | frontier-nav ≠ score |
-| 10 | **winner visual-salience priority** — public winner's Algorithm 1, salience half | salience ≠ score (and *anti-correlated* — §5) |
+| 9 | **frontier-navigation** — 3rd-place paper's Algorithm 1, navigation half | frontier-nav ≠ score |
+| 10 | **visual-salience priority** — 3rd-place paper's Algorithm 1, salience half | salience ≠ score (and *anti-correlated* — §5) |
 
 Each row is reproducible from a live recording and a goal-tagged commit. The pattern is
 the finding: **everything that improves *how the agent explores* leaves the score at 0.**
 
 ---
 
-## 5. The dual-half winner refutation
+## 5. The dual-half Algorithm-1 refutation
 
-The strongest test of "is this a discovery-policy problem?" is to port the public
-winner's method directly. The 3rd-place training-free entry (arXiv 2512.24156) centers on
-**Algorithm 1**, which has two stated halves: a **frontier-navigation** half (return to
-known states that border unexplored actions) and a **visual-salience priority** half (try
-the most visually salient untested action first). We ported each faithfully, behind a
-default-off flag whose OFF arm is **byte-identical to baseline** (verified live on both
-games).
+The strongest test of "is this a discovery-policy problem?" is to port the best published
+*training-free* method directly. The actual 1st-place winner — StochasticGoose (Tufa Labs /
+Dries Smit, 12.58%) — used a **learned CNN action-effect predictor**, which we characterized
+but deliberately did **not** port: a gradient-trained predictor is outside our tiny-compute,
+no-LLM, training-free envelope (see the note below). The most relevant *portable* published
+approach is the **3rd-place training-free entry** (arXiv 2512.24156, Rudakov / Shock /
+Cowley, AAAI 2026), which centers on **Algorithm 1** — two stated halves: a
+**frontier-navigation** half (return to known states that border unexplored actions) and a
+**visual-salience priority** half (try the most visually salient untested action first). We
+ported each faithfully, behind a default-off flag whose OFF arm is **byte-identical to
+baseline** (verified live on both games).
+
+> **A note on the actual winner.** The 1st-place ARC-AGI-3 Preview-Challenge solution was
+> StochasticGoose (Tufa Labs / Dries Smit, 12.58%), built on a *learned* CNN that predicts
+> each action's effect on the frame. We characterized that approach but deliberately did
+> **not** port it: a gradient-trained effect-predictor is outside AyoAI's training-free,
+> no-LLM-in-the-hot-path envelope — which is the whole point of the bet. Porting the
+> 3rd-place *training-free* entry is the faithful within-envelope test, and the refutation
+> below is of *that* entry's Algorithm 1 — not of the winner's learned method.
 
 **Half 1 — frontier-navigation (faithfully ported).** The ON arm *engaged*: it traded
 raw-cell breadth for configuration-space depth by re-navigating to known frontier states
@@ -159,9 +171,9 @@ sweep.
 
 **The decisive inference (stated with causal isolation).** The honest, isolated claim is
 *"our static salience metric is anti-correlated with these controls"* — **not** *"the
-winner's salience cannot work."* What the two refutations *together* prove is sharper:
+3rd-place paper's salience cannot work."* What the two refutations *together* prove is sharper:
 both stated halves of Algorithm 1, faithfully ported, fail the no-reward cold-start. So
-the winner's reported edge is **not** captured by either stated half in isolation. The
+the 3rd-place paper's reported edge is **not** captured by either stated half in isolation. The
 discriminating factor is the **salience *definition***, not the priority *mechanism*.
 
 ---
@@ -199,7 +211,7 @@ evidence, and the exact failure mode — is the inspectable-reasoning dividend.
 
 Exactly one cross-pollination candidate survives the campaign:
 
-> **Extract the public winner's *exact* salience definition.** Our refutation pins it down
+> **Extract the 3rd-place paper's *exact* salience definition.** Our refutation pins it down
 > by elimination: it is almost certainly **not** static-visual salience. It is most likely
 > **dynamic / change-based** salience (which cells *change* across frames or across a
 > probe) or **post-interaction** salience (salience computed *after* a tentative click
@@ -207,7 +219,7 @@ Exactly one cross-pollination candidate survives the campaign:
 > are precisely the cells whose *effect* — not whose *appearance* — distinguishes them.
 
 This is a recognition signal, not a discovery policy — consistent with §6. It is the next
-thing to read out of the winner's released approach and test under the same default-off,
+thing to read out of the 3rd-place paper's released approach and test under the same default-off,
 live-measured, tiny-compute discipline.
 
 ---
