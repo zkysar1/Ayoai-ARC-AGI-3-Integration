@@ -148,6 +148,15 @@ _CLICK_ORDEREDNESS_EPS: float = 1e-9
 resulting orderedness ties within EPS are broken by the seeded PRNG (deterministic
 + diverse, never a fixed-index argmax bias)."""
 
+_EFFECT_OPTIMISTIC_FREQ: float = 0.5
+"""Effect-salience prior for a component-TYPE whose effect is not yet observed
+(g-315-273). An unobserved type is scored as if half its clicks change state, so
+the discovery sweep prefers it OVER a type proven INERT (observed freq 0.0) but
+UNDER a type proven LIVE (observed freq approaching 1.0) -- exploration of the
+unknown, exploitation of the known. The effect-salience twin of the orderedness
+explore bonus ``_CLICK_OPTIMISTIC_DELTA``; a universal exploration tunable, no
+game-specific value (invariant: generalises)."""
+
 _UNTESTED = ""  # sentinel for an outgoing edge whose successor is not yet known
 
 
@@ -511,6 +520,65 @@ class FrameProcessor:
             for idx in cells:
                 sal[idx] = s
         return sal
+
+    def cell_component_keys(
+        self, features: FrameFeatures, hud: frozenset[int]
+    ) -> list[Optional[tuple[int, int]]]:
+        """Per-cell component-TYPE key for effect-salience generalisation (g-315-273):
+        ``keys[idx]`` = the ``(palette_value, size)`` type of the 4-connected component
+        containing flat cell ``idx`` (``None`` for background / HUD / un-componented).
+
+        The type key is what lets observed effect generalise to UNSEEN cells: when a
+        click on one cell of a ``(value, size)`` component drives a masked-state change,
+        every OTHER cell of a structurally-identical component inherits that empirical
+        change-frequency -- the training-free distillation of the winner's LEARNED CNN
+        spatial effect-predictor (no model, no RL). Structural (``size`` is a cell-count;
+        the palette value is used only for component EQUALITY, never compared to a
+        hardcoded constant) so generalisation is preserved across ARC instances + env
+        classes (g-315-236).
+
+        A SEPARATE flood-fill from ``_components`` / ``cell_salience`` ON PURPOSE:
+        invoked ONLY when the effect-salience toggle is ON, so the hash path stays
+        byte-identical when OFF (default). O(n), one flood-fill pass (tiny-compute)."""
+        h, w = features.height, features.width
+        values = features.values
+        n = h * w
+        if not values or len(values) < n:
+            return [None] * max(0, n)
+        counts = Counter(values)
+        background = counts.most_common(1)[0][0] if counts else 0
+        seen = bytearray(n)
+        keys: list[Optional[tuple[int, int]]] = [None] * n
+        for start in range(n):
+            if seen[start]:
+                continue
+            seen[start] = 1
+            if start in hud:
+                continue
+            val = values[start]
+            if val == background:
+                continue
+            queue = deque([start])
+            cells = [start]
+            while queue:
+                idx = queue.popleft()
+                r, c = divmod(idx, w)
+                for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < h and 0 <= nc < w:
+                        nidx = nr * w + nc
+                        if (
+                            not seen[nidx]
+                            and nidx not in hud
+                            and values[nidx] == val
+                        ):
+                            seen[nidx] = 1
+                            queue.append(nidx)
+                            cells.append(nidx)
+            key = (int(val), len(cells))
+            for idx in cells:
+                keys[idx] = key
+        return keys
 
 
 class StateGraphExplorer:
@@ -886,6 +954,7 @@ class ClickStateGraphExplorer:
         config_prior: str = "orderedness",
         frontier_nav: bool = False,
         salience_priority: bool = False,
+        effect_salience_priority: bool = False,
     ) -> None:
         self._game_class = game_class
         # g-315-268: winner Algorithm 1 (arxiv 2512.24156) frontier-navigation
@@ -912,6 +981,22 @@ class ClickStateGraphExplorer:
         # INDEPENDENT + env-agnostic (generic visual properties, no palette/coord
         # literal), tiny-compute (one O(n) CC pass when a discovery cell is needed).
         self._salience_priority = bool(salience_priority)
+        # g-315-273: winner Algorithm 1's priority half, EMPIRICAL variant. Where
+        # g-315-269 ordered DISCOVERY by STATIC VISUAL salience (size/morphology/
+        # colour) -- which rb-2257 found ANTI-correlated with the live control on
+        # ft09/lp85 -- this orders DISCOVERY by EFFECT salience: the online empirical
+        # change-frequency of the component-TYPE a candidate cell falls in, accumulated
+        # from observed frame-deltas (tentatively interact -> observe delta -> prefer
+        # high-change types). The training-free, no-LLM-hot-path, tiny-compute, env-
+        # agnostic distillation of the winner's LEARNED CNN action-effect predictor
+        # (no model, no RL). OFF (default) = byte-identical: no extra CC pass, no
+        # type accumulation, the golden-ratio / visual-salience path is untouched.
+        # PRE-REGISTERED PREDICTION (~0.60 conf): effect-salience identifies the live
+        # control better than visual-salience where the latter anti-correlated -- the
+        # missing recognition layer the winner supplied via the CNN (rb-2257). Mutually
+        # informative with, and composes BEFORE, _salience_priority (effect beats
+        # appearance when both ON).
+        self._effect_salience_priority = bool(effect_salience_priority)
         self._w = int(width) if width else 64
         self._h = int(height) if height else 64
         # g-315-267: resolve the reward-independent config-prior by name (default
@@ -931,6 +1016,22 @@ class ClickStateGraphExplorer:
         self._inert: set[int] = set()
         # Cells that drove >=1 masked-state transition -- the live controls.
         self._live: set[int] = set()
+        # -- effect-salience model (g-315-273): per-component-TYPE empirical change-
+        # frequency. _type_changes[(value,size)] / _type_trials[(value,size)] is the
+        # observed P(a click on a cell of this component type changes the masked
+        # state) -- the training-free distillation of the winner's learned CNN effect
+        # predictor. Keyed by component TYPE (not cell) so observed effect generalises
+        # to UNSEEN cells of structurally-identical components (the CNN's spatial head,
+        # training-free). PERSISTS across episodes (the accumulated effect model, like
+        # _live/_inert/_control_effect; NOT reset in reset_episode). _prev_comp_keys is
+        # the pre-click per-cell component-TYPE map (last tick's _cur_comp_keys) used to
+        # attribute THIS tick's observed delta to the clicked cell's type; episode-local
+        # linkage (reset). Both _*_comp_keys stay None when the toggle is OFF -> no CC
+        # pass, byte-identical.
+        self._type_changes: dict[tuple[int, int], int] = {}
+        self._type_trials: dict[tuple[int, int], int] = {}
+        self._prev_comp_keys: Optional[list[Optional[tuple[int, int]]]] = None
+        self._cur_comp_keys: Optional[list[Optional[tuple[int, int]]]] = None
         # Deferred-observe linkage (the click whose effect THIS tick reveals).
         self._prev_hash: Optional[str] = None
         self._prev_cell: Optional[int] = None
@@ -994,6 +1095,10 @@ class ClickStateGraphExplorer:
         self._prev_hash = None
         self._prev_cell = None
         self._prev_score = None
+        # Effect-salience deferred-observe linkage is episode-local (g-315-273): the
+        # pre-click component-TYPE map must not leak across the boundary. The learned
+        # _type_changes/_type_trials model PERSISTS (accumulated effect, like _live).
+        self._prev_comp_keys = None
         self._tick = 0
         self._replay_queue.clear()
         self._actions_used = 0
@@ -1254,12 +1359,72 @@ class ClickStateGraphExplorer:
         # (also skips inert; never raises on the hot path).
         return self._next_sweep_cell()
 
+    # -- winner Algorithm 1 port: priority = EFFECT salience (g-315-273) ----------
+    def _effect_salient_sweep_cell(self, features: FrameFeatures) -> int:
+        """Discovery cell ordered by EFFECT SALIENCE -- the empirical, training-free
+        variant of the winner Algorithm 1 priority half (g-315-273). Where
+        ``_salient_sweep_cell`` (g-315-269) ranks undiscovered cells by STATIC VISUAL
+        salience -- which rb-2257 found ANTI-correlated with the live control on
+        ft09/lp85 -- this ranks them by the accumulated change-FREQUENCY of the
+        component-TYPE each candidate cell currently falls in: ``_type_changes[t] /
+        _type_trials[t]``, the observed P(a click on this component type moves the
+        masked state). A type never clicked gets the optimistic ``_EFFECT_OPTIMISTIC_
+        FREQ`` prior so the unknown is still explored -- ABOVE a proven-inert type
+        (observed freq 0) but BELOW a proven-live type (freq -> 1). Ties break
+        deterministically by lowest index. Returns the highest-effect-salience cell
+        that is neither inert nor an already-known live control (live cells are handled
+        by the recognition path, decide step 4).
+
+        This is the training-free distillation of the winner's LEARNED CNN action-
+        effect predictor: instead of a model PREDICTING effect from visual input, the
+        explorer ACCUMULATES effect from observation and GENERALISES it across cells of
+        structurally-identical components (the CNN's spatial head, no model / no RL).
+        Falls back to the golden-ratio ``_next_sweep_cell`` when no candidate scores
+        positive (all-background / all-inert frame) -- so coverage is preserved and the
+        method never raises on the hot path. Reuses the per-tick cached
+        ``_cur_comp_keys`` (no extra CC pass); env-agnostic (structural component types,
+        no palette/coord literal); tiny-compute (O(n))."""
+        keys = self._cur_comp_keys
+        if keys is None:
+            keys = self._processor.cell_component_keys(
+                features, self._processor.hud_cells()
+            )
+        best_idx: Optional[int] = None
+        best_s = 0.0
+        for idx, t in enumerate(keys):
+            if t is None or idx in self._inert or idx in self._live:
+                continue
+            trials = self._type_trials.get(t, 0)
+            s = (
+                self._type_changes.get(t, 0) / trials
+                if trials > 0
+                else _EFFECT_OPTIMISTIC_FREQ
+            )
+            if s > best_s:
+                best_s = s
+                best_idx = idx
+        if best_idx is not None and best_s > 0.0:
+            return best_idx
+        # No positive-effect undiscovered cell -> golden-ratio coverage of the
+        # remainder (skips inert; never raises on the hot path).
+        return self._next_sweep_cell()
+
     # -- main contract ----------------------------------------------------------
     def decide(self, features: FrameFeatures) -> ExecutorDecision:
         self._tick += 1
         self._sync_dims(features)
         cur_hash = self._processor.hash(features)
         cur_ord = self._processor.last_orderedness()
+        # Effect-salience (g-315-273): per-cell component-TYPE map for THIS frame,
+        # used to (a) attribute next-tick's observed delta to the clicked cell's type
+        # and (b) order the discovery sweep by accumulated change-frequency. Computed
+        # ONLY when the toggle is ON (tiny-compute: one O(n) CC pass); OFF -> None,
+        # so the hash/sweep path is byte-identical to pre-g-315-273.
+        self._cur_comp_keys = (
+            self._processor.cell_component_keys(features, self._processor.hud_cells())
+            if self._effect_salience_priority
+            else None
+        )
         score = features.score if features.score is not None else 0
 
         # 1. Deferred-observe: the click issued LAST tick produced THIS frame.
@@ -1288,6 +1453,23 @@ class ClickStateGraphExplorer:
                         s + (cur_ord - prev_ord),
                         n + 1,
                     )
+            # Effect-salience accumulation (g-315-273): attribute the observed delta
+            # (changed = LIVE, unchanged = INERT) to the component-TYPE the clicked
+            # cell occupied PRE-click (last tick's map). Trials count every observed
+            # click of the type; changes count the ones that moved the masked state.
+            # The ratio is the empirical change-frequency that generalises to UNSEEN
+            # cells of the same type -- the CNN-distillation. Fires for BOTH outcomes
+            # so an INERT type accrues a low (0) frequency, the discovery sweep deprio.
+            if (
+                self._effect_salience_priority
+                and self._prev_comp_keys is not None
+                and 0 <= self._prev_cell < len(self._prev_comp_keys)
+            ):
+                t = self._prev_comp_keys[self._prev_cell]
+                if t is not None:
+                    self._type_trials[t] = self._type_trials.get(t, 0) + 1
+                    if cur_hash != self._prev_hash:
+                        self._type_changes[t] = self._type_changes.get(t, 0) + 1
 
         # 2. Register the current node.
         node = self._graph.get(cur_hash)
@@ -1353,6 +1535,17 @@ class ClickStateGraphExplorer:
                 )
                 if routed is not None and routed not in cooling:
                     cell = routed
+                elif self._effect_salience_priority:
+                    # g-315-273 winner Algorithm 1 port (priority half, EMPIRICAL
+                    # variant): order DISCOVERY by the accumulated per-component-TYPE
+                    # change-frequency (effect salience) instead of static visual
+                    # salience -- the training-free distillation of the winner's
+                    # learned CNN effect predictor. Falls back to the golden-ratio
+                    # sweep internally when no type has positive observed/optimistic
+                    # effect. Composes AFTER frontier-nav and BEFORE visual salience
+                    # (effect beats appearance when both ON); the KEY DELTA the
+                    # pre-registered prediction tests on ft09/lp85 (rb-2257).
+                    cell = self._effect_salient_sweep_cell(features)
                 elif self._salience_priority:
                     # g-315-269 winner Algorithm 1 port (priority half): order
                     # DISCOVERY by component visual salience (size/morphology/colour)
@@ -1387,5 +1580,8 @@ class ClickStateGraphExplorer:
         self._prev_hash = cur_hash
         self._prev_cell = cell
         self._prev_score = score
+        # Effect-salience (g-315-273): THIS frame's component-TYPE map becomes the
+        # pre-click map next tick (None when the toggle is OFF -> no attribution).
+        self._prev_comp_keys = self._cur_comp_keys
         x, y = self._idx_to_xy(cell)
         return ExecutorDecision(action=_ACTION6_ID, x=int(x), y=int(y))

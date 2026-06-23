@@ -246,6 +246,88 @@ def test_fixation_capped_resumes_sweep() -> None:
     )
 
 
+# ── Section A2: effect-salience tracker (g-315-273) ──────────────────────────
+
+
+def test_cell_component_keys_maps_cells_to_type() -> None:
+    # The (palette_value, size) type key is the spatial-generalisation handle:
+    # adjacent same-value cells share one component (one type); background and
+    # un-componented cells map to None.
+    fp = FrameProcessor()
+    feat = _feat({10: 3, 11: 3, 40: 5})  # 10,11 adjacent -> one size-2 comp
+    keys = fp.cell_component_keys(feat, frozenset())
+    assert keys[10] == (3, 2)
+    assert keys[11] == (3, 2)
+    assert keys[40] == (5, 1)
+    assert keys[0] is None  # background
+
+
+def test_effect_salience_off_by_default_is_dormant() -> None:
+    # OFF (default) = byte-identical: NO component-key CC pass (so the hash path
+    # is untouched) and NO type-frequency accumulation. The existing Section-A
+    # tests (run at the default OFF) pin the golden-ratio discovery order itself.
+    e = ClickStateGraphExplorer(width=_W, height=_H, seed=0)  # effect toggle OFF
+    e.decide(_feat({10: 3}))
+    e.decide(_feat({10: 3}))
+    assert e._cur_comp_keys is None  # no CC pass when OFF
+    assert e._prev_comp_keys is None
+    assert not e._type_trials and not e._type_changes  # no accumulation
+
+
+def test_effect_salience_accumulates_inert_then_live() -> None:
+    # With the toggle ON the discovery sweep targets component cells, so the
+    # clicked cell falls in a known type and the observed delta accumulates as
+    # that type's empirical change-frequency: a no-op repeat -> trials only
+    # (inert), then a state change -> changes too (live).
+    e = ClickStateGraphExplorer(
+        width=_W, height=_H, seed=0, effect_salience_priority=True
+    )
+    e.decide(_feat({10: 3}))  # clicks the (3,1) component cell (10)
+    assert e._prev_cell == 10
+    e.decide(_feat({10: 3}))  # identical frame -> the (3,1) click was a NO-OP
+    assert e._type_trials.get((3, 1)) == 1
+    assert e._type_changes.get((3, 1), 0) == 0  # inert: trials only
+    assert 10 in e.inert_cells
+
+
+def test_effect_salient_sweep_prefers_observed_high_change_type() -> None:
+    # The core prediction's mechanism (g-315-273): an UNDISCOVERED cell whose
+    # component TYPE has a high observed change-frequency outranks an undiscovered
+    # cell of a proven-INERT type -- effect generalises across cells of the same
+    # structural type (the CNN spatial-head distillation). Visual salience (size
+    # /morphology/colour) is identical here (both single cells), so ONLY effect
+    # salience separates them.
+    e = ClickStateGraphExplorer(
+        width=_W, height=_H, seed=0, effect_salience_priority=True
+    )
+    feat = _feat({10: 3, 40: 5})  # type (3,1) at 10, type (5,1) at 40
+    e._cur_comp_keys = e._processor.cell_component_keys(
+        feat, e._processor.hud_cells()
+    )
+    # (5,1) proven LIVE (2/2 changes); (3,1) proven INERT (0/2).
+    e._type_trials = {(5, 1): 2, (3, 1): 2}
+    e._type_changes = {(5, 1): 2, (3, 1): 0}
+    assert e._effect_salient_sweep_cell(feat) == 40  # the high-change type cell
+
+
+def test_reset_episode_preserves_effect_salience_model() -> None:
+    # The accumulated type-frequency model PERSISTS across episodes (like
+    # _live/_inert/_control_effect, g-315-253), while the pre-click component-key
+    # linkage is episode-local (reset to None).
+    e = ClickStateGraphExplorer(
+        width=_W, height=_H, seed=0, effect_salience_priority=True
+    )
+    e.decide(_feat({10: 3}))
+    e.decide(_feat({10: 3}))  # accrues (3,1) trials
+    assert e._type_trials
+    trials_before = dict(e._type_trials)
+    changes_before = dict(e._type_changes)
+    e.reset_episode()
+    assert e._type_trials == trials_before  # learned model preserved
+    assert e._type_changes == changes_before
+    assert e._prev_comp_keys is None  # episode-local linkage reset
+
+
 # ── Section B: _route_episode wiring ─────────────────────────────────────────
 
 

@@ -488,6 +488,29 @@ def main() -> None:
             "ft09's early levels while the nav-only port scored 0 from level 0."
         ),
     )
+    parser.add_argument(
+        "--click-effect-salience-priority",
+        action="store_true",
+        help=(
+            "g-315-273: enable winner Algorithm 1 (arxiv 2512.24156) priority="
+            "EFFECT-SALIENCE in the click-class ClickStateGraphExplorer (--use-"
+            "solver-v2 --state-graph, ft09/lp85) -- the EMPIRICAL, training-free "
+            "variant of the priority half. OFF (default) = byte-identical: no extra "
+            "CC pass, golden-ratio POSITION discovery order. ON = the DISCOVERY sweep "
+            "is ordered by the accumulated per-component-TYPE change-FREQUENCY "
+            "(observed P(a click on this component type moves the masked state)), so "
+            "cells of structurally-similar components that have empirically PRODUCED "
+            "EFFECTS are probed first -- the training-free distillation of the "
+            "winner's LEARNED CNN action-effect predictor (no model, no RL). Where "
+            "--click-salience-priority (g-315-269) used STATIC VISUAL salience -- "
+            "which rb-2257 found ANTI-correlated with the live control on ft09/lp85 "
+            "-- this uses OBSERVED effect. PRE-REGISTERED PREDICTION (~0.60 conf): "
+            "effect-salience identifies the live control better than visual salience. "
+            "Composes BEFORE --click-salience-priority (effect beats appearance). "
+            "Reward-INDEPENDENT, env-agnostic (structural types, no palette/coord "
+            "literal), tiny-compute (one O(n) CC pass per discovery cell)."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -723,6 +746,7 @@ def main() -> None:
             config_prior=args.config_prior,
             frontier_nav=args.click_frontier_nav,
             salience_priority=args.click_salience_priority,
+            effect_salience_priority=args.click_effect_salience_priority,
         )
     else:
         streaming_client = AyoaiStreamingClient(
