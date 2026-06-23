@@ -433,6 +433,22 @@ def main() -> None:
             "cold-start barrier holds' from 'harness buggy'. g-315-266."
         ),
     )
+    parser.add_argument(
+        "--config-prior",
+        choices=["orderedness", "compression", "symmetry"],
+        default="orderedness",
+        help=(
+            "g-315-267: reward-INDEPENDENT config-prior for the click-class "
+            "ClickStateGraphExplorer's win-config recognition (--use-solver-v2 "
+            "--state-graph, ft09/lp85). 'orderedness' (default) = the g-315-264/266 "
+            "max-orderedness proxy, byte-identical to pre-g-315-267. 'compression' = "
+            "component-type-distribution regularity (MDL); 'symmetry' = bbox-centroid "
+            "mirror fraction. Both env-agnostic (no palette/coord literal), swapping "
+            "the target prior WITHOUT touching the recognition architecture so the "
+            "live litmus can A/B whether a richer prior breaks the no-reward "
+            "cold-start the g-315-266 measurement quantified. g-315-267."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -665,6 +681,7 @@ def main() -> None:
             arc_game_id=args.game,
             seed_provider=v2_seed_provider,
             use_state_graph=args.state_graph,
+            config_prior=args.config_prior,
         )
     else:
         streaming_client = AyoaiStreamingClient(

@@ -49,7 +49,7 @@ import hashlib
 import random
 from collections import Counter, deque
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 from solver_v0.perception import FrameFeatures
 from solver_v0.policy import detect_cursor_and_targets
@@ -189,6 +189,92 @@ def _config_orderedness(
     return 0.5 * consolidation + 0.5 * parsimony
 
 
+def _config_compression_gain(
+    comps: list[tuple[int, int, tuple[int, int, int, int]]],
+) -> float:
+    """Reward-INDEPENDENT structural-REGULARITY prior (g-315-267) -- a richer
+    alternative to max-orderedness. Where _config_orderedness rewards one
+    consolidated blob, this rewards a REPEATED/REGULAR structure: a config whose
+    components fall into FEW distinct types is more compressible (lower MDL) and --
+    the hypothesis -- more likely a "solved" target than a scattered config of
+    all-distinct fragments (solved configs often tile/repeat identical pieces).
+
+    Computed from the SAME (palette_value, size, bbox) signature, O(comps). No
+    palette/coord literal: a component TYPE is the (palette_value, size) pair whose
+    value is used only for EQUALITY, never compared to a hardcoded constant, so
+    generalisation is preserved. Two bounded sub-signals, each in (0, 1]:
+      * repetition     = 1 - (k - 1)/(n - 1) for n > 1 (all-same -> 1.0,
+                         all-distinct -> 0.0); 1.0 for n == 1.
+      * type_parsimony = 1 / k (one type -> 1.0; many -> low).
+    where n = component count, k = distinct (palette, size) type count.
+    Returns their mean in (0, 1]; 0.0 for an empty config."""
+    if not comps:
+        return 0.0
+    n = len(comps)
+    k = len({(pal, size) for pal, size, _ in comps})
+    repetition = 1.0 if n == 1 else 1.0 - (k - 1) / (n - 1)
+    type_parsimony = 1.0 / k
+    return 0.5 * repetition + 0.5 * type_parsimony
+
+
+_SYMMETRY_TOL: float = 0.5
+"""Half-cell tolerance for mirror-centroid coincidence in _config_symmetry --
+component centroids are in grid-cell units; a reflected centroid within half a
+cell of a real one counts as a mirror partner. A universal exploration tunable,
+no game-specific value (invariant: generalises)."""
+
+
+def _config_symmetry(
+    comps: list[tuple[int, int, tuple[int, int, int, int]]],
+) -> float:
+    """Reward-INDEPENDENT structural-SYMMETRY prior (g-315-267) -- the second
+    richer alternative, named in _config_orderedness's docstring as a swap
+    candidate. Hypothesis: a "solved" config is more mirror-SYMMETRIC than the
+    scattered intermediate states a blind sweep produces.
+
+    Computed from component bbox CENTROIDS about the config's own bounding-box
+    centre axes, O(comps^2) over the (small) component set. No palette/coord
+    literal: the axes are DERIVED from the live config extent, never hardcoded,
+    and centroids are compared only to each other. Returns the max of the
+    vertical- and horizontal-axis mirror fractions in [0, 1]: for each axis, the
+    fraction of components whose centroid reflected across the config centre
+    coincides (within a half-cell tolerance) with some component's centroid.
+    1.0 = every component has a mirror partner; a single centred component is its
+    own mirror (1.0). 0.0 for an empty config."""
+    if not comps:
+        return 0.0
+    cents = [((x0 + x1) / 2.0, (y0 + y1) / 2.0) for _, _, (x0, y0, x1, y1) in comps]
+    xs = [c[0] for c in cents]
+    ys = [c[1] for c in cents]
+    cx = (min(xs) + max(xs)) / 2.0
+    cy = (min(ys) + max(ys)) / 2.0
+
+    def _mirror_frac(reflected: list[tuple[float, float]]) -> float:
+        hit = 0
+        for tx, ty in reflected:
+            if any(
+                abs(tx - ox) <= _SYMMETRY_TOL and abs(ty - oy) <= _SYMMETRY_TOL
+                for ox, oy in cents
+            ):
+                hit += 1
+        return hit / len(cents)
+
+    horiz = _mirror_frac([(2.0 * cx - x, y) for x, y in cents])  # reflect across x = cx
+    vert = _mirror_frac([(x, 2.0 * cy - y) for x, y in cents])   # reflect across y = cy
+    return max(horiz, vert)
+
+
+# Reward-INDEPENDENT config-prior registry (g-315-267). The selector lets the live
+# litmus A/B max-orderedness against richer env-agnostic priors WITHOUT touching the
+# recognition architecture (see _config_orderedness docstring). "orderedness" is the
+# default -> byte-identical to pre-g-315-267 behaviour.
+_CONFIG_PRIORS = {
+    "orderedness": _config_orderedness,
+    "compression": _config_compression_gain,
+    "symmetry": _config_symmetry,
+}
+
+
 @dataclass
 class _Node:
     """A state-graph vertex keyed by the masked-frame hash."""
@@ -213,7 +299,16 @@ class FrameProcessor:
     episode.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        config_prior: Callable[
+            [list[tuple[int, int, tuple[int, int, int, int]]]], float
+        ] = _config_orderedness,
+    ) -> None:
+        # g-315-267: the config-prior is INJECTED (default = max-orderedness so the
+        # default path stays byte-identical) so the live litmus can A/B richer
+        # reward-INDEPENDENT priors WITHOUT touching the recognition architecture.
+        self._config_prior = config_prior
         self._prev_values: Optional[list[int]] = None
         self._change_count: dict[int, int] = {}
         self._occ_count: dict[int, int] = {}
@@ -333,7 +428,7 @@ class FrameProcessor:
         (g-315-264). Reuses the cached component signature -- a single CC pass per
         tick. MUST be called after ``hash(features)`` for the same frame; the click
         explorer's ``decide`` does exactly that (hash first, orderedness next)."""
-        return _config_orderedness(self._last_comps)
+        return self._config_prior(self._last_comps)
 
 
 class StateGraphExplorer:
@@ -706,11 +801,17 @@ class ClickStateGraphExplorer:
         width: int = 64,
         height: int = 64,
         seed: int = 0,
+        config_prior: str = "orderedness",
     ) -> None:
         self._game_class = game_class
         self._w = int(width) if width else 64
         self._h = int(height) if height else 64
-        self._processor = FrameProcessor()
+        # g-315-267: resolve the reward-independent config-prior by name (default
+        # "orderedness" -> _config_orderedness, byte-identical). Unknown names fall
+        # back to orderedness (main.py validates the choice via choices=).
+        self._processor = FrameProcessor(
+            config_prior=_CONFIG_PRIORS.get(config_prior, _config_orderedness)
+        )
         self._graph: dict[str, _Node] = {}
         # Deterministic PRNG -- live-control choice must be replayable/offline-
         # testable (mirrors StateGraphExplorer seed contract).

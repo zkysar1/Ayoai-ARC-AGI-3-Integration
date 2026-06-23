@@ -132,6 +132,7 @@ class SolverV2StreamingAdapter:
         policy_factory: Callable[[], HandBuiltPolicy] | None = None,
         history_depth: int = DEFAULT_HISTORY_DEPTH,
         use_state_graph: bool = False,
+        config_prior: str = "orderedness",
     ) -> None:
         # streaming_url / api_key / session / http_timeout_s / retry_sleep
         # are accepted-and-ignored -- the adapter does no network I/O. Kept in
@@ -143,6 +144,9 @@ class SolverV2StreamingAdapter:
         self.api_key = api_key
 
         self._game_class: Optional[str] = class_slug_from_game_id(arc_game_id)
+        # g-315-267: name of the reward-independent config-prior to thread into the
+        # ClickStateGraphExplorer (default "orderedness" = max-orderedness baseline).
+        self._config_prior: str = config_prior
         self._seed_provider: SeedProvider = (
             seed_provider
             if seed_provider is not None
@@ -945,7 +949,9 @@ class SolverV2StreamingAdapter:
                 cached_csg.reset_episode()
                 self._explorer = cached_csg
             else:
-                new_csg = ClickStateGraphExplorer(game_class=self._game_class)
+                new_csg = ClickStateGraphExplorer(
+                    game_class=self._game_class, config_prior=self._config_prior
+                )
                 self._click_state_graph_cache[csg_key] = new_csg
                 self._explorer = new_csg
             # The explorer is NOT the HandBuiltPolicy route: clear _use_policy /
