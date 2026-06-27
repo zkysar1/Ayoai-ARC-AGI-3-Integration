@@ -328,6 +328,142 @@ def test_reset_episode_preserves_effect_salience_model() -> None:
     assert e._prev_comp_keys is None  # episode-local linkage reset
 
 
+# ── AEVS wiring (g-315-279): the Action-Effect Value Store toggle ────────────
+# The store itself (Welford update, derived quantities, the explore_score ranking
+# + the rb-2214/2208 anti-fixation safeguard) is unit-tested OFFLINE in
+# tests/unit/test_action_effect_value_store.py. These tests pin the WIRING into
+# the explorer: default-off dormancy, byte-identical-when-off, the deferred-observe
+# update hook, the _select_live_by_recognition re-rank, cross-episode persistence,
+# and the adapter thread-through. The LIVE efficiency measurement (g-315-280) needs
+# ARC_API_KEY and is out of scope here (correctness wired, efficiency deferred).
+
+
+def test_aevs_flag_defaults_off_and_threads() -> None:
+    # Default OFF = byte-identical: the store is not instantiated. Opt-in via the
+    # constructor param flips it on (mirrors --action-value-store).
+    off = ClickStateGraphExplorer(width=_W, height=_H)
+    assert off._use_aevs is False and off._aevs is None
+    on = ClickStateGraphExplorer(width=_W, height=_H, action_value_store=True)
+    assert on._use_aevs is True and on._aevs is not None
+
+
+def test_aevs_off_by_default_is_dormant() -> None:
+    # OFF (default): NO store, so no update + no re-rank -- the existing golden-
+    # ratio / orderedness-gradient path is untouched. Section-A tests (run at the
+    # default OFF) pin the selection behaviour itself.
+    e = ClickStateGraphExplorer(width=_W, height=_H, seed=0)  # AEVS OFF
+    e.decide(_feat({10: 3}))
+    e.decide(_feat({10: 3}))
+    e.decide(_feat({10: 3, 20: 5}))
+    assert e._aevs is None  # never instantiated when OFF
+
+
+def test_aevs_off_emits_identical_sequence_to_baseline() -> None:
+    # Passing action_value_store=False is byte-identical to not passing it: same
+    # seed + frame stream -> identical emitted coords (the OFF guarantee the LIVE
+    # g-315-280 measurement's OFF arm relies on).
+    frames = [
+        _feat({10: 3}),
+        _feat({10: 3, 20: 5}),
+        _feat({30: 7}),
+        _feat({30: 7}),
+        _feat({30: 7, 40: 5}),
+    ]
+
+    def emit(e: ClickStateGraphExplorer) -> list[int]:
+        return [(d := e.decide(f)).y * _W + d.x for f in frames]
+
+    explicit_off = ClickStateGraphExplorer(
+        width=_W, height=_H, seed=0, action_value_store=False
+    )
+    baseline = ClickStateGraphExplorer(width=_W, height=_H, seed=0)
+    assert emit(explicit_off) == emit(baseline)
+
+
+def test_aevs_accumulates_inert_observation() -> None:
+    # With AEVS ON the deferred-observe hook records every clicked cell: a no-op
+    # repeat -> the cell's key is SEEN but not live (liveness 0, effect_value 0).
+    # The first sweep cell is golden-ratio (effect-salience OFF), so capture it
+    # dynamically; a click on a STATIC frame is a no-op for ANY cell.
+    e = ClickStateGraphExplorer(
+        width=_W, height=_H, seed=0, action_value_store=True
+    )
+    e.decide(_feat({10: 3}))  # clicks sweep cell c1 (no AEVS update yet -- no prev)
+    c1 = e._prev_cell
+    assert c1 is not None
+    e.decide(_feat({10: 3}))  # identical frame -> c1 was a NO-OP
+    cx, cy = e._idx_to_xy(c1)
+    assert e._aevs is not None
+    rec = e._aevs.stat(("cell", int(cx), int(cy)))
+    assert rec is not None and rec.n == 1 and rec.live_n == 0  # seen, inert
+    assert e._aevs.effect_value(("cell", int(cx), int(cy))) == 0.0
+
+
+def test_aevs_records_live_effect() -> None:
+    # A click that drives a masked-state transition -> the cell's key records a
+    # LIVE observation (liveness 1.0), so it carries exploration value.
+    e = ClickStateGraphExplorer(
+        width=_W, height=_H, seed=0, action_value_store=True
+    )
+    e.decide(_feat({10: 3}))
+    e.decide(_feat({10: 3}))  # c1 (=10) no-op -> inert
+    c2 = e._prev_cell
+    assert c2 is not None
+    e.decide(_feat({10: 3, 20: 5}))  # changed frame -> c2 drove a transition
+    cx, cy = e._idx_to_xy(c2)
+    assert e._aevs is not None
+    rec = e._aevs.stat(("cell", int(cx), int(cy)))
+    assert rec is not None and rec.live_n == 1
+    assert e._aevs.liveness(("cell", int(cx), int(cy))) == 1.0
+
+
+def test_aevs_reranks_live_control_selection() -> None:
+    # The re-rank hook: with AEVS ON, _select_live_by_recognition picks the
+    # untested live control with the highest explore_score, NOT the orderedness
+    # estimate. cell 40 -> (x=0,y=5) seeded with a strong live effect
+    # (explore_score 5*0.5 = 2.5) outranks the unseen cell 10 -> (x=2,y=1)
+    # (only the C0 coverage bonus, 1.0). Diff 1.5 >> EPS -> deterministic.
+    e = ClickStateGraphExplorer(
+        width=_W, height=_H, seed=0, action_value_store=True
+    )
+    assert e._aevs is not None
+    e._aevs.update(("cell", 0, 5), changed=True, cells_changed=5.0, tick=1)
+    node = _Node(state_hash="h0", first_seen_tick=0)
+    assert e._select_live_by_recognition(node, [10, 40]) == 40
+
+
+def test_reset_episode_preserves_aevs_store() -> None:
+    # The accumulated cross-attempt value store PERSISTS across episodes (like
+    # _live/_inert/_control_effect, g-315-253) -- the directive's "track ACROSS
+    # attempts" requirement. reset_episode must not clear it.
+    e = ClickStateGraphExplorer(
+        width=_W, height=_H, seed=0, action_value_store=True
+    )
+    e.decide(_feat({10: 3}))
+    e.decide(_feat({10: 3}))  # accrues a key
+    assert e._aevs is not None and len(e._aevs) >= 1
+    keys_before = set(e._aevs.keys())
+    e.reset_episode()
+    assert e._aevs is not None and set(e._aevs.keys()) == keys_before
+
+
+def test_action_value_store_threads_through_adapter() -> None:
+    # The --action-value-store flag threads main.py -> adapter -> explorer (the
+    # 5-hop salience precedent). use_state_graph + action_value_store ON -> the
+    # routed ClickStateGraphExplorer has its store instantiated.
+    seed = _ScriptedSeedProvider(_prior(OBJECTIVE_UNKNOWN))
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card",
+        arc_game_id="ft09-test",
+        seed_provider=seed,
+        use_state_graph=True,
+        action_value_store=True,
+    )
+    adapter.choose_action(_click_frame())
+    assert isinstance(adapter.explorer, ClickStateGraphExplorer)
+    assert adapter.explorer._aevs is not None
+
+
 # ── Section B: _route_episode wiring ─────────────────────────────────────────
 
 

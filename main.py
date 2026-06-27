@@ -511,6 +511,30 @@ def main() -> None:
             "literal), tiny-compute (one O(n) CC pass per discovery cell)."
         ),
     )
+    parser.add_argument(
+        "--action-value-store",
+        action="store_true",
+        help=(
+            "g-315-279: enable the Action-Effect Value Store (AEVS, the 7th env-"
+            "agnostic primitive -- g-315-276 design / g-315-277 build) in the click-"
+            "class ClickStateGraphExplorer (--use-solver-v2 --state-graph), per "
+            "Zachary's ARC hill-climb directive: track per-cell/per-action effect "
+            "ACROSS attempts and hill-climb on the learned value. OFF (default) = "
+            "byte-identical: the store is not instantiated, no update + no re-rank, "
+            "the existing _control_effect / orderedness-gradient live-control "
+            "selection is untouched. ON = the discovery sweep's live-control "
+            "selection is ranked by explore_score = effect_value * novelty_discount + "
+            "unseen_bonus -- GENERALIZING _control_effect with the rb-2214/2208 anti-"
+            "fixation discount (an over-fired control saturates so coverage moves on) "
+            "and a coverage-floor bonus (never-tried controls stay competitive, so "
+            "reach never shrinks below the recognition baseline). The store PERSISTS "
+            "across episodes (real cross-attempt experience). STEP-1 boundary: with "
+            "no reward gradient (ARC cold-start) it optimises COVERAGE EFFICIENCY, "
+            "not score; STEP-4 (Roblox) supplies the reward gradient. Training-free, "
+            "no-LLM-hot-path, tiny-compute, env-agnostic (the g-315-221 envelope). "
+            "LIVE efficiency measured by g-315-280."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -747,6 +771,7 @@ def main() -> None:
             frontier_nav=args.click_frontier_nav,
             salience_priority=args.click_salience_priority,
             effect_salience_priority=args.click_effect_salience_priority,
+            action_value_store=args.action_value_store,
         )
     else:
         streaming_client = AyoaiStreamingClient(

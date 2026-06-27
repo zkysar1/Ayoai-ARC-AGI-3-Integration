@@ -105,7 +105,7 @@ class ActionEffectValueStore:
         self,
         key: ActionKey,
         changed: bool,
-        cells_changed: int,
+        cells_changed: float,
         tick: int,
         reward_delta: float = 0.0,
         progress: bool = False,
@@ -113,9 +113,12 @@ class ActionEffectValueStore:
         """Record one applied action's effect (training-free, O(1) per tick).
 
         `changed` is whether the action drove an observable transition;
-        `cells_changed` is the effect magnitude (#cells changed; the explorer's
-        masked-hash path supplies the boolean, the value-diff supplies the
-        count). `tick` is the global tick (recency). `reward_delta` is 0 in
+        `cells_changed` is the effect MAGNITUDE -- a real-valued effect size, not
+        necessarily an integer count. The explorer's masked-hash path supplies the
+        boolean; the magnitude is whatever effect-size signal the adapter has (the
+        ARC click-class adapter supplies |orderedness delta|; a #cells-changed count
+        is the integer instantiation the design illustrated -- both are valid floats
+        here). `tick` is the global tick (recency). `reward_delta` is 0 in
         ARC cold-start and the real reward in Roblox (STEP-4). `progress` lets
         the caller signal a coverage/goal advance that resets the anti-fixation
         discount even with no reward gradient -- the reset policy is a STEP-3

@@ -136,6 +136,7 @@ class SolverV2StreamingAdapter:
         frontier_nav: bool = False,
         salience_priority: bool = False,
         effect_salience_priority: bool = False,
+        action_value_store: bool = False,
     ) -> None:
         # streaming_url / api_key / session / http_timeout_s / retry_sleep
         # are accepted-and-ignored -- the adapter does no network I/O. Kept in
@@ -162,6 +163,11 @@ class SolverV2StreamingAdapter:
         # salience) instead of static visual salience. Threaded into the
         # ClickStateGraphExplorer (default False = byte-identical pre-g-315-273).
         self._effect_salience_priority: bool = effect_salience_priority
+        # g-315-279: Action-Effect Value Store toggle (the 7th env-agnostic
+        # primitive) threaded into the ClickStateGraphExplorer (default False =
+        # byte-identical pre-g-315-279). ON ranks live-control selection by the
+        # learned cross-attempt explore_score (g-315-276 design / g-315-277 build).
+        self._action_value_store: bool = action_value_store
         self._seed_provider: SeedProvider = (
             seed_provider
             if seed_provider is not None
@@ -970,6 +976,7 @@ class SolverV2StreamingAdapter:
                     frontier_nav=self._frontier_nav,
                     salience_priority=self._salience_priority,
                     effect_salience_priority=self._effect_salience_priority,
+                    action_value_store=self._action_value_store,
                 )
                 self._click_state_graph_cache[csg_key] = new_csg
                 self._explorer = new_csg

@@ -61,6 +61,7 @@ from solver_v2.calibration import (
 from solver_v2.executor import ExecutorDecision
 from solver_v2.action6_explore import explore_action6_coord
 from solver_v2.frontier_explorer import FrontierCoverageExplorer
+from primitives.action_effect_value_store import ActionEffectValueStore
 
 # ---------------------------------------------------------------------------
 # Tunable constants (all deterministic; no per-game values)
@@ -955,6 +956,7 @@ class ClickStateGraphExplorer:
         frontier_nav: bool = False,
         salience_priority: bool = False,
         effect_salience_priority: bool = False,
+        action_value_store: bool = False,
     ) -> None:
         self._game_class = game_class
         # g-315-268: winner Algorithm 1 (arxiv 2512.24156) frontier-navigation
@@ -997,6 +999,29 @@ class ClickStateGraphExplorer:
         # informative with, and composes BEFORE, _salience_priority (effect beats
         # appearance when both ON).
         self._effect_salience_priority = bool(effect_salience_priority)
+        # g-315-279: the 7th env-agnostic primitive -- the Action-Effect Value
+        # Store (g-315-276 design, g-315-277 build), per Zachary's ARC hill-climb
+        # directive ("track our cells/behaviors for what worked / what didn't"
+        # across attempts and hill-climb on the learned value -- "the same thing
+        # in roblox"). GENERALIZES _control_effect: an opaque-key cross-attempt
+        # value TABLE that ranks the discovery sweep by the learned value
+        # (effect_value * novelty_discount + unseen_bonus), where the
+        # novelty_discount (1/(1+n_since_progress)) is the rb-2214/2208 anti-
+        # fixation safeguard and the unseen_bonus is the coverage floor. OFF
+        # (default) = byte-identical: _aevs is None, so no update + no re-rank, and
+        # the existing _control_effect / _select_live_by_recognition path is
+        # untouched (the g-315-269/273 default-off salience precedent). The store
+        # PERSISTS across the server's short episodes (held here, NOT reset in
+        # reset_episode -- exactly the cross-attempt life _control_effect / _live /
+        # _inert already have), so the accumulated experience is real. STEP-1
+        # boundary (g-315-275, stated not blurred): with reward_delta==0 (ARC cold-
+        # start, score read separately as the ONLY reward) it optimises COVERAGE
+        # EFFICIENCY, not win-direction; STEP-4 (Roblox) supplies the reward
+        # gradient. LIVE efficiency measured by g-315-280.
+        self._use_aevs = bool(action_value_store)
+        self._aevs: Optional[ActionEffectValueStore] = (
+            ActionEffectValueStore() if self._use_aevs else None
+        )
         self._w = int(width) if width else 64
         self._h = int(height) if height else 64
         # g-315-267: resolve the reward-independent config-prior by name (default
@@ -1255,6 +1280,29 @@ class ClickStateGraphExplorer:
         Ties (within EPS) break via the seeded PRNG: deterministic + diverse, never a
         fixed-index bias. The fixation guard (step 5) still caps any single control's
         commit run, so recognition cannot re-introduce fixation."""
+        # AEVS re-rank (g-315-279, OFF by default): when the Action-Effect Value
+        # Store is enabled it is the SOLE live-control ranker -- it GENERALIZES the
+        # orderedness-estimate below (which consumes _control_mean_effect) into
+        # explore_score = effect_value * novelty_discount + unseen_bonus. The
+        # novelty_discount saturates an over-fired control so coverage moves on
+        # (rb-2214/2208, the g-315-262 single-cell-fixation failure mode), and the
+        # unseen_bonus keeps never-tried controls competitive so reach never shrinks
+        # below the recognition baseline. No target/gradient needed -- the store
+        # supplies its own exploration signal. Ties break via the seeded PRNG
+        # (deterministic + diverse); the step-5 commit-run cap remains the HARD
+        # backstop. OFF -> falls through to the byte-identical existing path below.
+        if self._aevs is not None:
+            best_av: Optional[float] = None
+            av_cells: list[int] = []
+            for c in untested_live:
+                cx, cy = self._idx_to_xy(c)
+                sc = self._aevs.explore_score(("cell", int(cx), int(cy)))
+                if best_av is None or sc > best_av + _CLICK_ORDEREDNESS_EPS:
+                    best_av = sc
+                    av_cells = [c]
+                elif abs(sc - best_av) <= _CLICK_ORDEREDNESS_EPS:
+                    av_cells.append(c)
+            return self._rng.choice(av_cells)
         target = self._hypothesize_target()
         if target is None:
             return self._rng.choice(untested_live)
@@ -1470,6 +1518,29 @@ class ClickStateGraphExplorer:
                     self._type_trials[t] = self._type_trials.get(t, 0) + 1
                     if cur_hash != self._prev_hash:
                         self._type_changes[t] = self._type_changes.get(t, 0) + 1
+
+            # AEVS accumulation (g-315-279): record the clicked cell's effect into
+            # the cross-attempt value store -- the env-agnostic generalisation of the
+            # _control_effect update above. key = ("cell", x, y) (the opaque ActionKey
+            # the store never inspects); changed = the masked state moved; magnitude =
+            # |orderedness delta| -- the explorer's NATIVE effect-size signal, already
+            # computed for _control_effect (no frame value-diff, no private access).
+            # The design's "#cells changed" was illustrative of effect MAGNITUDE; the
+            # ARC adapter's magnitude is the orderedness delta, consistent with the
+            # explorer's existing effect model. reward_delta stays 0 (ARC cold-start --
+            # score is the ONLY reward and is read separately below), so the store
+            # optimises COVERAGE EFFICIENCY here (the STEP-1 boundary). OFF (default)
+            # -> _aevs is None, no-op, byte-identical.
+            if self._aevs is not None:
+                px, py = self._idx_to_xy(self._prev_cell)
+                prev_ord_a = self._node_orderedness.get(self._prev_hash)
+                mag = abs(cur_ord - prev_ord_a) if prev_ord_a is not None else 1.0
+                self._aevs.update(
+                    ("cell", int(px), int(py)),
+                    changed=(cur_hash != self._prev_hash),
+                    cells_changed=mag,
+                    tick=self._tick,
+                )
 
         # 2. Register the current node.
         node = self._graph.get(cur_hash)
