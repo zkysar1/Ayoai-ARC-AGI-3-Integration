@@ -936,6 +936,28 @@ def main() -> None:
         f"took {elapsed:.1f} seconds ({fps:.2f} average fps)"
     )
 
+    # g-315-282: structured per-run metrics line for the AEVS efficiency 2x2
+    # runner (analysis/aevs_2x2_runner.py). Machine-parseable counterpart to the
+    # human "[episode ..]" logs above: the runner greps "[ARC-METRICS]" and feeds
+    # recording_path to analysis/aevs_efficiency_metrics.extract_run_metrics for
+    # post-hoc coverage extraction (the LIVE recording is the closed-loop source,
+    # rb-2454 — NOT offline replay). Additive + decision-source-agnostic; emitted
+    # unconditionally (recording_path is null when --record was not passed).
+    logger.info(
+        "[ARC-METRICS] "
+        + json.dumps(
+            {
+                "tag": "arc-metrics",
+                "game": args.game,
+                "aevs": bool(getattr(args, "action_value_store", False)),
+                "episodes": _episodes,
+                "ticks": action_counter,
+                "elapsed_s": round(elapsed, 2),
+                "recording_path": recorder.filename if recorder else None,
+            }
+        )
+    )
+
     # Close scorecard
     logger.info("Closing scorecard...")
     r = session.post(
