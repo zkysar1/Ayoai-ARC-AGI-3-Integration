@@ -21,8 +21,13 @@ decision source". Mirrors tests/integration/test_solver_v2_mock_game.py.
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
+
+import pytest
 
 from main import run_game_loop
+from recorder import Recorder
 from solver_v2.bt_streaming_adapter import (
     DECIDED_BY_BT_EXECUTOR,
     BehaviorTreeStreamingAdapter,
@@ -165,3 +170,84 @@ def test_action6_coords_flow_through_decision() -> None:
     d = adapter.choose_action(_live_frame(score=0, guid="p"))
     assert d.action == GameAction.ACTION6
     assert d.x == 5 and d.y == 9
+
+
+def test_corrected_path_runs_end_to_end_and_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """g-315-293: the corrected path executes end-to-end AND produces a recording.
+
+    Drives the full production run_game_loop with a server-shaped ARC behavior
+    tree (Selector + the strategic GameActions as Task leaves, mirroring the
+    Env Server's ArcBehaviorTreeService.serializeTreeNodeForArc output) routed
+    through the thin BehaviorTreeStreamingAdapter (g-315-291), against a scripted
+    mock game, with a real Recorder attached. Closes the recorder=None gap the
+    g-315-291 tests left: confirms a complete loop runs (RESET -> strategic
+    actions -> GAME_OVER termination) AND a recording JSONL is written with one
+    record per tick carrying frame data + decision provenance.
+
+    The live-ARC game transport (three.arcprize.org) and the live-frontier
+    server-side BT generation remain gated on ARC_API_KEY + a running Java Env
+    Server + frontier creds (none present in this environment) — this is the
+    in-process mock-game half of g-315-293, the same lane the integration tests
+    above exercise, extended to prove the recording artifact.
+    """
+    monkeypatch.setenv("RECORDINGS_DIR", str(tmp_path))
+
+    # Server-shaped tree: the strategic ARC GameActions as Task leaves.
+    tree = _selector(
+        _task("ACTION1"),
+        _task("ACTION2"),
+        _task("ACTION3"),
+        _task("ACTION4"),
+        _task("ACTION5"),
+        _task("ACTION6", 7, 11),
+        _task("ACTION7"),
+    )
+    adapter = BehaviorTreeStreamingAdapter(
+        tree, ayo_server_key="card-g315293", arc_game_id="bt-frontier"
+    )
+    # Scripted mock game: RESET resolves to a live frame, then the score climbs
+    # and the game ends on GAME_OVER (the loop's terminal condition).
+    scripted = [
+        _live_frame(score=0, guid="play-1"),
+        _live_frame(score=0, guid="play-1"),
+        _live_frame(score=1, guid="play-1"),
+        _live_frame(score=1, guid="play-1"),
+        _live_frame(score=2, guid="play-1"),
+        _live_frame(score=2, guid="play-1", state=GameState.GAME_OVER),
+    ]
+    sender = _ScriptedActionSender(scripted)
+    recorder = Recorder(prefix="arc-bt.frontier.mock")
+
+    action_count, elapsed = run_game_loop(
+        streaming_client=adapter,
+        action_sender=sender,
+        initial_frame=_initial_not_played(),
+        recorder=recorder,
+        max_actions=20,
+        game_id="bt-frontier",
+        log=logging.getLogger("test"),
+    )
+
+    # Complete loop executed: RESET first, strategic actions, GAME_OVER end.
+    assert action_count >= 5
+    assert elapsed >= 0
+    assert sender.calls[0][0] == GameAction.RESET
+
+    # A recording was produced: file on disk, one record per successful tick.
+    assert os.path.isfile(recorder.filename), "no recording file written"
+    events = recorder.get()
+    assert len(events) == action_count, "recorded count != loop action count"
+
+    # First record is the client RESET; strategic records carry bt-executor
+    # provenance; the run terminates on a GAME_OVER frame.
+    assert events[0]["data"]["decision_provenance"]["decided_by"] == "client"
+    strategic = [
+        e
+        for e in events
+        if e["data"]["decision_provenance"].get("decided_by")
+        == DECIDED_BY_BT_EXECUTOR
+    ]
+    assert strategic, "no bt-executor-attributed records"
+    assert events[-1]["data"]["state"] == GameState.GAME_OVER.value
