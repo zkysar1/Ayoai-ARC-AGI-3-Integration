@@ -9,10 +9,10 @@ palette value used for equality only, never compared to a literal). They do NOT
 assert the HYPOTHESIS (whether a prior moves score) -- that is the live litmus.
 """
 from solver_v2.state_graph import (
-    _config_orderedness,
-    _config_compression_gain,
-    _config_symmetry,
     _CONFIG_PRIORS,
+    _config_compression_gain,
+    _config_orderedness,
+    _config_symmetry,
 )
 
 

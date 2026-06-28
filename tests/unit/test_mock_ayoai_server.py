@@ -13,13 +13,10 @@ way it will speak to https://{hostname}:8787/AyoStreamingUpdates.
 
 from __future__ import annotations
 
-import json
-
 import pytest
 import requests
 
 from tests.fixtures.mock_ayoai_server import STREAMING_PATH, MockAyoaiServer
-
 
 # ---------- Lifecycle ---------- #
 
@@ -209,9 +206,6 @@ def test_simulated_game_loop_drives_through_mock(mock_ayoai_server):
     # ACTION6 carries x,y — verify the mock returns them and the client
     # would receive them. (The real client in g-315-04 will validate
     # x,y are in [0,63] solver-side; the mock just transmits.)
-    last_decision = json.loads(requests.post(
-        mock_ayoai_server.streaming_url, json={"tick": 5}, timeout=5
-    ).text)["data"] if False else {"action": "ACTION6", "x": 32, "y": 15}
     # (Compact assertion: we already saw x=32, y=15 returned for tick 4.)
     assert "x" in scripted[-1]["data"]
     assert "y" in scripted[-1]["data"]

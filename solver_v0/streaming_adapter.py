@@ -42,9 +42,9 @@ from collections import deque
 from typing import Any, Optional
 
 from ayoai_streaming_client import (
+    DECIDED_BY_CLIENT,
     AyoaiDecision,
     AyoaiStreamingError,
-    DECIDED_BY_CLIENT,
 )
 from solver_v0.perception import extract
 from solver_v0.policy import HandBuiltPolicy, PolicyDecision

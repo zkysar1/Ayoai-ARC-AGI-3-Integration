@@ -13,8 +13,10 @@ Transition model: each tick record carries frame (observation at decision) +
 action_input (action chosen on it). Effect of action at tick i = frame[i+1] vs
 frame[i] (changed? + #cells changed). Episode boundary = full_reset True.
 """
-import json, glob, os
-from collections import defaultdict, Counter
+import glob
+import json
+import os
+from collections import Counter, defaultdict
 
 REC_DIR = r"C:/ZakNoCloud/GitHub/Ayoai-Mind/../Ayoai/Ayoai-ARC-AGI-3-Integration/recordings"
 REC_DIR = r"C:/ZakNoCloud/GitHub/Ayoai/Ayoai-ARC-AGI-3-Integration/recordings"
@@ -27,27 +29,31 @@ GAMES = {
 
 def fhash(frame):
     # frame is [1,64,64] (or [64,64]); flatten deterministically
-    if not isinstance(frame, list): return None
+    if not isinstance(frame, list):
+        return None
     flat = []
     def walk(x):
         if isinstance(x, list):
-            for y in x: walk(y)
+            for y in x:
+                walk(y)
         else:
             flat.append(x)
     walk(frame)
     return hash(tuple(flat)), flat
 
 def fdelta(a, b):
-    if a is None or b is None or len(a) != len(b): return None
+    if a is None or b is None or len(a) != len(b):
+        return None
     return sum(1 for x, y in zip(a, b) if x != y)
 
 def load_ticks(path):
     """Return list of dicts: {act_id, xy, fhash, flat, score, state, reset}."""
     out = []
-    for l in open(path, encoding="utf-8"):
-        l = l.strip()
-        if not l: continue
-        d = (json.loads(l).get("data") or {})
+    for line in open(path, encoding="utf-8"):
+        line = line.strip()
+        if not line:
+            continue
+        d = (json.loads(line).get("data") or {})
         if d.get("kind") == "ayoai_session_open" or "frame" not in d:
             continue
         ai = d.get("action_input") or {}
@@ -66,7 +72,8 @@ def analyze_game(name, pattern):
     paths = sorted(glob.glob(os.path.join(REC_DIR, pattern)))
     print(f"\n{'='*70}\nGAME {name}  ({len(paths)} recordings)\n{'='*70}")
     if not paths:
-        print("  (no recordings)"); return
+        print("  (no recordings)")
+        return
 
     # per-cell (click) and per-action (movement) effect across ALL recordings
     cell_eff = defaultdict(list)      # (x,y) -> [changed bool,...]   click-class
@@ -81,12 +88,14 @@ def analyze_game(name, pattern):
 
     for p in paths:
         ticks = load_ticks(p)
-        if not ticks: continue
+        if not ticks:
+            continue
         total_ticks += len(ticks)
         rec_configs = set()
         for i, t in enumerate(ticks):
             action_dist[t["act"]] += 1
-            if t["score"]: score_moved += 1
+            if t["score"]:
+                score_moved += 1
             if t["fh"] is not None:
                 rec_configs.add(t["fh"])
             # effect of this tick's action = transition to NEXT tick's frame
@@ -97,10 +106,12 @@ def analyze_game(name, pattern):
                     delta = fdelta(t["flat"], nxt["flat"])
                     if t["xy"] is not None:   # click-class
                         cell_eff[t["xy"]].append(changed)
-                        if delta is not None: cell_delta[t["xy"]].append(delta)
+                        if delta is not None:
+                            cell_delta[t["xy"]].append(delta)
                     elif t["act"] is not None:  # movement / simple action
                         act_eff[t["act"]].append(changed)
-                        if delta is not None: act_delta[t["act"]].append(delta)
+                        if delta is not None:
+                            act_delta[t["act"]].append(delta)
         new_here = len(rec_configs - global_configs)
         per_rec_new.append((os.path.basename(p)[:18], len(rec_configs), new_here))
         global_configs |= rec_configs
@@ -110,9 +121,8 @@ def analyze_game(name, pattern):
     print(f"  action distribution: {dict(action_dist)}")
 
     # --- cross-episode CONFIG ACCUMULATION (coverage signal) ---
-    cumulative = 0; accum = []
-    seen = set()
-    # recompute cumulative growth in recording order
+    accum = []
+    # recompute config growth in recording order
     for fn, nconf, _ in per_rec_new:
         accum.append(nconf)
     print(f"  config-union grew across {len(paths)} recordings; "
@@ -123,8 +133,11 @@ def analyze_game(name, pattern):
     def stability_report(eff, delta, label, min_obs=2):
         multi = {k: v for k, v in eff.items() if len(v) >= min_obs}
         if not multi:
-            print(f"  [{label}] no key observed >= {min_obs}x"); return
-        consistent = 0; ambiguous = 0; live_rate = []
+            print(f"  [{label}] no key observed >= {min_obs}x")
+            return
+        consistent = 0
+        ambiguous = 0
+        live_rate = []
         for k, vs in multi.items():
             frac = sum(vs) / len(vs)
             live_rate.append(frac)

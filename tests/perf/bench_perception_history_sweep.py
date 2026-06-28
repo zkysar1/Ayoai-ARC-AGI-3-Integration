@@ -168,7 +168,6 @@ def main() -> None:
 
     # --- Characterization ---------------------------------------------------
     peaks = [p for _, p, _ in results]
-    walls = [w for _, _, w in results]
     peak_min, peak_max = min(peaks), max(peaks)
     peak_mean = sum(peaks) / len(peaks)
     peak_spread_pct = (peak_max - peak_min) / peak_mean * 100.0 if peak_mean else 0.0

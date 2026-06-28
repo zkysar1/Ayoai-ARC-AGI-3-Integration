@@ -10,7 +10,7 @@ ayoEnvironmentKey}, header AYOAI-API-KEY, response shape
 from __future__ import annotations
 
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import requests
@@ -31,7 +31,6 @@ from ayoai_client import (
     _initiate_cold_start,
     open_ayoai_session,
 )
-
 
 # ---------- Helpers ---------- #
 

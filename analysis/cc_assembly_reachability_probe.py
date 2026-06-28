@@ -52,13 +52,13 @@ sys.path.insert(0, ".")  # analysis/ convention: invoked from repo root
 
 from solver_v0.perception import extract  # noqa: E402
 from solver_v0.policy import detect_cursor_and_targets  # noqa: E402
+from solver_v2.calibration import NOISE_FLOOR_CELLS, dominant_displacement  # noqa: E402
 from solver_v2.cc_assembly import (  # noqa: E402
     _MIN_TARGET_CELLS,
     _TARGET_SIZE_FRACTION,
     plan_assembly,
 )
 from solver_v2.cc_segment import segment, terrain_values  # noqa: E402
-from solver_v2.calibration import NOISE_FLOOR_CELLS, dominant_displacement  # noqa: E402
 from solver_v2.dock_classifier import DockClassifier  # noqa: E402
 from solver_v2.frontier_explorer import _BFS_MAX_NODES, _GRID_MAX  # noqa: E402
 

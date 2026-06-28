@@ -27,7 +27,7 @@ from solver_v0.streaming_adapter import DEFAULT_HISTORY_DEPTH
 
 
 def load_frames(path):
-    recs = [json.loads(l)["data"] for l in open(path, encoding="utf-8") if l.strip()]
+    recs = [json.loads(line)["data"] for line in open(path, encoding="utf-8") if line.strip()]
     return [r for r in recs if "frame" in r]
 
 
@@ -64,8 +64,10 @@ def cursor_value_of(features):
             minr[v] = maxr[v] = r
             minc[v] = maxc[v] = c
         else:
-            minr[v] = min(minr[v], r); maxr[v] = max(maxr[v], r)
-            minc[v] = min(minc[v], c); maxc[v] = max(maxc[v], c)
+            minr[v] = min(minr[v], r)
+            maxr[v] = max(maxr[v], r)
+            minc[v] = min(minc[v], c)
+            maxc[v] = max(maxc[v], c)
     def dens(v):
         a = (maxr[v] - minr[v] + 1) * (maxc[v] - minc[v] + 1)
         return counts[v] / a if a > 0 else 0.0

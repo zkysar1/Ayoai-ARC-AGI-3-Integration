@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from solver_v0.perception import FrameFeatures, extract
 from solver_v2.episode import (
-    EpisodePrior,
     OBJECTIVE_TOGGLE_AT_CELL,
     OBJECTIVE_UNKNOWN,
     SEED_TRUST_MIN,
+    EpisodePrior,
 )
 from solver_v2.executor import DeterministicExecutor, ExecutorDecision
 

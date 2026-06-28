@@ -36,11 +36,11 @@ from solver_v2.seed_provider import SeedProvider
 from solver_v2.state_graph import (
     _CLICK_COMMIT_RUN_CAP,
     _CLICK_OPTIMISTIC_DELTA,
-    _Node,
-    _config_orderedness,
     ClickStateGraphExplorer,
     FrameProcessor,
     StateGraphExplorer,
+    _config_orderedness,
+    _Node,
 )
 from solver_v2.streaming_adapter import (
     DECIDED_BY_SOLVER_V2,

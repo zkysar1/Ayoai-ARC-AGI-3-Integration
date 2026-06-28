@@ -37,7 +37,6 @@ from ayoai_streaming_client import (
     DECIDED_BY_CLIENT,
     DNS_WARM_BASE_DELAY_S,
     DNS_WARM_MAX_ATTEMPTS,
-    AyoaiDecision,
     AyoaiStreamingApiError,
     AyoaiStreamingClient,
     AyoaiStreamingDnsError,
@@ -46,7 +45,6 @@ from ayoai_streaming_client import (
     resolve_streaming_host_with_retry,
 )
 from structs import ActionInput, FrameData, GameAction, GameState
-
 
 CARD_ID = "test-card-1234"
 

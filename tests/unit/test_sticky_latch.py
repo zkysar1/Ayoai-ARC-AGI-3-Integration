@@ -12,8 +12,7 @@ gated by tests/unit/test_dock_classifier.py.
 
 from __future__ import annotations
 
-from primitives.sticky_latch import StickyLatch, Centroid
-
+from primitives.sticky_latch import Centroid, StickyLatch
 
 # ---------- helpers ---------- #
 

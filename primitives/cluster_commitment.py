@@ -41,7 +41,6 @@ RE-ARCHITECTURE).
 from __future__ import annotations
 
 from collections import deque
-from typing import Optional
 
 Cell = tuple[int, int]
 

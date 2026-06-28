@@ -12,6 +12,7 @@ from typing import Any, Optional
 import pytest
 import requests
 
+from solver_v0.perception import extract
 from solver_v2.episode import (
     OBJECTIVE_ALIGN_TO_CELL,
     OBJECTIVE_AVOID,
@@ -22,7 +23,6 @@ from solver_v2.episode import (
     EpisodePrior,
     normalize_objective,
 )
-from solver_v0.perception import extract
 from solver_v2.executor import DeterministicExecutor
 from solver_v2.seed_provider import (
     BitNetSeedProvider,

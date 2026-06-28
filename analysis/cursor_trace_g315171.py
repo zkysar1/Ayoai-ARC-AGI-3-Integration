@@ -19,7 +19,7 @@ Usage: uv run python analysis/cursor_trace_g315171.py <recording.jsonl> [goal_r 
 import json
 import os
 import sys
-from collections import deque, Counter
+from collections import Counter, deque
 
 # Repo root (parent of analysis/) on sys.path so solver_v0 imports when this
 # script is run directly (python adds the SCRIPT dir, not the repo root).
@@ -31,7 +31,7 @@ from solver_v0.streaming_adapter import DEFAULT_HISTORY_DEPTH
 
 
 def load_frames(path):
-    recs = [json.loads(l)["data"] for l in open(path, encoding="utf-8") if l.strip()]
+    recs = [json.loads(line)["data"] for line in open(path, encoding="utf-8") if line.strip()]
     return [r for r in recs if "frame" in r]
 
 

@@ -36,7 +36,7 @@ from solver_v2.dock_classifier import DockClassifier
 
 
 def load_frames(path):
-    recs = [json.loads(l)["data"] for l in open(path, encoding="utf-8") if l.strip()]
+    recs = [json.loads(line)["data"] for line in open(path, encoding="utf-8") if line.strip()]
     return [r for r in recs if "frame" in r]
 
 

@@ -37,7 +37,6 @@ from solver_v0.streaming_adapter import (
 )
 from structs import FrameData, GameAction, GameState
 
-
 LS20_AVAILABLE = [
     GameAction.RESET,
     GameAction.ACTION1,

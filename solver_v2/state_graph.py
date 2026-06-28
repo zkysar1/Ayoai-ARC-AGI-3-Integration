@@ -51,17 +51,17 @@ from collections import Counter, deque
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from primitives.action_effect_value_store import ActionEffectValueStore
 from solver_v0.perception import FrameFeatures
 from solver_v0.policy import detect_cursor_and_targets
+from solver_v2.action6_explore import explore_action6_coord
 from solver_v2.calibration import (
     NOISE_FLOOR_CELLS,
     dominant_displacement,
     move_actions_from,
 )
 from solver_v2.executor import ExecutorDecision
-from solver_v2.action6_explore import explore_action6_coord
 from solver_v2.frontier_explorer import FrontierCoverageExplorer
-from primitives.action_effect_value_store import ActionEffectValueStore
 
 # ---------------------------------------------------------------------------
 # Tunable constants (all deterministic; no per-game values)
