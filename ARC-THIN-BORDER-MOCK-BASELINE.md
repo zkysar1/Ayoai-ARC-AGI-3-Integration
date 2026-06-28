@@ -67,9 +67,20 @@ pattern as Roblox/Vinheim).
   this baseline proves the *plumbing* (e2e path + provenance), NOT solving skill.
   A real score awaits **live play** — gated on `ARC_API_KEY` (human-only, absent).
 - **`action_input.id` is `0` on every recorded step** while `decided_by` correctly
-  shows `bt-executor` with an advancing `tick`. Whether that is a recording-side
-  detail of the mock path or the generated tree's leaf content is worth a
-  follow-up (does not affect this baseline's purpose — proving the e2e path).
+  shows `bt-executor` with an advancing `tick`. **RESOLVED by g-315-295**: this is a
+  recording-side artifact, NOT RESET-heavy BT leaves (hypothesis (b) refuted).
+  `main.py:227` records `new_frame.model_dump()` — the SERVER-returned FrameData —
+  whose `action_input` is the frame's own field (pydantic default `ActionInput()` →
+  `id=RESET=0`), which `MockAyoaiServer`'s scripted responses never populate
+  (hypothesis (a) confirmed, (c) is the mock mechanism). The client's emitted
+  `decision.action` (`main.py:205`) is logged at `main.py:219` but never persisted
+  into the recording. On live, `send_action` encodes the action in the URL path
+  (`/api/cmd/{name}`) and sends no `action_input` body, so live action fidelity
+  depends on whether the real ARC API echoes `action_input` into its FrameData
+  response (UNVERIFIED — confirm on the live run). **Remediation** (Apply
+  follow-up): record the emitted `decision.action` explicitly in the recorder
+  data dict so the recording is self-contained on mock+live. Does not affect this
+  baseline's purpose (proving the e2e path).
 
 ## Next
 
