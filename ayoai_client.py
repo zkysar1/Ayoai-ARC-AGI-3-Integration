@@ -32,6 +32,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 import requests
 
@@ -87,7 +88,7 @@ class AyoaiSessionInfo:
     env_server_url: str  # f"https://{hostname}:8686" (ReportApi root)
     attempts: int  # number of poll attempts to reach READY
     elapsed_s: float  # wall-clock seconds from first call to READY
-    status_log: list[dict] = field(default_factory=list)
+    status_log: list[dict[str, Any]] = field(default_factory=list)
     # status_log entries: {"t": elapsed_s, "attempt": n, "status": "STARTING"|...}
 
 
@@ -107,7 +108,7 @@ def _initiate_cold_start(
     api_key: str,
     sess: requests.Session,
     http_timeout_s: float,
-) -> dict | None:
+) -> dict[str, Any] | None:
     """POST to Collect with client_type='arc' to start the AyoAI server.
 
     Idempotent w.r.t. server-side state: 409 (duplicate startup) is treated
@@ -150,6 +151,7 @@ def _initiate_cold_start(
         ) from e
 
     if r.status_code == 200:
+        body: dict[str, Any] | None
         try:
             body = r.json()
         except ValueError:
@@ -184,7 +186,9 @@ def _initiate_cold_start(
     )
 
 
-def _classify_response(http_status: int, body: dict | None) -> tuple[str, str | None]:
+def _classify_response(
+    http_status: int, body: dict[str, Any] | None
+) -> tuple[str, str | None]:
     """Classify a poll response into (status_label, error_msg).
 
     Returns:
@@ -274,7 +278,7 @@ def open_ayoai_session(
     owned_session = session is None
     sess = session or requests.Session()
 
-    status_log: list[dict] = []
+    status_log: list[dict[str, Any]] = []
     start_t = time.time()
     last_status: str | None = None
 

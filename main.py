@@ -11,6 +11,7 @@ import os
 import random
 import sys
 import time
+from typing import Any, Callable
 
 import requests
 from pydantic import ValidationError
@@ -20,6 +21,7 @@ from ayoai_streaming_client import (
     AyoaiStreamingClient,
     AyoaiStreamingDnsError,
     AyoaiStreamingError,
+    StreamingDecisionClient,
 )
 from recorder import Recorder
 from solver_v0.streaming_adapter import SolverV0StreamingAdapter
@@ -83,7 +85,7 @@ def send_action(
     """
     try:
         # Prepare action data
-        json_data = {"game_id": game_id, "card_id": card_id}
+        json_data: dict[str, Any] = {"game_id": game_id, "card_id": card_id}
 
         # Add guid for all actions except RESET
         if guid is not None and action != GameAction.RESET:
@@ -122,11 +124,13 @@ def send_action(
 
 
 def run_game_loop(
-    streaming_client: AyoaiStreamingClient,
-    action_sender,
+    streaming_client: StreamingDecisionClient,
+    action_sender: Callable[
+        [GameAction, str | None, int | None, int | None], FrameData | None
+    ],
     initial_frame: FrameData,
     *,
-    recorder=None,
+    recorder: Recorder | None = None,
     max_actions: int = 80,
     game_id: str | None = None,
     log: logging.Logger | None = None,
@@ -774,6 +778,11 @@ def main() -> None:
             action_value_store=args.action_value_store,
         )
     else:
+        # streaming_url is resolved by this point (live: ayoai_session.streaming_url;
+        # mock: args.mock_url). The assert makes that invariant explicit and
+        # narrows str | None -> str for the constructor (fails loud if a future
+        # branch ever reaches here without resolving a URL).
+        assert streaming_url is not None
         streaming_client = AyoaiStreamingClient(
             streaming_url=streaming_url,
             ayo_server_key=card_id,

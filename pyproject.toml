@@ -24,6 +24,14 @@ dev = [
 [tool.mypy]
 strict = true
 disallow_untyped_defs = true
+# explicit_package_bases + namespace_packages make `mypy .` resolve modules
+# from the repo root deterministically. Without them, analysis/ (which has no
+# __init__.py) is found twice — once as top-level `aevs_efficiency_metrics`
+# and once as `analysis.aevs_efficiency_metrics` — and mypy aborts before
+# checking. The code imports it as `analysis.aevs_efficiency_metrics`, so the
+# repo-root base is correct. (g-315-289)
+explicit_package_bases = true
+namespace_packages = true
 exclude = [
     "tests",
 ]

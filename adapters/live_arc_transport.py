@@ -40,7 +40,7 @@ from __future__ import annotations
 import os
 from typing import Callable, Mapping, Optional, Sequence
 
-import requests  # type: ignore[import-untyped]
+import requests
 
 from adapters.arc import EpisodeReport, GridCoord, run_arc_episode
 from adapters.base import EnvironmentAdapter

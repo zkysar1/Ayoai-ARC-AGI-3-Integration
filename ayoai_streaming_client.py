@@ -52,7 +52,7 @@ import os
 import socket
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 from urllib.parse import urlparse
 
 import requests
@@ -127,7 +127,7 @@ def resolve_streaming_host_with_retry(
     base_delay_s: float = DNS_WARM_BASE_DELAY_S,
     max_total_s: float = DNS_WARM_MAX_TOTAL_S,
     sleep_fn: Callable[[float], None] = time.sleep,
-    resolve_fn: Callable[[str], list] | None = None,
+    resolve_fn: Callable[[str], list[Any]] | None = None,
 ) -> str:
     """Probe streaming_url's hostname with exponential backoff until it resolves.
 
@@ -162,7 +162,7 @@ def resolve_streaming_host_with_retry(
         )
 
     if resolve_fn is None:
-        def _default_resolve(h: str) -> list:
+        def _default_resolve(h: str) -> list[Any]:
             return socket.getaddrinfo(h, None, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM)
         resolve_fn = _default_resolve
 
@@ -222,7 +222,25 @@ class AyoaiDecision:
     x: int | None = None
     y: int | None = None
     reasoning: Any | None = None
-    provenance: dict = field(default_factory=dict)
+    provenance: dict[str, Any] = field(default_factory=dict)
+
+
+class StreamingDecisionClient(Protocol):
+    """Structural interface ``run_game_loop`` drives per tick.
+
+    ``AyoaiStreamingClient`` and the solver/BT streaming adapters
+    (``SolverV0StreamingAdapter``, ``SolverV2StreamingAdapter``,
+    ``BehaviorTreeStreamingAdapter``) all satisfy this without inheritance —
+    they share the choose_action/send_add/send_delete surface the loop calls.
+    Typing the loop param against this Protocol (not the concrete
+    ``AyoaiStreamingClient``) is what lets the duck-typed adapters be wired in.
+    """
+
+    def choose_action(self, frame: FrameData) -> AyoaiDecision: ...
+
+    def send_add(self, frame: FrameData) -> None: ...
+
+    def send_delete(self) -> None: ...
 
 
 class AyoaiStreamingClient:
