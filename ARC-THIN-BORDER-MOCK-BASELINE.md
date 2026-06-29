@@ -77,10 +77,12 @@ pattern as Roblox/Vinheim).
   into the recording. On live, `send_action` encodes the action in the URL path
   (`/api/cmd/{name}`) and sends no `action_input` body, so live action fidelity
   depends on whether the real ARC API echoes `action_input` into its FrameData
-  response (UNVERIFIED — confirm on the live run). **Remediation** (Apply
-  follow-up): record the emitted `decision.action` explicitly in the recorder
-  data dict so the recording is self-contained on mock+live. Does not affect this
-  baseline's purpose (proving the e2e path).
+  response (UNVERIFIED — confirm on the live run). **Remediation APPLIED**
+  (g-315-297, commit `ea82e24`): the loop now records the emitted
+  `decision.action` explicitly as `record["emitted_action"]={name,x,y}` before
+  `recorder.record()`, so recordings are self-contained on mock+live independent
+  of any server echo. Does not affect this baseline's purpose (proving the e2e
+  path). The live `action_input`-echo question above stays open until a live run.
 
 ## Next
 
