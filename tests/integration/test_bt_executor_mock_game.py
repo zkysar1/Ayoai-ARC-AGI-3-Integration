@@ -251,3 +251,87 @@ def test_corrected_path_runs_end_to_end_and_records(
     ]
     assert strategic, "no bt-executor-attributed records"
     assert events[-1]["data"]["state"] == GameState.GAME_OVER.value
+
+
+def test_recording_captures_emitted_action(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """g-315-297: the recording captures the EMITTED decision.action.
+
+    g-315-295 found that record["action_input"] is the SERVER-returned frame's
+    field — mock-defaults to RESET=0, and on live only reflects the emitted
+    action if the ARC API echoes it — NOT the action the client emitted. The
+    remediation (main.py) adds an "emitted_action" block to every record from
+    decision.action. This test pins it: each recorded tick's emitted_action.name
+    matches the GameAction actually sent to action_sender, and reflects the real
+    strategic action even though action_input mock-defaults to RESET=0.
+    """
+    monkeypatch.setenv("RECORDINGS_DIR", str(tmp_path))
+    tree = _selector(
+        _task("ACTION1"),
+        _task("ACTION2"),
+        _task("ACTION3"),
+        _task("ACTION6", 7, 11),
+    )
+    adapter = BehaviorTreeStreamingAdapter(
+        tree, ayo_server_key="card-g315297", arc_game_id="bt-frontier"
+    )
+    scripted = [
+        _live_frame(score=0, guid="play-1"),
+        _live_frame(score=0, guid="play-1"),
+        _live_frame(score=1, guid="play-1"),
+        _live_frame(score=1, guid="play-1"),
+        _live_frame(score=2, guid="play-1"),
+        _live_frame(score=2, guid="play-1", state=GameState.GAME_OVER),
+    ]
+    sender = _ScriptedActionSender(scripted)
+    recorder = Recorder(prefix="arc-bt.frontier.mock")
+
+    action_count, _ = run_game_loop(
+        streaming_client=adapter,
+        action_sender=sender,
+        initial_frame=_initial_not_played(),
+        recorder=recorder,
+        max_actions=20,
+        game_id="bt-frontier",
+        log=logging.getLogger("test"),
+    )
+
+    events = recorder.get()
+    assert len(events) == action_count
+
+    # events[i] corresponds 1:1 to the i-th action_sender call that returned a
+    # frame (both appended in lockstep; a trailing None call may follow but
+    # produces no event, so sender.calls[i] is valid for every recorded event).
+    for i, ev in enumerate(events):
+        emitted = ev["data"].get("emitted_action")
+        assert emitted is not None, f"record {i} missing emitted_action"
+        assert emitted["name"] == sender.calls[i][0].name, (
+            f"record {i}: emitted_action.name={emitted['name']} "
+            f"!= sent {sender.calls[i][0].name}"
+        )
+
+    # The fix's whole point: emitted_action reflects the REAL strategic action
+    # even though the server frame's action_input mock-defaults to RESET=0.
+    strategic = [
+        ev
+        for ev in events
+        if ev["data"]["decision_provenance"].get("decided_by")
+        == DECIDED_BY_BT_EXECUTOR
+    ]
+    assert strategic, "no strategic records to check"
+    assert any(
+        ev["data"]["emitted_action"]["name"] != "RESET" for ev in strategic
+    ), "no strategic record captured a non-RESET emitted action"
+    # while action_input stayed at the mock default (RESET=0).
+    assert all(ev["data"]["action_input"]["id"] == 0 for ev in events), (
+        "mock action_input should default to id=0 (the g-315-295 artifact)"
+    )
+
+    # ACTION6 coordinates flow through to emitted_action.
+    a6 = [
+        ev for ev in events if ev["data"]["emitted_action"]["name"] == "ACTION6"
+    ]
+    assert a6, "ACTION6 never emitted in this cycle"
+    assert a6[0]["data"]["emitted_action"]["x"] == 7
+    assert a6[0]["data"]["emitted_action"]["y"] == 11

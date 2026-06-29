@@ -230,6 +230,16 @@ def run_game_loop(
                 if recorder:
                     record = new_frame.model_dump(mode='json')
                     record["decision_provenance"] = decision.provenance
+                    # Persist the action WE emitted this tick (g-315-297).
+                    # record["action_input"] above is the SERVER frame's field
+                    # (mock-defaults to RESET=0; on live only reflects the
+                    # emitted action if the ARC API echoes it), so capture
+                    # decision.action here to make the recording self-contained.
+                    record["emitted_action"] = {
+                        "name": action.name,
+                        "x": decision.x,
+                        "y": decision.y,
+                    }
                     recorder.record(record)
             else:
                 log.error("Failed to get frame, stopping")
