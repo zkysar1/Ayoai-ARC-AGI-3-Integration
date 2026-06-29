@@ -34,6 +34,16 @@ explicit_package_bases = true
 namespace_packages = true
 exclude = [
     "tests",
+    # analysis/ holds one-off investigation probe scripts (named after closed
+    # goal-ids — e.g. cursor_trace_g315171, why_score_zero_g315132c,
+    # target_signal_g315132a — plus *_probe diagnostics). They are throwaway
+    # analysis runs, NOT production code, and imported by NOTHING on the
+    # production path (verified g-315-296: zero `from analysis`/`import analysis`
+    # outside tests/ + analysis/ itself; the one production-adjacent helper the
+    # config note above mentions, aevs_efficiency_metrics, is clean either way).
+    # Excluding them keeps strict focused on production solver/integration code
+    # instead of taxing every future diagnostic probe. (g-315-296)
+    "analysis",
 ]
 plugins = []
 

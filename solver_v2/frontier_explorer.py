@@ -51,7 +51,7 @@ from __future__ import annotations
 
 import os
 from collections import deque
-from typing import Optional
+from typing import Any, Optional
 
 from primitives.cluster_commitment import ClusterCommitment
 from primitives.frontier_coverage import FrontierCoverage
@@ -1000,7 +1000,7 @@ class FrontierCoverageExplorer:
 
     # ---------- g-315-223: windowed cluster-commitment goal-seeking ---------- #
 
-    def _cluster_targets(self) -> list[dict]:
+    def _cluster_targets(self) -> list[dict[str, Any]]:
         """Delegates to the env-agnostic ClusterCommitment core (g-315-250).
 
         Byte-identical to the previously-inlined union-find clustering. Kept as a
@@ -1098,6 +1098,7 @@ class FrontierCoverageExplorer:
                 bound = wb
             else:
                 bound = max(bound, wb) if sign > 0 else min(bound, wb)
+        assert bound is not None  # advancing non-empty (guard above) => loop set bound
         return target_coord <= bound + 1 if sign > 0 else target_coord >= bound - 1
 
     # ---------- g-315-220: extended-bootstrap full-axis calibration ---------- #

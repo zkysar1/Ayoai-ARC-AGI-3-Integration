@@ -152,7 +152,7 @@ class RecordingReplayAdapter:
         # against real frame transitions instead of the cold-start branch.
         # rb-1300: history entries MUST be full layered frames
         # ([layers][rows][cols]); extract indexes prev_frame[0] internally.
-        self._history: deque = deque(maxlen=max(1, history_depth))
+        self._history: deque[list[list[list[int]]]] = deque(maxlen=max(1, history_depth))
 
     def __enter__(self) -> "RecordingReplayAdapter":
         self._fh = open(self._path, encoding="utf-8")

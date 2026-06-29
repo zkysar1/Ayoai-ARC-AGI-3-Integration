@@ -263,21 +263,25 @@ class HandBuiltPolicy:
 
     history: List[ActionOutcome] = field(default_factory=list)
     game_class: Optional[str] = None
-    visit_counts: dict[tuple, dict[int, int]] = field(default_factory=dict)
-    _last_palette_sig: Optional[tuple] = field(default=None, repr=False)
+    visit_counts: dict[tuple[tuple[int, int], ...], dict[int, int]] = field(
+        default_factory=dict
+    )
+    _last_palette_sig: Optional[tuple[tuple[int, int], ...]] = field(
+        default=None, repr=False
+    )
     # g-315-124: per-episode coordinate-curiosity counts, keyed on the cell
     # feature-class ``(role, churn_bucket)`` — the _target_cell analog of
     # visit_counts (which keys on palette+action). Populated by observe() using
     # ``_last_cell_feature`` set during the matching decide()/_target_cell call.
     # Per-episode like visit_counts (fresh policy per episode → resets at the
     # episode boundary). NEVER keyed on (x, y): the generalization guard.
-    cell_feature_visits: dict[tuple, int] = field(default_factory=dict)
+    cell_feature_visits: dict[tuple[str, int], int] = field(default_factory=dict)
     # The feature-class of the cell chosen by the most recent _target_cell call
     # (ACTION6), or None when the last decision was not ACTION6 / hit the center
     # fallback / had no salient cell. observe() reads it to attribute the tick's
     # score_delta to a feature-class, the coordinate-level twin of how
     # _last_palette_sig attributes an action to a palette.
-    _last_cell_feature: Optional[tuple] = field(default=None, repr=False)
+    _last_cell_feature: Optional[tuple[str, int]] = field(default=None, repr=False)
     # g-315-132: directed target-seeking state (per-episode; a fresh policy per
     # episode resets all three, like visit_counts/cell_feature_visits).
     #   action_displacement: action_id -> [sum_dr, sum_dc, n] running cursor-
@@ -288,9 +292,11 @@ class HandBuiltPolicy:
     #   reached_targets: target cells the cursor has arrived at this episode
     #     (candidate cycling). Per-episode runtime bookkeeping — NOT a cross-
     #     episode learned coordinate, so the generalization guard holds.
-    action_displacement: dict[int, list] = field(default_factory=dict)
-    _prev_cursor_centroid: Optional[tuple] = field(default=None, repr=False)
-    reached_targets: set = field(default_factory=set)
+    action_displacement: dict[int, list[float]] = field(default_factory=dict)
+    _prev_cursor_centroid: Optional[tuple[float, float]] = field(
+        default=None, repr=False
+    )
+    reached_targets: set[tuple[int, int]] = field(default_factory=set)
     # g-315-136: per-episode set of (x, y) cells already RETURNED by the R4.5
     # within-class spatial-rotation rule, so successive R4.5 picks of the same
     # feature-class rotate across DISTINCT cells of that class instead of
@@ -327,7 +333,7 @@ class HandBuiltPolicy:
     # cannot overshoot toward the EXACT cell. Operates on lattice NODES (the
     # rounded integer indices _to_node yields), NOT raw float centroids, so the
     # comparison is exact-integer clean.
-    goal_predicate: Optional[Callable[[tuple, tuple], bool]] = None
+    goal_predicate: Optional[Callable[[tuple[int, int], tuple[int, int]], bool]] = None
     # g-315-203 (Phase 1c): avoid steering target. When set (a TRUSTED `avoid`
     # episode), _directed_target_action inverts rule 4.6's greedy comparator to
     # prefer the candidate that most INCREASES the cursor -> avoid_target
@@ -354,8 +360,8 @@ class HandBuiltPolicy:
     #     greedy rule's inability to take a distance-increasing detour
     #     (g-315-170 b2-ii). lattice_node is a RELATIVE index from
     #     _lattice_origin (reset per episode), NOT an absolute coordinate.
-    _lattice_origin: Optional[tuple] = field(default=None, repr=False)
-    blocked_edges: set = field(default_factory=set)
+    _lattice_origin: Optional[tuple[float, float]] = field(default=None, repr=False)
+    blocked_edges: set[tuple[tuple[int, int], int]] = field(default_factory=set)
     # g-315-173: frontier-exhaustion detection over the g-315-171 planner. The
     # optimistic BFS is COMPLETE for reachable goals but never DECLARES a walled-
     # off goal unreachable — it returns None every tick and the caller explores
@@ -763,15 +769,15 @@ class HandBuiltPolicy:
         self._last_cell_feature = (roles[chosen_i], _churn_bucket(churns[chosen_i]))
         return (chosen_i % w, chosen_i // w)
 
-    def _cell_feature_score_means(self) -> dict[tuple, float]:
+    def _cell_feature_score_means(self) -> dict[tuple[str, int], float]:
         """Mean historical score-delta per ACTION6 cell feature-class
         ``(cell_role, cell_churn_bucket)``, over history entries that recorded
         BOTH a feature-class and a score_delta. Coordinate-level analog of
         _best_positive_score_delta_action's per-action aggregation (g-315-124).
         Built once per _target_cell call so the per-tick cost is O(history),
         not O(history x candidates); history is per-episode bounded."""
-        sums: dict[tuple, int] = {}
-        counts: dict[tuple, int] = {}
+        sums: dict[tuple[str, int], int] = {}
+        counts: dict[tuple[str, int], int] = {}
         for o in self.history:
             if (
                 o.action == ACTION6
@@ -834,7 +840,7 @@ class HandBuiltPolicy:
         return best_action
 
     def _least_visited_action(
-        self, palette_sig: tuple, candidates: List[int]
+        self, palette_sig: tuple[tuple[int, int], ...], candidates: List[int]
     ) -> Optional[int]:
         """Among ``candidates``, return the one least-visited on the current
         palette signature, OR None when no signal exists.
@@ -917,7 +923,7 @@ class HandBuiltPolicy:
     @staticmethod
     def _detect_cursor_and_targets(
         features: FrameFeatures,
-    ) -> tuple[Optional[tuple], list]:
+    ) -> tuple[Optional[tuple[float, float]], list[tuple[int, int]]]:
         """Value-agnostic detection for directed navigation (g-315-132, design
         solver-v0-audits.md 7.10). Returns ``(cursor_centroid, target_cells)``:
 
@@ -1012,7 +1018,7 @@ class HandBuiltPolicy:
         # Second pass: cursor centroid + target cells.
         sum_r = sum_c = 0.0
         n_cur = 0
-        target_cells: list = []
+        target_cells: list[tuple[int, int]] = []
         for i, v in enumerate(values):
             if v == cursor_value:
                 sum_r += i // w
@@ -1151,7 +1157,7 @@ class HandBuiltPolicy:
             # only meaningful with a calibrated lattice; None -> no filtering.
             avoid_blocked_node: Optional[tuple[int, int]] = None
             _sr, _sc, _ = self._lattice_step(axis_map)
-            if _sr is not None and self._lattice_origin is not None:
+            if _sr is not None and _sc is not None and self._lattice_origin is not None:
                 avoid_blocked_node = self._to_node(cursor, _sr, _sc)
             cur_dist = abs(cursor[0] - self.avoid_target[0]) + abs(
                 cursor[1] - self.avoid_target[1]
@@ -1275,7 +1281,7 @@ class HandBuiltPolicy:
         blocked_node: Optional[tuple[int, int]] = None
         if seed_target is not None:
             _stride_row, _stride_col, _ = self._lattice_step(axis_map)
-            if _stride_row is not None and self._lattice_origin is not None:
+            if _stride_row is not None and _stride_col is not None and self._lattice_origin is not None:
                 blocked_node = self._to_node(cursor, _stride_row, _stride_col)
         best_a: Optional[int] = None
         best_improve = DIRECTED_MIN_IMPROVEMENT
@@ -1382,6 +1388,7 @@ class HandBuiltPolicy:
         index reset each episode (fresh policy per episode), NOT an absolute
         coordinate — the same per-episode-bookkeeping discipline as
         ``reached_targets`` (generalization guard, Self gate 3)."""
+        assert self._lattice_origin is not None  # all callers guard this; re-narrows Optional
         o_row, o_col = self._lattice_origin
         i = round((pos[0] - o_row) / stride_row) if stride_row > 0 else 0
         j = round((pos[1] - o_col) / stride_col) if stride_col > 0 else 0
@@ -1400,7 +1407,7 @@ class HandBuiltPolicy:
         failure, g-315-170 b2-ii). Per-episode (reset with a fresh policy);
         no-op when the lattice is uncalibrated or origin not yet anchored."""
         stride_row, stride_col, _ = self._lattice_step(axis_map)
-        if stride_row is None or self._lattice_origin is None:
+        if stride_row is None or stride_col is None or self._lattice_origin is None:
             return
         node = self._to_node(prev_cursor, stride_row, stride_col)
         self.blocked_edges.add((node, action))
@@ -1440,7 +1447,7 @@ class HandBuiltPolicy:
         bookkeeping reset with a fresh policy — no cross-episode coordinate is
         learned (Self gate 3)."""
         stride_row, stride_col, action_delta = self._lattice_step(axis_map)
-        if not action_delta or self._lattice_origin is None:
+        if not action_delta or stride_row is None or stride_col is None or self._lattice_origin is None:
             return None
         start = self._to_node(cursor, stride_row, stride_col)
         goal = self._to_node(targets[0], stride_row, stride_col)
@@ -1458,7 +1465,9 @@ class HandBuiltPolicy:
         # blocked. Deterministic — actions expanded in sorted order; first
         # discovery of a node wins (shortest path, lowest-id tiebreak).
         frontier = deque([start])
-        came_from: dict[tuple, tuple] = {start: (None, None)}
+        came_from: dict[
+            tuple[int, int], tuple[Optional[tuple[int, int]], Optional[int]]
+        ] = {start: (None, None)}
         found = False
         while frontier:
             node = frontier.popleft()
@@ -1505,6 +1514,7 @@ class HandBuiltPolicy:
         first_action: Optional[int] = None
         while came_from[node][0] is not None:
             prev, act = came_from[node]
+            assert prev is not None  # loop guard (came_from[node][0] is not None) ensures this
             first_action = act
             node = prev
         if first_action is not None and first_action in set(candidates):

@@ -78,15 +78,15 @@ class AssemblyPlan:
     n_carried is how many carried-value components were segmented (>=2 for a valid
     plan)."""
 
-    loose: object
-    target: object
+    loose: Component
+    target: Component
     target_point: Tuple[float, float]
     distance: float
     n_carried: int
 
     def cursor_target(
-        self, cursor_centroid: Optional[tuple]
-    ) -> Optional[tuple]:
+        self, cursor_centroid: Optional[tuple[float, float]]
+    ) -> Optional[tuple[int, int]]:
         """Integer cursor cell that pushes the loose piece onto the completion
         slot. = round(cursor + (target_point - loose_centroid)). Recomputed each
         tick by the caller (closed-loop): as the cursor moves toward this target
@@ -173,9 +173,9 @@ def _completion_slot(
 
 
 def plan_assembly(
-    components: list,
+    components: list[Component],
     carried_value: Optional[int],
-    cursor_centroid: Optional[tuple],
+    cursor_centroid: Optional[tuple[float, float]],
 ) -> Optional[AssemblyPlan]:
     """Build the loose-piece -> placed-pattern AssemblyPlan, or None when the
     scene cannot be classified into a movable piece + a separate same-value

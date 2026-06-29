@@ -359,10 +359,13 @@ class SolverV2StreamingAdapter:
         return self._probe
 
     @property
-    def explorer(self) -> Optional[FrontierCoverageExplorer]:
-        """The current episode's FrontierCoverageExplorer, or None when the
-        episode is not on the untrusted-movement route. For test inspection of
-        the g-315-214 frontier-coverage routing + spatial-coverage wiring."""
+    def explorer(
+        self,
+    ) -> Optional[FrontierCoverageExplorer | StateGraphExplorer | ClickStateGraphExplorer]:
+        """The current episode's explorer (FrontierCoverage / StateGraph /
+        ClickStateGraph depending on route), or None when the episode is not on
+        the untrusted-movement route. For test inspection of the g-315-214
+        frontier-coverage routing + spatial-coverage wiring."""
         return self._explorer
 
     @property
@@ -1049,6 +1052,9 @@ class SolverV2StreamingAdapter:
             self._calibrating = False
             self._probe = None
             self._use_policy = False
+            # _episode_prior is set at episode start (seed() returns non-None);
+            # re-assert here — mypy loses attribute narrowing across the probe calls.
+            assert self._episode_prior is not None
             return self._executor.execute(
                 self._episode_prior, features, self._tick_in_episode
             )
@@ -1072,6 +1078,9 @@ class SolverV2StreamingAdapter:
                 self._tick,
             )
             self._use_policy = False
+            # _episode_prior is set at episode start (seed() returns non-None);
+            # re-assert here — mypy loses attribute narrowing across the probe calls.
+            assert self._episode_prior is not None
             return self._executor.execute(
                 self._episode_prior, features, self._tick_in_episode
             )

@@ -40,10 +40,10 @@ class Component:
     """
 
     value: int
-    cells: frozenset
+    cells: frozenset[tuple[int, int]]
     size: int
-    centroid: tuple  # (row, col) floats
-    bbox: tuple  # (r0, r1, c0, c1) ints
+    centroid: tuple[float, float]  # (row, col) floats
+    bbox: tuple[int, int, int, int]  # (r0, r1, c0, c1) ints
 
     def bbox_area(self) -> int:
         r0, r1, c0, c1 = self.bbox
@@ -63,13 +63,13 @@ _NEIGHBORS4 = ((-1, 0), (1, 0), (0, -1), (0, 1))
 
 
 def segment(
-    values: list,
+    values: list[int],
     width: int,
     height: Optional[int] = None,
     *,
-    ignore_values: frozenset = frozenset(),
+    ignore_values: frozenset[int] = frozenset(),
     min_size: int = 1,
-) -> list:
+) -> list[Component]:
     """Segment a flat grid into 4-connected single-value Components.
 
     values   -- flat palette values, indexed r * width + c (FrameFeatures.values)
@@ -94,7 +94,7 @@ def segment(
         return []
 
     visited = bytearray(n)  # 0 = unvisited, 1 = visited; O(cells) memory
-    components: list = []
+    components: list[Component] = []
 
     for start in range(n):
         if visited[start]:
@@ -106,7 +106,7 @@ def segment(
         # Flood-fill this component with an explicit stack (4-connectivity).
         stack = [start]
         visited[start] = 1
-        cells: list = []
+        cells: list[tuple[int, int]] = []
         sum_r = 0
         sum_c = 0
         r0 = r1 = start // width
@@ -150,14 +150,14 @@ def segment(
     return components
 
 
-def terrain_values(values: list, top_n: int = 2) -> frozenset:
+def terrain_values(values: list[int], top_n: int = 2) -> frozenset[int]:
     """The top_n most-frequent palette values -- the backdrop/terrain the cursor
     detector and dock_classifier both exclude. Returned as a frozenset to pass
     straight into segment(ignore_values=...). Value-agnostic (frequency rank,
     not a hardcoded value)."""
     if not values:
         return frozenset()
-    counts: dict = {}
+    counts: dict[int, int] = {}
     for v in values:
         counts[v] = counts.get(v, 0) + 1
     ranked = sorted(counts, key=lambda v: (counts[v], v), reverse=True)

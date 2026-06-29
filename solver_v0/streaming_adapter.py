@@ -133,7 +133,7 @@ class SolverV0StreamingAdapter:
             if policy is not None
             else HandBuiltPolicy(game_class=_class_slug_from_game_id(arc_game_id))
         )
-        self._frame_history: deque = deque(maxlen=max(1, history_depth))
+        self._frame_history: deque[list[list[list[int]]]] = deque(maxlen=max(1, history_depth))
         self._previous_frame: FrameData | None = None
         self._previous_action: int | None = None
         self._previous_score: int | None = None

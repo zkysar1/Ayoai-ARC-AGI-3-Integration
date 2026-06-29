@@ -731,7 +731,7 @@ class StateGraphExplorer:
             eff = self._effects.get(action)
             if eff is None:
                 return float("inf")  # unknown effect -> test first
-            return (eff[0] ** 2 + eff[1] ** 2) ** 0.5
+            return float((eff[0] ** 2 + eff[1] ** 2) ** 0.5)
 
         return sorted(untested, key=lambda a: (-rank(a), a))
 
@@ -1222,9 +1222,9 @@ class ClickStateGraphExplorer:
         path: list[int] = []
         node_hash: Optional[str] = target_hash
         while node_hash is not None and prev[node_hash][0] is not None:
-            ph, act = prev[node_hash]
-            if act is not None:
-                path.append(act)
+            ph, node_act = prev[node_hash]
+            if node_act is not None:
+                path.append(node_act)
             node_hash = ph
         path.reverse()
         return path

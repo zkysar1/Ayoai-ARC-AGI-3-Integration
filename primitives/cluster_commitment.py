@@ -41,6 +41,7 @@ RE-ARCHITECTURE).
 from __future__ import annotations
 
 from collections import deque
+from typing import Any
 
 Cell = tuple[int, int]
 
@@ -86,7 +87,7 @@ class ClusterCommitment:
 
     # ---------- clustering ---------- #
 
-    def clusters(self) -> list[dict]:
+    def clusters(self) -> list[dict[str, Any]]:
         """Single-linkage cluster the windowed detection cells.
 
         Returns one dict per cluster:
@@ -127,7 +128,7 @@ class ClusterCommitment:
         groups: dict[Cell, list[Cell]] = {}
         for c in cells:
             groups.setdefault(find(c), []).append(c)
-        result: list[dict] = []
+        result: list[dict[str, Any]] = []
         for members in groups.values():
             total = sum(counts[c] for c in members)
             sr = sum(c[0] * counts[c] for c in members)
