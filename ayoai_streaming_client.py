@@ -82,6 +82,15 @@ DNS_WARM_MAX_TOTAL_S = 30.0
 MAX_TRANSIENT_RETRIES = 4
 TRANSIENT_RETRY_BASE_DELAY_S = 2.0
 
+# Minimum gap between consecutive streaming POSTs. The live
+# StreamingUpdatesAPIVerticle enforces a Roblox-HttpService-derived burst rate
+# limit — requests spaced under ~200ms apart are rejected with HTTP 429
+# RATE_LIMIT_BURST ("minimum: 200ms"). The MockAyoaiServer never modeled this,
+# so the client fired ADD->UPDATE->DELETE at ~40ms gaps and tripped the live
+# limit (g-315-301 live thin-border run). 0.25s sits safely above the 200ms
+# floor with margin for clock jitter.
+MIN_REQUEST_GAP_S = 0.25
+
 # §3.6 line 308: transient-network patterns the spec says to retry. Matched
 # against the string form of the underlying exception (or HTTP body text on
 # 5xx). Patterns are case-insensitive substrings — the spec leaves exact
@@ -358,6 +367,12 @@ class AyoaiStreamingClient:
         # correlation via `arc_card_id` + `guid`, not a tick number).
         self._tick = 0
 
+        # Monotonic timestamp of the last streaming POST issued, for the
+        # client-side rate-limit throttle (see MIN_REQUEST_GAP_S). None until
+        # the first POST. Spans ADD/UPDATE/DELETE so the per-tick burst stays
+        # under the live server's 200ms-gap limit.
+        self._last_post_monotonic: float | None = None
+
     @property
     def tick(self) -> int:
         return self._tick
@@ -457,6 +472,10 @@ class AyoaiStreamingClient:
         """
         payload = {
             "ayoServerKey": self.ayo_server_key,
+            # Required streaming-envelope fields (see _encode_frame note) — the
+            # DELETE POST goes through the same StreamingUpdatesAPIVerticle gate.
+            "updateEpochMillis": str(int(time.time() * 1000)),
+            "isLastBatch": True,
             "operations": [{
                 "op": "DELETE",
                 "path": "arc-grid",
@@ -554,6 +573,16 @@ class AyoaiStreamingClient:
 
         return {
             "ayoServerKey": self.ayo_server_key,
+            # Streaming-envelope fields the live StreamingUpdatesAPIVerticle
+            # REQUIRES on every batch (rejects with HTTP 400 "Missing either
+            # updateEpochMillis or isLastBatch" otherwise — line 531-534). The
+            # MockAyoaiServer never read them, hiding the requirement until the
+            # first live run (g-315-301). updateEpochMillis is a JSON String
+            # (server reads via getString); isLastBatch is True because the ARC
+            # client sends exactly one complete batch per tick (one operation),
+            # so each POST is the final batch for that step.
+            "updateEpochMillis": str(int(time.time() * 1000)),
+            "isLastBatch": True,
             "operations": [{
                 "op": op,
                 "path": "arc-grid",
@@ -602,7 +631,18 @@ class AyoaiStreamingClient:
                     f"transient error, retrying in {delay}s. Last: {last_error}"
                 )
                 self._retry_sleep(delay)
-
+            elif self._last_post_monotonic is not None:
+                # Inter-call rate-limit throttle (FIRST attempt only — within-call
+                # retries are already spaced by the backoff above). Enforces
+                # >=MIN_REQUEST_GAP_S since the previous _post call's request so
+                # the per-tick ADD->UPDATE->DELETE burst stays under the live
+                # server's 200ms-gap limit (HTTP 429 RATE_LIMIT_BURST) that the
+                # MockAyoaiServer never modeled. Uses self._retry_sleep so the
+                # test suite stays fast (injected no-op). g-315-301.
+                _gap = time.monotonic() - self._last_post_monotonic
+                if _gap < MIN_REQUEST_GAP_S:
+                    self._retry_sleep(MIN_REQUEST_GAP_S - _gap)
+            self._last_post_monotonic = time.monotonic()
             try:
                 r = self._session.post(
                     self.streaming_url,
@@ -631,6 +671,15 @@ class AyoaiStreamingClient:
                 # else (4xx, non-transient 5xx) → raise immediately per
                 # §3.6 line 309 ("4xx: No retry; the request shape is wrong").
                 body_preview = r.text[:200]
+                # 429 RATE_LIMIT_BURST: the server is telling us to slow down,
+                # not that the request shape is wrong (so NOT the immediate-raise
+                # path the generic 4xx takes). Retry — the next attempt's
+                # exponential backoff (>=2s) already exceeds the server's 200ms
+                # minimum gap. The attempt-0 throttle above should prevent this,
+                # but a burst that slips through is recoverable, not fatal. g-315-301.
+                if r.status_code == 429 and attempt < MAX_TRANSIENT_RETRIES:
+                    last_error = f"HTTP 429 rate-limit: {body_preview}"
+                    continue
                 if (500 <= r.status_code < 600
                         and self._is_transient_error(body_preview)
                         and attempt < MAX_TRANSIENT_RETRIES):
