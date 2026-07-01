@@ -225,6 +225,14 @@ def extract(
         )
 
     n_layers = len(current_frame)
+    # frame[0] is the PRIMARY / base layer for per-cell churn and cursor-centroid
+    # features.  INTENTIONAL DIVERGENCE from adapters/arc.py _top_layer (which
+    # uses frame[-1] = most-recent layer for unit-position segmentation).  Each
+    # picks the layer correct for its purpose: solver=displacement calibration
+    # (validated by the 142b6807 suite: g-315-185 UP-quarantine + g-315-193
+    # Fix-B; switching to frame[-1] regresses UP reliable=False / g-315-172
+    # row-21 unreachability), adapter=settled/current unit positions.  See
+    # g-315-308 option-b for full analysis and rb-2561 for the refuted swap.
     primary = current_frame[0]
     height = len(primary)
     width = len(primary[0]) if height else 0

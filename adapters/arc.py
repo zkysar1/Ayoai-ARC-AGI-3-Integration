@@ -174,6 +174,16 @@ def _top_layer(world_state: Mapping[str, object]) -> list[list[int]]:
     ARC ``frame`` is a 3-D list [layers][rows][cols] (integration-design.md §1). The
     segmenter operates on the top (most recent) layer; a malformed / empty frame yields
     an empty grid (no units), never an exception.
+
+    INTENTIONAL DIVERGENCE from solver_v0/perception.py ``extract()`` (g-315-308):
+    This function uses ``frame[-1]`` (most-recent / top layer) to segment unit
+    POSITIONS — the current visual state is what matters for locating objects.
+    ``extract()`` uses ``frame[0]`` (primary / base layer) for per-cell churn and
+    cursor-centroid features — a choice validated by the 142b6807 calibration suite
+    (g-315-185 UP-quarantine + g-315-193 Fix-B); switching ``extract()`` to
+    ``frame[-1]`` regresses UP to reliable=False (re-introduces g-315-172
+    row-21 unreachability). Each picks the layer correct for its purpose:
+    adapter=settled/current units, solver=displacement calibration.
     """
     frame = world_state.get("frame")
     if not isinstance(frame, (list, tuple)) or not frame:
