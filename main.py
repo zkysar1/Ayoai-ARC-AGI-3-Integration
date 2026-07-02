@@ -23,6 +23,7 @@ from ayoai_streaming_client import (
     AyoaiStreamingError,
     StreamingDecisionClient,
 )
+from random_streaming_adapter import RandomStreamingAdapter
 from recorder import Recorder
 from solver_v0.streaming_adapter import SolverV0StreamingAdapter
 from solver_v2.seed_provider import BitNetSeedProvider, SeedProvider
@@ -396,6 +397,21 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--random",
+        action="store_true",
+        help=(
+            "Route per-tick decisions through a uniform-random baseline "
+            "(random_streaming_adapter.RandomStreamingAdapter): sample "
+            "uniformly from each frame's available_actions and supply random "
+            "in-bounds coordinates for ACTION6. Diagnostic baseline ONLY -- "
+            "an OPT-IN per-class coverage reference (g-315-316), never a "
+            "framework-routed fallback (echo/self.md Constraint 2). When set, "
+            "--mock-url and the live AyoAI session-open are bypassed (no "
+            "server, no seed). Recording prefix's solver segment defaults to "
+            "'random'. Mutually exclusive with --use-solver-v0/--use-solver-v2."
+        ),
+    )
+    parser.add_argument(
         "--state-graph",
         action="store_true",
         help=(
@@ -558,6 +574,15 @@ def main() -> None:
     if args.use_solver_v0 and args.use_solver_v2:
         parser.error("--use-solver-v0 and --use-solver-v2 are mutually exclusive")
 
+    # --random is a standalone baseline decision source (fully replaces the
+    # streaming_client with RandomStreamingAdapter). It is mutually exclusive
+    # with both solver routes so the if/elif precedence below never silently
+    # picks one over the other (g-315-316).
+    if args.random and (args.use_solver_v0 or args.use_solver_v2):
+        parser.error(
+            "--random is mutually exclusive with --use-solver-v0/--use-solver-v2"
+        )
+
     # --state-graph only takes effect under --use-solver-v2 (the v2 adapter is
     # the sole StateGraphExplorer build site). Warn rather than error so the
     # SOLVER_V2_STATE_GRAPH env-var path and harmless no-op invocations still
@@ -658,6 +683,19 @@ def main() -> None:
             "SolverV0StreamingAdapter (--use-solver-v0 set; no live "
             "AyoAI session-open, no --mock-url required)"
         )
+    elif args.random:
+        # g-315-316: --random routes decisions through the uniform-random
+        # RandomStreamingAdapter (in-process, no server, no seed). Like
+        # --use-solver-v0 it bypasses the live AyoAI session-open and the
+        # mock-server HTTP loopback; ayoai_session stays None -> warm_dns is
+        # skipped. This is an OPT-IN diagnostic baseline, NOT a framework-routed
+        # decision source (echo/self.md Constraint 2 governs the production
+        # path, which this flag is explicitly outside of).
+        logger.info(
+            "Random-baseline mode: routing decisions through local "
+            "RandomStreamingAdapter (--random set; no AyoAI session-open, "
+            "no --mock-url required) -- diagnostic per-class coverage baseline"
+        )
     elif args.use_solver_v2:
         # g-315-154: --use-solver-v2 now FRAMEWORK-ROUTES through a LIVE AyoAI
         # session (was offline oracle-only under g-315-134-a). Opening the
@@ -749,13 +787,20 @@ def main() -> None:
     # / v2 adapter / live+mock AyoaiStreamingClient) type-checks against one
     # variable instead of inferring the first branch's concrete type.
     streaming_client: (
-        SolverV0StreamingAdapter | SolverV2StreamingAdapter | AyoaiStreamingClient
+        SolverV0StreamingAdapter
+        | SolverV2StreamingAdapter
+        | RandomStreamingAdapter
+        | AyoaiStreamingClient
     )
     if args.use_solver_v0:
         streaming_client = SolverV0StreamingAdapter(
             ayo_server_key=card_id,
             arc_game_id=args.game,
         )
+    elif args.random:
+        # g-315-316: uniform-random baseline. No server key, no seed provider --
+        # RandomStreamingAdapter samples locally from available_actions.
+        streaming_client = RandomStreamingAdapter(arc_game_id=args.game)
     elif args.use_solver_v2:
         # g-315-154: inject the live BitNet seed provider built from the AyoAI
         # session opened above. The seed endpoint shares the streaming host:port
@@ -829,6 +874,7 @@ def main() -> None:
         solver_name = args.solver_name or (
             "solver-v0" if args.use_solver_v0
             else "solver-v2" if args.use_solver_v2
+            else "random" if args.random
             else "mock" if args.mock_url
             else "ayoai"
         )
