@@ -1,0 +1,627 @@
+{
+ "ar25": {
+  "actions_sampled": 297,
+  "overall_changed_rate": 0.845,
+  "per_action": {
+   "ACTION1": {
+    "n": 44,
+    "changed_rate": 0.932
+   },
+   "ACTION2": {
+    "n": 38,
+    "changed_rate": 1.0
+   },
+   "ACTION3": {
+    "n": 42,
+    "changed_rate": 1.0
+   },
+   "ACTION4": {
+    "n": 46,
+    "changed_rate": 1.0
+   },
+   "ACTION5": {
+    "n": 40,
+    "changed_rate": 1.0
+   },
+   "ACTION6": {
+    "n": 43,
+    "changed_rate": 0.0
+   },
+   "ACTION7": {
+    "n": 44,
+    "changed_rate": 1.0
+   }
+  },
+  "resets": 3,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "bp35": {
+  "actions_sampled": 294,
+  "overall_changed_rate": 1.0,
+  "per_action": {
+   "ACTION3": {
+    "n": 68,
+    "changed_rate": 1.0
+   },
+   "ACTION4": {
+    "n": 82,
+    "changed_rate": 1.0
+   },
+   "ACTION6": {
+    "n": 76,
+    "changed_rate": 1.0
+   },
+   "ACTION7": {
+    "n": 68,
+    "changed_rate": 1.0
+   }
+  },
+  "resets": 6,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "cd82": {
+  "actions_sampled": 298,
+  "overall_changed_rate": 0.856,
+  "per_action": {
+   "ACTION1": {
+    "n": 49,
+    "changed_rate": 0.796
+   },
+   "ACTION2": {
+    "n": 52,
+    "changed_rate": 0.865
+   },
+   "ACTION3": {
+    "n": 60,
+    "changed_rate": 0.85
+   },
+   "ACTION4": {
+    "n": 42,
+    "changed_rate": 0.929
+   },
+   "ACTION5": {
+    "n": 49,
+    "changed_rate": 0.918
+   },
+   "ACTION6": {
+    "n": 46,
+    "changed_rate": 0.783
+   }
+  },
+  "resets": 2,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "cn04": {
+  "actions_sampled": 297,
+  "overall_changed_rate": 0.879,
+  "per_action": {
+   "ACTION1": {
+    "n": 56,
+    "changed_rate": 0.839
+   },
+   "ACTION2": {
+    "n": 51,
+    "changed_rate": 0.98
+   },
+   "ACTION3": {
+    "n": 48,
+    "changed_rate": 0.979
+   },
+   "ACTION4": {
+    "n": 47,
+    "changed_rate": 0.936
+   },
+   "ACTION5": {
+    "n": 54,
+    "changed_rate": 0.944
+   },
+   "ACTION6": {
+    "n": 41,
+    "changed_rate": 0.537
+   }
+  },
+  "resets": 3,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "dc22": {
+  "actions_sampled": 298,
+  "overall_changed_rate": 0.732,
+  "per_action": {
+   "ACTION1": {
+    "n": 62,
+    "changed_rate": 0.871
+   },
+   "ACTION2": {
+    "n": 66,
+    "changed_rate": 0.848
+   },
+   "ACTION3": {
+    "n": 61,
+    "changed_rate": 0.787
+   },
+   "ACTION4": {
+    "n": 50,
+    "changed_rate": 0.76
+   },
+   "ACTION6": {
+    "n": 59,
+    "changed_rate": 0.373
+   }
+  },
+  "resets": 2,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "ft09": {
+  "actions_sampled": 300,
+  "overall_changed_rate": 0.173,
+  "per_action": {
+   "ACTION6": {
+    "n": 300,
+    "changed_rate": 0.173
+   }
+  },
+  "resets": 0,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "g50t": {
+  "actions_sampled": 298,
+  "overall_changed_rate": 0.872,
+  "per_action": {
+   "ACTION1": {
+    "n": 61,
+    "changed_rate": 0.754
+   },
+   "ACTION2": {
+    "n": 58,
+    "changed_rate": 0.914
+   },
+   "ACTION3": {
+    "n": 53,
+    "changed_rate": 0.849
+   },
+   "ACTION4": {
+    "n": 68,
+    "changed_rate": 0.941
+   },
+   "ACTION5": {
+    "n": 58,
+    "changed_rate": 0.897
+   }
+  },
+  "resets": 2,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "ka59": {
+  "actions_sampled": 298,
+  "overall_changed_rate": 0.909,
+  "per_action": {
+   "ACTION1": {
+    "n": 52,
+    "changed_rate": 1.0
+   },
+   "ACTION2": {
+    "n": 62,
+    "changed_rate": 0.952
+   },
+   "ACTION3": {
+    "n": 68,
+    "changed_rate": 0.941
+   },
+   "ACTION4": {
+    "n": 59,
+    "changed_rate": 0.983
+   },
+   "ACTION6": {
+    "n": 57,
+    "changed_rate": 0.667
+   }
+  },
+  "resets": 2,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "lf52": {
+  "actions_sampled": 297,
+  "overall_changed_rate": 1.0,
+  "per_action": {
+   "ACTION1": {
+    "n": 37,
+    "changed_rate": 1.0
+   },
+   "ACTION2": {
+    "n": 56,
+    "changed_rate": 1.0
+   },
+   "ACTION3": {
+    "n": 58,
+    "changed_rate": 1.0
+   },
+   "ACTION4": {
+    "n": 66,
+    "changed_rate": 1.0
+   },
+   "ACTION6": {
+    "n": 33,
+    "changed_rate": 1.0
+   },
+   "ACTION7": {
+    "n": 47,
+    "changed_rate": 1.0
+   }
+  },
+  "resets": 3,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "lp85": {
+  "actions_sampled": 300,
+  "overall_changed_rate": 0.027,
+  "per_action": {
+   "ACTION6": {
+    "n": 300,
+    "changed_rate": 0.027
+   }
+  },
+  "resets": 0,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "ls20": {
+  "actions_sampled": 298,
+  "overall_changed_rate": 0.997,
+  "per_action": {
+   "ACTION1": {
+    "n": 82,
+    "changed_rate": 0.988
+   },
+   "ACTION2": {
+    "n": 69,
+    "changed_rate": 1.0
+   },
+   "ACTION3": {
+    "n": 67,
+    "changed_rate": 1.0
+   },
+   "ACTION4": {
+    "n": 80,
+    "changed_rate": 1.0
+   }
+  },
+  "resets": 2,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "m0r0": {
+  "actions_sampled": 299,
+  "overall_changed_rate": 0.716,
+  "per_action": {
+   "ACTION1": {
+    "n": 46,
+    "changed_rate": 0.978
+   },
+   "ACTION2": {
+    "n": 56,
+    "changed_rate": 0.821
+   },
+   "ACTION3": {
+    "n": 45,
+    "changed_rate": 0.867
+   },
+   "ACTION4": {
+    "n": 47,
+    "changed_rate": 0.915
+   },
+   "ACTION5": {
+    "n": 49,
+    "changed_rate": 0.449
+   },
+   "ACTION6": {
+    "n": 56,
+    "changed_rate": 0.339
+   }
+  },
+  "resets": 1,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "r11l": {
+  "actions_sampled": 296,
+  "overall_changed_rate": 1.0,
+  "per_action": {
+   "ACTION6": {
+    "n": 296,
+    "changed_rate": 1.0
+   }
+  },
+  "resets": 4,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "re86": {
+  "actions_sampled": 298,
+  "overall_changed_rate": 1.0,
+  "per_action": {
+   "ACTION1": {
+    "n": 57,
+    "changed_rate": 1.0
+   },
+   "ACTION2": {
+    "n": 68,
+    "changed_rate": 1.0
+   },
+   "ACTION3": {
+    "n": 61,
+    "changed_rate": 1.0
+   },
+   "ACTION4": {
+    "n": 59,
+    "changed_rate": 1.0
+   },
+   "ACTION5": {
+    "n": 53,
+    "changed_rate": 1.0
+   }
+  },
+  "resets": 2,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "s5i5": {
+  "actions_sampled": 295,
+  "overall_changed_rate": 1.0,
+  "per_action": {
+   "ACTION6": {
+    "n": 295,
+    "changed_rate": 1.0
+   }
+  },
+  "resets": 5,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "sb26": {
+  "actions_sampled": 299,
+  "overall_changed_rate": 0.548,
+  "per_action": {
+   "ACTION5": {
+    "n": 98,
+    "changed_rate": 1.0
+   },
+   "ACTION6": {
+    "n": 94,
+    "changed_rate": 0.34
+   },
+   "ACTION7": {
+    "n": 107,
+    "changed_rate": 0.318
+   }
+  },
+  "resets": 1,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "sc25": {
+  "actions_sampled": 296,
+  "overall_changed_rate": 0.916,
+  "per_action": {
+   "ACTION1": {
+    "n": 67,
+    "changed_rate": 0.955
+   },
+   "ACTION2": {
+    "n": 45,
+    "changed_rate": 0.956
+   },
+   "ACTION3": {
+    "n": 70,
+    "changed_rate": 0.986
+   },
+   "ACTION4": {
+    "n": 50,
+    "changed_rate": 0.94
+   },
+   "ACTION6": {
+    "n": 64,
+    "changed_rate": 0.75
+   }
+  },
+  "resets": 4,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "sk48": {
+  "actions_sampled": 300,
+  "overall_changed_rate": 0.853,
+  "per_action": {
+   "ACTION1": {
+    "n": 38,
+    "changed_rate": 0.921
+   },
+   "ACTION2": {
+    "n": 54,
+    "changed_rate": 0.796
+   },
+   "ACTION3": {
+    "n": 43,
+    "changed_rate": 0.953
+   },
+   "ACTION4": {
+    "n": 54,
+    "changed_rate": 0.907
+   },
+   "ACTION6": {
+    "n": 55,
+    "changed_rate": 0.582
+   },
+   "ACTION7": {
+    "n": 56,
+    "changed_rate": 1.0
+   }
+  },
+  "resets": 0,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "sp80": {
+  "actions_sampled": 289,
+  "overall_changed_rate": 1.0,
+  "per_action": {
+   "ACTION1": {
+    "n": 34,
+    "changed_rate": 1.0
+   },
+   "ACTION2": {
+    "n": 43,
+    "changed_rate": 1.0
+   },
+   "ACTION3": {
+    "n": 58,
+    "changed_rate": 1.0
+   },
+   "ACTION4": {
+    "n": 34,
+    "changed_rate": 1.0
+   },
+   "ACTION5": {
+    "n": 58,
+    "changed_rate": 1.0
+   },
+   "ACTION6": {
+    "n": 62,
+    "changed_rate": 1.0
+   }
+  },
+  "resets": 11,
+  "score_events": 1,
+  "levels_completed": 1
+ },
+ "su15": {
+  "actions_sampled": 297,
+  "overall_changed_rate": 0.643,
+  "per_action": {
+   "ACTION6": {
+    "n": 148,
+    "changed_rate": 0.872
+   },
+   "ACTION7": {
+    "n": 149,
+    "changed_rate": 0.416
+   }
+  },
+  "resets": 3,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "tn36": {
+  "actions_sampled": 296,
+  "overall_changed_rate": 1.0,
+  "per_action": {
+   "ACTION6": {
+    "n": 296,
+    "changed_rate": 1.0
+   }
+  },
+  "resets": 4,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "tr87": {
+  "actions_sampled": 298,
+  "overall_changed_rate": 1.0,
+  "per_action": {
+   "ACTION1": {
+    "n": 72,
+    "changed_rate": 1.0
+   },
+   "ACTION2": {
+    "n": 78,
+    "changed_rate": 1.0
+   },
+   "ACTION3": {
+    "n": 70,
+    "changed_rate": 1.0
+   },
+   "ACTION4": {
+    "n": 78,
+    "changed_rate": 1.0
+   }
+  },
+  "resets": 2,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "tu93": {
+  "actions_sampled": 295,
+  "overall_changed_rate": 1.0,
+  "per_action": {
+   "ACTION1": {
+    "n": 75,
+    "changed_rate": 1.0
+   },
+   "ACTION2": {
+    "n": 75,
+    "changed_rate": 1.0
+   },
+   "ACTION3": {
+    "n": 79,
+    "changed_rate": 1.0
+   },
+   "ACTION4": {
+    "n": 66,
+    "changed_rate": 1.0
+   }
+  },
+  "resets": 5,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "vc33": {
+  "actions_sampled": 295,
+  "overall_changed_rate": 1.0,
+  "per_action": {
+   "ACTION6": {
+    "n": 295,
+    "changed_rate": 1.0
+   }
+  },
+  "resets": 5,
+  "score_events": 0,
+  "levels_completed": 0
+ },
+ "wa30": {
+  "actions_sampled": 299,
+  "overall_changed_rate": 0.86,
+  "per_action": {
+   "ACTION1": {
+    "n": 61,
+    "changed_rate": 1.0
+   },
+   "ACTION2": {
+    "n": 55,
+    "changed_rate": 1.0
+   },
+   "ACTION3": {
+    "n": 60,
+    "changed_rate": 0.983
+   },
+   "ACTION4": {
+    "n": 44,
+    "changed_rate": 1.0
+   },
+   "ACTION5": {
+    "n": 79,
+    "changed_rate": 0.481
+   }
+  },
+  "resets": 1,
+  "score_events": 0,
+  "levels_completed": 0
+ }
+}
