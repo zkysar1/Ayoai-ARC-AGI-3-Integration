@@ -139,6 +139,7 @@ class SolverV2StreamingAdapter:
         effect_salience_priority: bool = False,
         action_value_store: bool = False,
         novel_tie_conditioning: bool = False,
+        novel_tie_episode_varying: bool = False,
         click_prior: bool = False,
         coverage_seeds: bool = False,
         fcx_cache: bool = False,
@@ -184,6 +185,11 @@ class SolverV2StreamingAdapter:
         # per-(node, action) hash rotation instead of the global explore_score
         # prior — the ~98% seam the g-315-382 forensics quantified.
         self._novel_tie_conditioning: bool = novel_tie_conditioning
+        # g-315-386: episode-varying rotation (default False = run-4 form).
+        # ON folds episodes_seen_at_node into the degenerate-case rotation key
+        # so the same node orders differently across episodes — the run-4
+        # conversion-gap fix. Threaded to the movement StateGraphExplorer.
+        self._novel_tie_episode_varying: bool = novel_tie_episode_varying
         # g-315-370 coverage-seeds toggle (DEFAULT OFF -> byte-identical). ON
         # (constructor kwarg OR env SOLVER_V2_COVERAGE_SEEDS): the DEFAULT oracle
         # provider emits UNTRUSTED priors so per-episode routing selects the
@@ -1148,6 +1154,7 @@ class SolverV2StreamingAdapter:
                         game_class=self._game_class,
                         action_value_store=self._action_value_store,
                         novel_tie_conditioning=self._novel_tie_conditioning,
+                        novel_tie_episode_varying=self._novel_tie_episode_varying,
                     )
                     self._state_graph_cache[sg_key] = new_sg
                     self._explorer = new_sg

@@ -148,6 +148,62 @@ thresholds, and the verdict branches remain zero-discretion:
 - PRIMARY fail → exogenous variation / attribution downgrade per the
   original guard.
 
+## Addendum — run 5 (g-315-386 episode-varying rotation, registered 2026-07-16T23:5x BEFORE the re-run)
+
+Run 4 (results in `g315384_aevs_trend_run4_results.md`): the novel-tie
+conditioning UNFROZE the sweep (ON tick stdev 2.84 vs 0.0; 5/12 episodes ≠ 129)
+and total coverage reached parity (ON 1344 vs OFF 1336, first non-deficit run),
+but SECONDARY failed a 4th time (0.901) — the registered CORRECTED names the
+conversion gap: the per-(node,action) rotation is EPISODE-CONSTANT (same hash →
+same order every episode), so varied routes re-cover known ground.
+
+The g-315-386 fix folds `episodes_seen_at_node` (a per-node counter,
+incremented once per episode on first visit, persisted across episodes) into
+the degenerate-case rotation key: `crc32(node_hash:action:episodes_seen)`.
+Same node, new episode → new rotation. Deterministic + replayable; one bounded
+dict + a per-episode dedup set; flag `--novel-tie-episode-varying` (OFF
+default = run-4 form, pinned by test_ep_varying_off_pins_run4_form).
+
+Run 5 repeats the EXACT protocol — same game, episode/action budget, analyzer,
+thresholds (PRIMARY / SECONDARY ≥1.2 / TERTIARY). OFF arm unchanged code; ON
+arm = AEVS + 380 + 381 + 384 + **episode-varying (386)**:
+
+```
+ON : main.py --game ls20-9607627b --use-solver-v2 --state-graph --action-value-store \
+       --novel-tie-conditioning --novel-tie-episode-varying \
+       --episodes 12 --max-actions 200 --record --tags "g-315-386,aevs-trend,on"
+OFF: main.py --game ls20-9607627b --use-solver-v2 --state-graph \
+       --episodes 12 --max-actions 200 --record --tags "g-315-386,aevs-trend,off"
+```
+
+**Attribution control (MECHANISM-AWARE, replacing the identical-prefix guard
+per rb-3765):** the fix is tick-1-active, so the ep-1-prefix guard is invalid
+by design. The registered control is OFF-ARM CROSS-RUN INVARIANCE: the OFF arm
+runs unchanged code, so its 12 episode sequences must be byte-identical to the
+run-4 OFF arm (which was itself verified byte-identical to run-3 OFF, 12/12
+seq-hash match, BEFORE this registration — the environment + solver are fully
+deterministic given config). If run-5 OFF ≡ run-4 OFF: any ON-vs-OFF divergence
+is mechanism-attributable, PRIMARY attribution is FULL (no downgrade). If OFF
+drifts: exogenous variation appeared; downgrade per the original wording.
+
+Tick-variance observable (verified mechanism reading, unchanged): any ON
+episode ≠ 129 / stdev > 0 = the sweep reaches in-play pause ticks.
+
+Zero-discretion verdict branches:
+- SECONDARY pass (≥1.2) → episode-varying rotation closed the conversion gap;
+  encode CONFIRMED.
+- SECONDARY fail but ON second-half/OFF ratio IMPROVES over run-4's 0.901 AND
+  tick-variance stays moved → partial conversion; honest CORRECTED naming the
+  residual (quantify the remaining per-tick discovery deficit after
+  tick-normalization, as in run-4's decomposition).
+- SECONDARY fail with ratio ≤ run-4's 0.901 → the episode-varying component
+  did not convert; honest CORRECTED — the next mechanism is NOT rotation
+  variety (two variety fixes moved variation but not conversion); shift lanes
+  (energy-aware pause exploitation g-315-385, or frontier-coordination above
+  the node level) with instrumentation FIRST per rb-3759.
+- OFF-invariance broken → attribution downgrade; report and stop (no
+  further conditioning claims from this run).
+
 ## Outcome-1 wording delta (declared up front)
 
 The goal's outcome 1 says AEVS "biases server-side BT generation"; the landed

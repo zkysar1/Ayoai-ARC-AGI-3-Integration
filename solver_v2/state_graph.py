@@ -606,6 +606,7 @@ class StateGraphExplorer:
         seed: int = 0,
         action_value_store: bool = False,
         novel_tie_conditioning: bool = False,
+        novel_tie_episode_varying: bool = False,
     ) -> None:
         self._moves: list[int] = move_actions_from(move_actions) or sorted(
             {int(a) for a in move_actions}
@@ -637,6 +638,20 @@ class StateGraphExplorer:
         # zero memory, replayable) instead of the global prior. Only consulted
         # inside the AEVS branch; OFF (default) = byte-identical run-3 ordering.
         self._novel_tie = bool(novel_tie_conditioning)
+        # -- Episode-varying rotation (g-315-386): run-4 proved the node-local
+        # rotation UNFREEZES the sweep (ON tick stdev 2.84 vs 0.0) but is
+        # EPISODE-CONSTANT (same hash -> same order every episode), so varied
+        # routes re-cover known ground — the registered conversion gap. When ON
+        # (requires _novel_tie), the degenerate-case CRC key also folds in
+        # episodes_seen_at_node — a per-node counter incremented once per
+        # episode on first visit — so the SAME node rotates differently across
+        # episodes. Deterministic + replayable: same (node, episodes-seen) ->
+        # same order. _node_episode_seen persists across reset_episode (like
+        # _walk_counts); _episode_seen_nodes is the per-episode dedup set.
+        # Writes are flag-gated so OFF stays byte-identical (no dict growth).
+        self._novel_tie_ep = bool(novel_tie_episode_varying)
+        self._node_episode_seen: dict[str, int] = {}
+        self._episode_seen_nodes: set[str] = set()
         # Deterministic PRNG -- Algorithm 1's "pick uniformly at random" must be
         # replayable / offline-testable (design section 3.4).
         self._rng = random.Random(seed)
@@ -721,6 +736,11 @@ class StateGraphExplorer:
         self._replay_queue.clear()
         self._actions_used = 0
         self._best_score = 0
+        # Episode-varying rotation (g-315-386): the per-episode dedup set
+        # resets so the NEXT episode re-counts each node once; the
+        # _node_episode_seen counters PERSIST (they ARE the episode-varying
+        # signal — resetting them would re-freeze the rotation).
+        self._episode_seen_nodes.clear()
         # Reset curtailment so a reused episode re-attempts graph-driven
         # exploration; the preserved (possibly over-cap) graph re-curtails on
         # tick 1 and builds a FRESH fallback, so the fallback's per-episode
@@ -821,10 +841,22 @@ class StateGraphExplorer:
                 and untested
                 and all(_dest_revisit(a) == 0 for a in untested)
             ):
+                # Episode-varying component (g-315-386; nested flag, run-4
+                # form pinned when OFF): fold episodes_seen_at_node into the
+                # rotation key so the SAME node orders differently across
+                # episodes — the conversion-gap fix (run-4's episode-constant
+                # rotation made varied routes re-cover known ground).
+                ep_suffix = (
+                    f":{self._node_episode_seen.get(node.state_hash, 0)}"
+                    if self._novel_tie_ep
+                    else ""
+                )
                 return sorted(
                     untested,
                     key=lambda a: (
-                        zlib.crc32(f"{node.state_hash}:{int(a)}".encode()),
+                        zlib.crc32(
+                            f"{node.state_hash}:{int(a)}{ep_suffix}".encode()
+                        ),
                         a,
                     ),
                 )
@@ -1031,6 +1063,17 @@ class StateGraphExplorer:
                     score,
                 )
                 return self._fallback.decide(features)
+
+        # 2.5. Episode-varying rotation bookkeeping (g-315-386; flag-gated so
+        #      OFF stays byte-identical). Count episodes_seen_at_node: once per
+        #      episode, on the node's first visit this episode. Always the
+        #      CURRENT node — _salience_order only ever ranks the current node,
+        #      so the counter is fresh at every read.
+        if self._novel_tie_ep and cur_hash not in self._episode_seen_nodes:
+            self._episode_seen_nodes.add(cur_hash)
+            self._node_episode_seen[cur_hash] = (
+                self._node_episode_seen.get(cur_hash, 0) + 1
+            )
 
         # 3. Reward: a score increase = a discovered winning transition. BFS the
         #    shortest path to this node and queue it for replay (design 2.5).

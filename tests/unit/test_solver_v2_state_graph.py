@@ -640,3 +640,80 @@ def test_novel_tie_vanilla_arm_ignores_flag() -> None:
     off._effects = {1: (0.0, 1.0), 3: (1.0, 0.0)}
     node = sg._Node(state_hash="alpha", first_seen_tick=1)
     assert off._salience_order(node, (2, 2)) == [2, 4, 1, 3]
+
+
+# ---------------------------------------------------------------------------
+# g-315-386 — episode-varying rotation (the run-4 conversion-gap fix)
+# ---------------------------------------------------------------------------
+def _ep_varying_explorer() -> StateGraphExplorer:
+    e = StateGraphExplorer(
+        _LS20_MOVES,
+        action_value_store=True,
+        novel_tie_conditioning=True,
+        novel_tie_episode_varying=True,
+    )
+    assert e._aevs is not None
+    return e
+
+
+def test_ep_varying_off_pins_run4_form() -> None:
+    # ep-varying OFF (run-4 form pinned): the rotation key is episode-CONSTANT
+    # — exactly the g-315-384 CRC order for "alpha", regardless of any counter.
+    on = StateGraphExplorer(
+        _LS20_MOVES, action_value_store=True, novel_tie_conditioning=True
+    )
+    on._node_episode_seen["alpha"] = 3  # present but MUST be ignored when OFF
+    node = sg._Node(state_hash="alpha", first_seen_tick=1)
+    assert on._salience_order(node, (2, 2)) == [3, 2, 4, 1]  # run-4 pin
+
+
+def test_ep_varying_on_rotates_across_episodes() -> None:
+    # THE branch-discriminating pin: the SAME node under identical local
+    # conditions orders differently as episodes_seen advances — the registered
+    # conversion-gap mechanism (run-4's episode-constant rotation re-covered
+    # known ground). Each (node, count) pair is deterministic (replayable).
+    e = _ep_varying_explorer()
+    node = sg._Node(state_hash="alpha", first_seen_tick=1)
+    e._node_episode_seen["alpha"] = 1
+    order_ep1 = e._salience_order(node, (2, 2))
+    e._node_episode_seen["alpha"] = 2
+    order_ep2 = e._salience_order(node, (2, 2))
+    expected = lambda s: sorted(  # noqa: E731 — pins the exact registered key
+        _LS20_MOVES, key=lambda a: (zlib.crc32(f"alpha:{a}:{s}".encode()), a)
+    )
+    assert order_ep1 == expected(1) == [1, 2, 3, 4]
+    assert order_ep2 == expected(2) == [1, 3, 2, 4]
+    assert order_ep1 != order_ep2  # episode-varying: same node, new rotation
+    e._node_episode_seen["alpha"] = 1
+    assert e._salience_order(node, (2, 2)) == order_ep1  # deterministic
+
+
+def test_ep_varying_counter_once_per_episode_and_persists() -> None:
+    # decide() counts a node ONCE per episode (dedup set), the counter
+    # PERSISTS across reset_episode (it IS the episode-varying signal), and
+    # the per-episode dedup set clears so the next episode re-counts.
+    e = _ep_varying_explorer()
+    s1 = _scene((2, 2), hud_val=1)
+    s2 = _scene((2, 3), hud_val=1)
+    e.decide(_features(s2, history=[s1]))
+    e.decide(_features(s2, history=[s1]))  # same state twice, same episode
+    assert list(e._node_episode_seen.values()) == [1]
+    e.reset_episode()
+    assert list(e._node_episode_seen.values()) == [1]  # PERSISTED
+    assert e._episode_seen_nodes == set()  # dedup set cleared
+    e.decide(_features(s2, history=[s1]))
+    assert list(e._node_episode_seen.values()) == [2]  # episode 2 counted
+
+
+def test_ep_varying_off_arms_no_dict_growth() -> None:
+    # Byte-identical OFF guarantee: with the flag off (either arm), decide()
+    # never grows the episode-seen structures.
+    for kwargs in (
+        {"action_value_store": False},
+        {"action_value_store": True, "novel_tie_conditioning": True},
+    ):
+        e = StateGraphExplorer(_LS20_MOVES, seed=0, **kwargs)
+        s1 = _scene((2, 2), hud_val=1)
+        s2 = _scene((2, 3), hud_val=1)
+        e.decide(_features(s2, history=[s1]))
+        assert e._node_episode_seen == {} and e._episode_seen_nodes == set()

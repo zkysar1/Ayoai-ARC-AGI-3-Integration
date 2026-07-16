@@ -1252,3 +1252,35 @@ def test_action_value_store_threads_through_movement_explorer() -> None:
     adapter.choose_action(_strategic())
     assert isinstance(adapter.explorer, StateGraphExplorer)
     assert adapter.explorer._aevs is not None
+
+
+def test_novel_tie_flags_thread_through_movement_explorer() -> None:
+    # g-315-386 (sq-019 gap from g-315-384): the --novel-tie-conditioning and
+    # --novel-tie-episode-varying flags thread adapter -> movement
+    # StateGraphExplorer. Without this pin a silently-dropped kwarg would run
+    # the ON arm as the run-3 form and the two-arm result would be garbage.
+    seed = _ScriptedSeedProvider(_prior(OBJECTIVE_UNKNOWN))
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card",
+        arc_game_id="ls20-test",
+        seed_provider=seed,
+        use_state_graph=True,
+        action_value_store=True,
+        novel_tie_conditioning=True,
+        novel_tie_episode_varying=True,
+    )
+    adapter.choose_action(_strategic())
+    assert isinstance(adapter.explorer, StateGraphExplorer)
+    assert adapter.explorer._novel_tie is True
+    assert adapter.explorer._novel_tie_ep is True
+    # Defaults stay OFF (byte-identical contract).
+    adapter_off = SolverV2StreamingAdapter(
+        ayo_server_key="card",
+        arc_game_id="ls20-test",
+        seed_provider=_ScriptedSeedProvider(_prior(OBJECTIVE_UNKNOWN)),
+        use_state_graph=True,
+        action_value_store=True,
+    )
+    adapter_off.choose_action(_strategic())
+    assert adapter_off.explorer._novel_tie is False
+    assert adapter_off.explorer._novel_tie_ep is False

@@ -580,6 +580,20 @@ def main() -> None:
             "run-3 ordering. Env-agnostic, tiny-compute, replayable."
         ),
     )
+    parser.add_argument(
+        "--novel-tie-episode-varying",
+        action="store_true",
+        help=(
+            "g-315-386: fold episodes_seen_at_node into the novel-tie rotation "
+            "key so the SAME node orders differently across episodes. Run-4 "
+            "proved the episode-CONSTANT rotation unfreezes the sweep but does "
+            "not convert to coverage (varied routes re-cover known ground); "
+            "this is the registered conversion-gap fix. Effective only with "
+            "--action-value-store --novel-tie-conditioning. OFF (default) = "
+            "byte-identical run-4 form. Deterministic, replayable, one bounded "
+            "per-node counter."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -847,6 +861,7 @@ def main() -> None:
             effect_salience_priority=args.click_effect_salience_priority,
             action_value_store=args.action_value_store,
             novel_tie_conditioning=args.novel_tie_conditioning,
+            novel_tie_episode_varying=args.novel_tie_episode_varying,
         )
     else:
         # streaming_url is resolved by this point (live: ayoai_session.streaming_url;
@@ -1032,6 +1047,7 @@ def main() -> None:
                 "game": args.game,
                 "aevs": bool(getattr(args, "action_value_store", False)),
                 "novel_tie": bool(getattr(args, "novel_tie_conditioning", False)),
+                "novel_tie_ep": bool(getattr(args, "novel_tie_episode_varying", False)),
                 "episodes": _episodes,
                 "ticks": action_counter,
                 "elapsed_s": round(elapsed, 2),
