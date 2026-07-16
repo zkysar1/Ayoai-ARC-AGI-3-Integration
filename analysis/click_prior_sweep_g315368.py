@@ -282,6 +282,31 @@ ARMS: dict[str, dict[str, bool]] = {
         "sweep_escape_after": 120,
         "ema_churn": True,
     },
+    # g-315-371 MEASURED NEGATIVE (2026-07-16): aggregate byte-identical to
+    # covmixescema (0.19525808…), suggested=0 on all 25 games. The goal's
+    # premise (max buffer 52 < _MIN_TRAIN_SAMPLES=64) is FALSIFIED — buffers
+    # reach 68-156 under the click-heavy arms and ft09/lp85 DID train
+    # (rounds=2). The engine is inert at 200-action budgets for three deeper
+    # structural reasons, one per game class:
+    #   (a) 19/25 games: observe() never fires (buffer=0 — movement-routed).
+    #   (b) qualifying ft09/lp85 (changed_rate ~0.095): eval stratification
+    #       needs >=3 positives but 200 clicks * 0.095 / 5 (EVAL_NTH) ~= 2.8
+    #       -> auc=None -> publish gate never opens; and 16 training steps
+    #       vs the 150-step validated recipe is far undertrained anyway.
+    #   (c) click-heavy r11l/tn36/vc33/s5i5: changed_rate=1.0 (label
+    #       degenerate) -> guard-818 gate correctly closed, 0 rounds.
+    # Lowering floors would publish an undertrained model — the exact
+    # measured-negative of g-315-367's first validation (noise ranking WORSE
+    # than random). Throttle cost: 264s vs 43s wall (6x) for zero benefit.
+    # Lane closed; flag stays default-OFF. Arm kept for reproducibility.
+    "covmixescemacp": {
+        "coverage_seeds": True,
+        "target_sweep": True,
+        "mixed_movement": True,
+        "sweep_escape_after": 120,
+        "ema_churn": True,
+        "click_prior_on": True,
+    },
     # g-315-377: covmix + interact-ride guard. sp80's ACTION5 (interact/bank)
     # entered _effects at tick 5 from ONE spurious moving sample and was
     # commit-ridden 4-8 consecutive ticks; ride ticks were 6 of 8 GAME_OVERs
