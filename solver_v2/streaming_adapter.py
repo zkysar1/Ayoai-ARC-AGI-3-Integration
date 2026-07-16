@@ -143,6 +143,7 @@ class SolverV2StreamingAdapter:
         fcx_cache: bool = False,
         target_sweep: bool = False,
         mixed_movement: bool = False,
+        interact_ride_guard: bool = False,
     ) -> None:
         # streaming_url / api_key / session / http_timeout_s / retry_sleep
         # are accepted-and-ignored -- the adapter does no network I/O. Kept in
@@ -198,6 +199,19 @@ class SolverV2StreamingAdapter:
         # pure-click episodes (no move-actions) keep the executor sweep.
         self._mixed_movement: bool = bool(mixed_movement) or (
             os.environ.get("SOLVER_V2_MIXED_MOVEMENT", "").strip().lower()
+            in ("1", "true", "yes", "on")
+        )
+        # g-315-377 interact-ride guard (DEFAULT OFF -> byte-identical). ON
+        # (kwarg OR env SOLVER_V2_INTERACT_RIDE_GUARD): FrontierCoverageExplorer
+        # stage-2 declines to commit-RIDE a teleport-tainted "mover" (an
+        # interact-class action whose board change relocates the detected
+        # cursor — sp80 ACTION5 entered _effects at tick 5 from ONE spurious
+        # sample and its 4-8-tick rides were 6 of 8 GAME_OVERs; proof:
+        # analysis/fcx_effects_probe_g315377.json). The action still fires
+        # single-shot when the frontier turn selects it (ACTION5 is also the
+        # level-bank action — zero fires would mean never banking).
+        self._interact_ride_guard: bool = bool(interact_ride_guard) or (
+            os.environ.get("SOLVER_V2_INTERACT_RIDE_GUARD", "").strip().lower()
             in ("1", "true", "yes", "on")
         )
         self._seed_provider: SeedProvider = (
@@ -1085,6 +1099,7 @@ class SolverV2StreamingAdapter:
                         new_fcx = FrontierCoverageExplorer(
                             move_actions_from(available_action_ids),
                             game_class=self._game_class,
+                            interact_ride_guard=self._interact_ride_guard,
                         )
                         self._fcx_cache[fcx_key] = new_fcx
                         self._explorer = new_fcx
@@ -1092,6 +1107,7 @@ class SolverV2StreamingAdapter:
                     self._explorer = FrontierCoverageExplorer(
                         move_actions_from(available_action_ids),
                         game_class=self._game_class,
+                        interact_ride_guard=self._interact_ride_guard,
                     )
             # The explorer is NOT the HandBuiltPolicy route: clear _use_policy /
             # _policy so choose_action dispatches to the explorer branch. No

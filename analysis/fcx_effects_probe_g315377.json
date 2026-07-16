@@ -1,0 +1,5466 @@
+{
+ "rows": [
+  {
+   "tick": 0,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [],
+   "committed": null,
+   "commit_run": 0,
+   "a5_obs": [],
+   "a5_in_effects": false
+  },
+  {
+   "tick": 1,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [],
+   "committed": null,
+   "commit_run": 0,
+   "a5_obs": [],
+   "a5_in_effects": false
+  },
+  {
+   "tick": 2,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    2
+   ],
+   "committed": null,
+   "commit_run": 0,
+   "a5_obs": [],
+   "a5_in_effects": false
+  },
+  {
+   "tick": 3,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    2,
+    3
+   ],
+   "committed": null,
+   "commit_run": 0,
+   "a5_obs": [],
+   "a5_in_effects": false
+  },
+  {
+   "tick": 4,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    2,
+    3,
+    4
+   ],
+   "committed": null,
+   "commit_run": 0,
+   "a5_obs": [],
+   "a5_in_effects": false
+  },
+  {
+   "tick": 5,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": null,
+   "commit_run": 0,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true,
+   "a5_effect_vector": [
+    0.0,
+    -1.0
+   ]
+  },
+  {
+   "tick": 6,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 7,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 8,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 9,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 4,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 10,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 5,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 11,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 6,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 12,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 7,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 13,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 14,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 15,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 16,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 17,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 4,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 18,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 5,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 19,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 6,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 20,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 7,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 21,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 22,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 23,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 24,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 25,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 4,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 26,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 5,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 27,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 6,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 28,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 7,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 29,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 30,
+   "action": "RESET",
+   "pre_state": "GAME_OVER",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 31,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 32,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 33,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 34,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 35,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 36,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 37,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 38,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 39,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 40,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 41,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 42,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 4,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 43,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 5,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 44,
+   "action": "RESET",
+   "pre_state": "GAME_OVER",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 5,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 45,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 6,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ],
+    [
+     0.0,
+     -19.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 46,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 7,
+   "a5_obs": [
+    [
+     0.0,
+     -1.5
+    ],
+    [
+     0.0,
+     -19.0
+    ],
+    [
+     0.0,
+     31.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 47,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -19.0
+    ],
+    [
+     0.0,
+     31.0
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 48,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     -19.0
+    ],
+    [
+     0.0,
+     31.0
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 49,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     -19.0
+    ],
+    [
+     0.0,
+     31.0
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 50,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 4,
+   "a5_obs": [
+    [
+     0.0,
+     -19.0
+    ],
+    [
+     0.0,
+     31.0
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 51,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 5,
+   "a5_obs": [
+    [
+     0.0,
+     -19.0
+    ],
+    [
+     0.0,
+     31.0
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 52,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 6,
+   "a5_obs": [
+    [
+     0.0,
+     -19.0
+    ],
+    [
+     0.0,
+     31.0
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 53,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 7,
+   "a5_obs": [
+    [
+     0.0,
+     -19.0
+    ],
+    [
+     0.0,
+     31.0
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 54,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     -19.0
+    ],
+    [
+     0.0,
+     31.0
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 55,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -19.0
+    ],
+    [
+     0.0,
+     31.0
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 56,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     31.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 57,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 58,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 59,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 60,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 61,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 62,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 63,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 64,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 65,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 4,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 66,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 5,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 67,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 6,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 68,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 7,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 69,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 70,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 71,
+   "action": "RESET",
+   "pre_state": "GAME_OVER",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 72,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ],
+    [
+     0.0,
+     -5.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 73,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.5
+    ],
+    [
+     0.0,
+     -5.5
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 74,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.5
+    ],
+    [
+     0.0,
+     -5.5
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 75,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     -1.5
+    ],
+    [
+     0.0,
+     -5.5
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 76,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     -5.5
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 77,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 4,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.5
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 78,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 5,
+   "a5_obs": [
+    [
+     0.0,
+     -1.5
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 79,
+   "action": "RESET",
+   "pre_state": "GAME_OVER",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 5,
+   "a5_obs": [
+    [
+     0.0,
+     -1.5
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 80,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 5,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -25.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 81,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -25.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 82,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -25.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 83,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -25.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 84,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -25.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 85,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -25.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 86,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -25.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 87,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     0.0,
+     -25.5
+    ],
+    [
+     0.0,
+     -1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 88,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     -25.5
+    ],
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     63.0,
+     -24.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 89,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 4,
+   "a5_obs": [
+    [
+     0.0,
+     -1.0
+    ],
+    [
+     63.0,
+     -24.0
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 90,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 5,
+   "a5_obs": [
+    [
+     63.0,
+     -24.0
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     -31.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 91,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 6,
+   "a5_obs": [
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 92,
+   "action": "RESET",
+   "pre_state": "GAME_OVER",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 6,
+   "a5_obs": [
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 93,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 7,
+   "a5_obs": [
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     29.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 94,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 95,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 96,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 97,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 98,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 99,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 100,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 4,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 101,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 5,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 102,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 6,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 103,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 7,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 104,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 105,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 106,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 107,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 108,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 4,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 109,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 5,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 110,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 6,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 111,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 7,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 112,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 113,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 114,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 115,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 116,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 4,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 117,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 5,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 118,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 6,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 119,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 7,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 120,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 121,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 122,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 123,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 124,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 4,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 125,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 5,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 126,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 6,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 127,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 7,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 128,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 129,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 130,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 131,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 132,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 133,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 134,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 135,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 136,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 137,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 138,
+   "action": "RESET",
+   "pre_state": "GAME_OVER",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 139,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 140,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 141,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 4,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 142,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     0.0,
+     29.0
+    ],
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 143,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     -31.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     33.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 144,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     33.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 145,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 4,
+   "a5_obs": [
+    [
+     0.0,
+     33.0
+    ],
+    [
+     0.0,
+     0.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 146,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 5,
+   "a5_obs": [
+    [
+     0.0,
+     0.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 147,
+   "action": "RESET",
+   "pre_state": "GAME_OVER",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 5,
+   "a5_obs": [
+    [
+     0.0,
+     0.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 148,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 6,
+   "a5_obs": [
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ],
+    [
+     -25.5,
+     -7.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 149,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 7,
+   "a5_obs": [
+    [
+     0.0,
+     0.5
+    ],
+    [
+     -25.5,
+     -7.0
+    ],
+    [
+     25.5,
+     -29.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 150,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 8,
+   "a5_obs": [
+    [
+     -25.5,
+     -7.0
+    ],
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 151,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 152,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 153,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 154,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 155,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 156,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 157,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 158,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 159,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 160,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 161,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 162,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 163,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 164,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 165,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 166,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 167,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 168,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 169,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 170,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 171,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 172,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 173,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 174,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 175,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 176,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 1,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 177,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     25.5,
+     -29.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 178,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 179,
+   "action": "RESET",
+   "pre_state": "GAME_OVER",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 180,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     0.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     -25.5,
+     8.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 181,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     1.0
+    ],
+    [
+     -25.5,
+     8.5
+    ],
+    [
+     25.5,
+     2.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 182,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     1.0
+    ],
+    [
+     -25.5,
+     8.5
+    ],
+    [
+     25.5,
+     2.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 183,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     1.0
+    ],
+    [
+     -25.5,
+     8.5
+    ],
+    [
+     25.5,
+     2.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 184,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 3,
+   "a5_obs": [
+    [
+     0.0,
+     1.0
+    ],
+    [
+     -25.5,
+     8.5
+    ],
+    [
+     25.5,
+     2.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 185,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 4,
+   "a5_obs": [
+    [
+     0.0,
+     1.0
+    ],
+    [
+     -25.5,
+     8.5
+    ],
+    [
+     25.5,
+     2.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 186,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     -25.5,
+     8.5
+    ],
+    [
+     25.5,
+     2.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 187,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     -25.5,
+     8.5
+    ],
+    [
+     25.5,
+     2.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 188,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     -25.5,
+     8.5
+    ],
+    [
+     25.5,
+     2.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 189,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     -25.5,
+     8.5
+    ],
+    [
+     25.5,
+     2.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 190,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     -25.5,
+     8.5
+    ],
+    [
+     25.5,
+     2.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 191,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     -25.5,
+     8.5
+    ],
+    [
+     25.5,
+     2.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 192,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     -25.5,
+     8.5
+    ],
+    [
+     25.5,
+     2.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 193,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     -25.5,
+     8.5
+    ],
+    [
+     25.5,
+     2.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 194,
+   "action": "ACTION3",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 3,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     -25.5,
+     8.5
+    ],
+    [
+     25.5,
+     2.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 195,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     -25.5,
+     8.5
+    ],
+    [
+     25.5,
+     2.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 196,
+   "action": "ACTION2",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 2,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     -25.5,
+     8.5
+    ],
+    [
+     25.5,
+     2.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 197,
+   "action": "ACTION4",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 4,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     -25.5,
+     8.5
+    ],
+    [
+     25.5,
+     2.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 198,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 1,
+   "a5_obs": [
+    [
+     -25.5,
+     8.5
+    ],
+    [
+     25.5,
+     2.5
+    ],
+    [
+     0.0,
+     1.0
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 199,
+   "action": "ACTION5",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     25.5,
+     2.5
+    ],
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  },
+  {
+   "tick": 200,
+   "action": "ACTION1",
+   "pre_state": "NOT_FINISHED",
+   "effects_keys": [
+    1,
+    2,
+    3,
+    4,
+    5
+   ],
+   "committed": 5,
+   "commit_run": 2,
+   "a5_obs": [
+    [
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.5
+    ],
+    [
+     0.0,
+     0.5
+    ]
+   ],
+   "a5_in_effects": true
+  }
+ ]
+}

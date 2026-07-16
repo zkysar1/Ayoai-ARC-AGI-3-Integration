@@ -90,6 +90,27 @@ _BLIND_CAP: int = 2
 # off-axis goal_cell: coverage-EXISTENCE without coverage-QUALITY (g-315-215).
 _COMMIT_RUN_CAP: int = 8
 
+# g-315-377 interact-ride guard (flag-gated, default OFF). An interact-class
+# action (ACTION5 on sp80) can enter _effects from a SINGLE spurious moving
+# sample — dominant_displacement has no minimum sample count, and a
+# board-changing action (bank/toggle/death flash) yanks the DETECTED cursor,
+# so the deferred-observe attributes a displacement to it. Stage-2 then
+# commit-rides it up to _COMMIT_RUN_CAP consecutive ticks; on sp80 those
+# rides were 6 of 8 GAME_OVERs (proof: analysis/fcx_effects_probe_g315377).
+# The fingerprint separating a board-changer from a true mover is TELEPORT
+# TAINT: real movers step small and consistent (|d| ~ 1-5 cells/tick);
+# board-changers accumulate wild samples (|d| 19-63 observed) as the board
+# change relocates the detected blob. An action whose moving samples exceed
+# _TELEPORT_MAG at ratio >= _RIDE_TAINT_RATIO is not RIDDEN (stage 2 declines;
+# it falls to the frontier turn, so the action still FIRES single-shot when
+# selected — it must keep firing occasionally: on sp80 the same ACTION5 is
+# also the level-bank action). Thresholds: legit steps observed <= 5 (ls20),
+# teleports >= 19 (sp80) -> 8.0 splits them with margin; 0.2 tolerates the
+# occasional death-respawn teleport a TRUE mover picks up mid-ride (a handful
+# of taints over many samples) while catching a board-changer's dense taint.
+_TELEPORT_MAG: float = 8.0
+_RIDE_TAINT_RATIO: float = 0.2
+
 # g-315-223 (lock+steer RE-ARCHITECTURE — 10th ls20 move). The g-315-217
 # single-cell lock (a target cell SEEN _CANDIDATE_LOCK_TICKS=2 consecutive ticks)
 # is RETIRED: the g-315-220 live litmus (recording 32e82872) proved per-tick
@@ -239,10 +260,15 @@ class FrontierCoverageExplorer:
         self,
         move_actions: list[int],
         game_class: Optional[str] = None,
+        interact_ride_guard: bool = False,
     ) -> None:
         # Sorted, de-duplicated move-action ids (deterministic bootstrap order).
         self._moves: list[int] = sorted({int(a) for a in move_actions})
         self._game_class = game_class
+        # g-315-377: when ON, stage-2 declines to RIDE a committed action whose
+        # moving samples are teleport-tainted (board-changer fingerprint). OFF
+        # (default) preserves byte-identical pre-flag behavior.
+        self._interact_ride_guard: bool = bool(interact_ride_guard)
         # g-315-247 diagnostic toggle (generalization-preserving, DEFAULT OFF):
         # FRONTIER_PURE_COVERAGE=1 disables ALL steering layers (CC-assembly,
         # dock, cluster) so the FrontierCoverage core drives every tick -- used
@@ -1197,6 +1223,33 @@ class FrontierCoverageExplorer:
         #     bootstrap if nothing ever moves.
         return pending[self._boot_ticks % len(pending)]
 
+    def _ride_consistent(self, action: int) -> bool:
+        """True when `action`'s moving samples look like a steady mover (g-315-377).
+
+        A board-changer (interact action) masquerading as a mover accumulates
+        TELEPORT samples — displacements far past any legit per-tick step —
+        because its board mutation relocates the detected cursor blob. Ratio
+        test over the action's MOVING samples (wall-contacts excluded, same
+        partition dominant_displacement uses): taint = |d| > _TELEPORT_MAG;
+        consistent iff taint/moving < _RIDE_TAINT_RATIO. One-sided and cheap
+        (single pass over _obs[action]); an action with no moving samples is
+        vacuously consistent (nothing to indict — matches its _effects absence).
+        """
+        samples = self._obs.get(action)
+        if not samples:
+            return True
+        moving = [
+            (dr, dc)
+            for dr, dc in samples
+            if (dr * dr + dc * dc) ** 0.5 >= NOISE_FLOOR_CELLS
+        ]
+        if not moving:
+            return True
+        taint = sum(
+            1 for dr, dc in moving if (dr * dr + dc * dc) ** 0.5 > _TELEPORT_MAG
+        )
+        return (taint / len(moving)) < _RIDE_TAINT_RATIO
+
     def _choose(
         self, cell: Optional[tuple[int, int]], exclude: Optional[int] = None
     ) -> int:
@@ -1225,9 +1278,14 @@ class FrontierCoverageExplorer:
 
         # 2. Committed traversal: keep going while the committed action is a known
         #    mover and was not just cleared (wall / over-revisit / run-cap) above.
+        #    g-315-377 (flag-gated): a teleport-tainted "mover" (board-changer
+        #    fingerprint, e.g. sp80 ACTION5) is NOT ridden — stage 3's turn picks
+        #    fresh, so the action still fires single-shot when selected but never
+        #    replays 4-8 consecutive ticks (the 6-of-8-deaths pattern).
         if self._committed is not None and self._committed in self._effects:
-            self._commit_run += 1
-            return self._committed
+            if not self._interact_ride_guard or self._ride_consistent(self._committed):
+                self._commit_run += 1
+                return self._committed
 
         # 3. Turn to the least-USED known mover whose projection is least-visited.
         #    Usage is the PRIMARY key (g-315-215): the prior least-visited-only key

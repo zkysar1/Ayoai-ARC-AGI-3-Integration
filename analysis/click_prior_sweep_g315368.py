@@ -236,16 +236,28 @@ ARMS: dict[str, dict[str, bool]] = {
         "target_sweep": True,
         "mixed_movement": True,
     },
-    # g-315-376: covmix + cross-episode FCX cache. fcx_cache was inert on
-    # movement-only games (~1 episode/game at 200 actions - nothing to reuse)
-    # but sp80's GAME_OVER->RESET cadence yields ~9 episodes/200 ticks: the
-    # cache lets attempt N resume the learned layout instead of re-exploring
-    # (fcx_sp80_trace_g315376: fresh-FCX covmix banks L1 at tick 86, attempt 5).
+    # g-315-376 NEGATIVE RESULT (kept as the measured-no-op record): covmix +
+    # fcx_cache == covmix to 16 decimals on sp80. STRUCTURAL no-op, not a
+    # failed lever: episode_id stays 1 across all 8 GAME_OVER->RESETs (the
+    # boundary detector does not fire on reset), so the ONE FCX instance
+    # already persists and there is no episode boundary to cache across.
     "covmixcache": {
         "coverage_seeds": True,
         "target_sweep": True,
         "mixed_movement": True,
         "fcx_cache": True,
+    },
+    # g-315-377: covmix + interact-ride guard. sp80's ACTION5 (interact/bank)
+    # entered _effects at tick 5 from ONE spurious moving sample and was
+    # commit-ridden 4-8 consecutive ticks; ride ticks were 6 of 8 GAME_OVERs
+    # (fcx_effects_probe_g315377). The guard declines stage-2 rides for
+    # teleport-tainted movers (|d|>8 at ratio>=0.2 of moving samples) so A5
+    # fires single-shot when selected instead of replaying to death.
+    "covmixguard": {
+        "coverage_seeds": True,
+        "target_sweep": True,
+        "mixed_movement": True,
+        "interact_ride_guard": True,
     },
     # g-315-372 NEGATIVE RESULT (both levers reverted, arms removed):
     #   - "covfocus" (click_focus: 3-of-4 ACTION6 concentration on untrusted
