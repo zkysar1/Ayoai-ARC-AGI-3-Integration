@@ -22,10 +22,12 @@ Offline-testable: execute() is pure over (EpisodePrior, FrameFeatures, int).
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Optional
 
 from solver_v0.perception import FrameFeatures
+from solver_v0.policy import detect_cursor_and_targets
 from solver_v2.action6_explore import explore_action6_coord
 from solver_v2.click_prior import ClickPriorEngine
 from solver_v2.episode import (
@@ -69,8 +71,83 @@ class DeterministicExecutor:
     to the engine-less executor. Default None = pre-g-315-367 behavior.
     """
 
-    def __init__(self, click_prior: Optional[ClickPriorEngine] = None) -> None:
+    def __init__(
+        self,
+        click_prior: Optional[ClickPriorEngine] = None,
+        target_sweep: bool | None = None,
+    ) -> None:
         self._click_prior = click_prior
+        # g-315-370 target-sweep toggle (DEFAULT OFF -> byte-identical golden
+        # sweep). ON (kwarg OR env SOLVER_V2_TARGET_SWEEP): the untrusted-click
+        # explore branch clicks the LEAST-CLICKED DETECTED TARGET (falling back
+        # to non-terrain cells, then the golden sweep) instead of the
+        # low-discrepancy grid walk — the kit port's proven click policy
+        # (0.5244 at 200 actions incl. the shipped g-315-354 ex-target-first
+        # priority, +0.0563). At a 200-action budget the grid sweep covers ~5%
+        # of a 64x64 click space; the target sweep concentrates the budget on
+        # the cells perception says are interactable. Makes the executor
+        # STATEFUL per game session (click tally + ever-target memory persist
+        # across episodes on the same adapter, mirroring the port's per-game
+        # learned state — layout persists across resets).
+        self._target_sweep: bool = (
+            bool(target_sweep)
+            if target_sweep is not None
+            else os.environ.get("SOLVER_V2_TARGET_SWEEP", "").strip().lower()
+            in ("1", "true", "yes", "on")
+        )
+        self._click_tally: dict[tuple[int, int], int] = {}
+        self._ever_target: set[tuple[int, int]] = set()
+
+    def _pick_target_cell(
+        self, features: FrameFeatures
+    ) -> Optional[tuple[int, int]]:
+        """Least-clicked target cell (row, col) — the kit port's click policy.
+
+        Candidate pool: detected stable targets, else non-terrain cells
+        (stride-sampled to <=256 for an even spatial sample), else None (caller
+        falls back to the golden sweep). Ranking mirrors the port's
+        _pick_click_cell key: ex-target-first (cells EVER detected as targets
+        this game — the lp85/vc33 win-cell is a transient ex-target), then
+        least-clicked CELL, then least-clicked 8x8 BLOCK (two-scale coverage),
+        then row/col determinism.
+        """
+        _, targets = detect_cursor_and_targets(features)
+        if targets:
+            self._ever_target.update(targets)
+        candidates: list[tuple[int, int]] = list(targets)
+        if not candidates and features.values and features.width > 0:
+            counts: dict[int, int] = {}
+            for v in features.values:
+                counts[v] = counts.get(v, 0) + 1
+            by_freq = sorted(counts, key=lambda v: counts[v], reverse=True)
+            terrain = set(by_freq[:2])
+            pool = [
+                (i // features.width, i % features.width)
+                for i, v in enumerate(features.values)
+                if v not in terrain
+            ]
+            if len(pool) > 256:
+                step = len(pool) // 256 + 1
+                pool = pool[::step]
+            candidates = pool
+        if not candidates:
+            return None
+        block_tally: dict[tuple[int, int], int] = {}
+        for cl, n in self._click_tally.items():
+            b = (cl[0] // 8, cl[1] // 8)
+            block_tally[b] = block_tally.get(b, 0) + n
+        pick = min(
+            candidates,
+            key=lambda cl: (
+                0 if cl in self._ever_target else 1,
+                self._click_tally.get(cl, 0),
+                block_tally.get((cl[0] // 8, cl[1] // 8), 0),
+                cl[0],
+                cl[1],
+            ),
+        )
+        self._click_tally[pick] = self._click_tally.get(pick, 0) + 1
+        return pick
 
     def execute(
         self,
@@ -166,8 +243,19 @@ class DeterministicExecutor:
                 if suggested is not None:
                     x, y = suggested
                 else:
-                    x, y = explore_action6_coord(
-                        tick_in_episode, features.width, features.height
+                    # g-315-370 target sweep (flag-gated, see __init__): click
+                    # the least-clicked detected target — the kit port's click
+                    # policy — before degrading to the golden grid sweep.
+                    target = (
+                        self._pick_target_cell(features)
+                        if self._target_sweep
+                        else None
                     )
+                    if target is not None:
+                        x, y = target[1], target[0]
+                    else:
+                        x, y = explore_action6_coord(
+                            tick_in_episode, features.width, features.height
+                        )
 
         return ExecutorDecision(action=action, x=x, y=y)

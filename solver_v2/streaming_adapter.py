@@ -139,6 +139,9 @@ class SolverV2StreamingAdapter:
         effect_salience_priority: bool = False,
         action_value_store: bool = False,
         click_prior: bool = False,
+        coverage_seeds: bool = False,
+        fcx_cache: bool = False,
+        target_sweep: bool = False,
     ) -> None:
         # streaming_url / api_key / session / http_timeout_s / retry_sleep
         # are accepted-and-ignored -- the adapter does no network I/O. Kept in
@@ -170,10 +173,24 @@ class SolverV2StreamingAdapter:
         # byte-identical pre-g-315-279). ON ranks live-control selection by the
         # learned cross-attempt explore_score (g-315-276 design / g-315-277 build).
         self._action_value_store: bool = action_value_store
+        # g-315-370 coverage-seeds toggle (DEFAULT OFF -> byte-identical). ON
+        # (constructor kwarg OR env SOLVER_V2_COVERAGE_SEEDS): the DEFAULT oracle
+        # provider emits UNTRUSTED priors so per-episode routing selects the
+        # coverage paths (untrusted movement -> FrontierCoverageExplorer;
+        # untrusted click -> executor low-discrepancy sweep) instead of steering
+        # at the stub's palette-salience guess — the dominant adapter-vs-port
+        # benchmark-gap delta (g-315-368/g-315-370 audit). An INJECTED
+        # seed_provider is never overridden (tests/BitNet own their provider).
+        self._coverage_seeds: bool = bool(coverage_seeds) or (
+            os.environ.get("SOLVER_V2_COVERAGE_SEEDS", "").strip().lower()
+            in ("1", "true", "yes", "on")
+        )
         self._seed_provider: SeedProvider = (
             seed_provider
             if seed_provider is not None
-            else DeterministicOracleSeedProvider()
+            else DeterministicOracleSeedProvider(
+                coverage_seeds=self._coverage_seeds
+            )
         )
         self._detector = detector or EpisodeBoundaryDetector()
         # g-315-367: async action-effect click-prior (DEFAULT OFF -> the
@@ -190,8 +207,12 @@ class SolverV2StreamingAdapter:
             in ("1", "true", "yes", "on")
         ):
             self._click_prior_engine = ClickPriorEngine(enabled=True)
+        # g-315-370: target_sweep threads into the DEFAULT executor only (an
+        # INJECTED executor owns its own config, mirroring click_prior). Kwarg
+        # OR env SOLVER_V2_TARGET_SWEEP — the executor resolves the env side.
         self._executor = executor or DeterministicExecutor(
-            click_prior=self._click_prior_engine
+            click_prior=self._click_prior_engine,
+            target_sweep=(bool(target_sweep) or None),
         )
         # Last ACTION6 click awaiting its outcome observation: the grid the
         # click was issued ON (layered form) + the click (x, y). Cleared on
@@ -263,6 +284,23 @@ class SolverV2StreamingAdapter:
         # preserves _graph / _inert / _live.
         self._click_state_graph_cache: dict[
             tuple[Optional[str], frozenset[int]], ClickStateGraphExplorer
+        ] = {}
+        # g-315-370 cross-episode FrontierCoverageExplorer cache (DEFAULT OFF ->
+        # fresh-per-episode FCX, byte-identical). ON (constructor kwarg OR env
+        # SOLVER_V2_FCX_CACHE): reuse one FCX per structural key (same key shape
+        # as the g-315-253/g-315-261 state-graph caches) with reset_episode()
+        # clearing only per-episode transients — so the learned displacement
+        # model, wall map, and coverage visit-set ACCUMULATE across episode
+        # seams the way the kit port keeps them across level restarts ("layout
+        # and physics persist"). A fresh explorer per boundary re-learns the
+        # layout from scratch after every death — the port-vs-adapter audit's
+        # persistence delta (g-315-368).
+        self._fcx_cache_enabled: bool = bool(fcx_cache) or (
+            os.environ.get("SOLVER_V2_FCX_CACHE", "").strip().lower()
+            in ("1", "true", "yes", "on")
+        )
+        self._fcx_cache: dict[
+            tuple[Optional[str], frozenset[int]], FrontierCoverageExplorer
         ] = {}
 
         # g-315-148 per-EPISODE calibration startup (Apply 2b). For a movement
@@ -1009,10 +1047,30 @@ class SolverV2StreamingAdapter:
                     self._state_graph_cache[sg_key] = new_sg
                     self._explorer = new_sg
             else:
-                self._explorer = FrontierCoverageExplorer(
-                    move_actions_from(available_action_ids),
-                    game_class=self._game_class,
-                )
+                if self._fcx_cache_enabled:
+                    # g-315-370: cross-episode FCX reuse (same structural key as
+                    # the state-graph caches; reset_episode clears transients,
+                    # keeps the learned layout knowledge).
+                    fcx_key = (
+                        self._game_class,
+                        frozenset(available_action_ids),
+                    )
+                    cached_fcx = self._fcx_cache.get(fcx_key)
+                    if cached_fcx is not None:
+                        cached_fcx.reset_episode()
+                        self._explorer = cached_fcx
+                    else:
+                        new_fcx = FrontierCoverageExplorer(
+                            move_actions_from(available_action_ids),
+                            game_class=self._game_class,
+                        )
+                        self._fcx_cache[fcx_key] = new_fcx
+                        self._explorer = new_fcx
+                else:
+                    self._explorer = FrontierCoverageExplorer(
+                        move_actions_from(available_action_ids),
+                        game_class=self._game_class,
+                    )
             # The explorer is NOT the HandBuiltPolicy route: clear _use_policy /
             # _policy so choose_action dispatches to the explorer branch. No
             # CalibrationProbe / axis_map (the explorer learns displacement online).

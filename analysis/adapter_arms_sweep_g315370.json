@@ -1,0 +1,1683 @@
+{
+ "cov": {
+  "aggregate": 0.017783656672545566,
+  "per_game": {
+   "ar25": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "bp35": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "cd82": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "cn04": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "DeterministicExecutor": 199,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "dc22": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "ft09": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.5,
+    "executors": {
+     "DeterministicExecutor": 201
+    },
+    "throttled": false
+   },
+   "g50t": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.6,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "ka59": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "lf52": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "DeterministicExecutor": 199,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "lp85": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 201
+    },
+    "throttled": false
+   },
+   "ls20": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.4,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "m0r0": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "r11l": {
+    "levels": 1,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "DeterministicExecutor": 194,
+     "n/a": 7
+    },
+    "throttled": false
+   },
+   "re86": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.6,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "s5i5": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 0.9,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "sb26": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.5,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "sc25": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "sk48": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 201
+    },
+    "throttled": false
+   },
+   "sp80": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 195,
+     "n/a": 6
+    },
+    "throttled": false
+   },
+   "su15": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "DeterministicExecutor": 199,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "tn36": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "tr87": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "tu93": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.0,
+    "executors": {
+     "FrontierCoverageExplorer": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "vc33": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "wa30": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.4,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   }
+  }
+ },
+ "covcache": {
+  "aggregate": 0.017783656672545566,
+  "per_game": {
+   "ar25": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "bp35": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "cd82": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "cn04": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 199,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "dc22": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "ft09": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "DeterministicExecutor": 201
+    },
+    "throttled": false
+   },
+   "g50t": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.6,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "ka59": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "lf52": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "DeterministicExecutor": 199,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "lp85": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 201
+    },
+    "throttled": false
+   },
+   "ls20": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.4,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "m0r0": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "r11l": {
+    "levels": 1,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "DeterministicExecutor": 194,
+     "n/a": 7
+    },
+    "throttled": false
+   },
+   "re86": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.7,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "s5i5": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 0.9,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "sb26": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.1,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "sc25": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "sk48": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 201
+    },
+    "throttled": false
+   },
+   "sp80": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 195,
+     "n/a": 6
+    },
+    "throttled": false
+   },
+   "su15": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "DeterministicExecutor": 199,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "tn36": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "tr87": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "tu93": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.1,
+    "executors": {
+     "FrontierCoverageExplorer": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "vc33": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "wa30": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.4,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   }
+  }
+ },
+ "covsg": {
+  "aggregate": 0.0,
+  "per_game": {
+   "ar25": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "ClickStateGraphExplorer": 201
+    },
+    "throttled": false
+   },
+   "bp35": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.5,
+    "executors": {
+     "ClickStateGraphExplorer": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "cd82": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.2,
+    "executors": {
+     "ClickStateGraphExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "cn04": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "ClickStateGraphExplorer": 199,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "dc22": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "ClickStateGraphExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "ft09": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "ClickStateGraphExplorer": 197,
+     "n/a": 4
+    },
+    "throttled": false
+   },
+   "g50t": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.4,
+    "executors": {
+     "StateGraphExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "ka59": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.1,
+    "executors": {
+     "ClickStateGraphExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "lf52": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.7,
+    "executors": {
+     "ClickStateGraphExplorer": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "lp85": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "ClickStateGraphExplorer": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "ls20": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.4,
+    "executors": {
+     "StateGraphExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "m0r0": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "ClickStateGraphExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "r11l": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "ClickStateGraphExplorer": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "re86": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.3,
+    "executors": {
+     "StateGraphExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "s5i5": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "ClickStateGraphExplorer": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "sb26": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "ClickStateGraphExplorer": 201
+    },
+    "throttled": false
+   },
+   "sc25": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.4,
+    "executors": {
+     "ClickStateGraphExplorer": 199,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "sk48": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "ClickStateGraphExplorer": 201
+    },
+    "throttled": false
+   },
+   "sp80": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "ClickStateGraphExplorer": 195,
+     "n/a": 6
+    },
+    "throttled": false
+   },
+   "su15": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.5,
+    "executors": {
+     "ClickStateGraphExplorer": 195,
+     "n/a": 6
+    },
+    "throttled": false
+   },
+   "tn36": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "ClickStateGraphExplorer": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "tr87": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.4,
+    "executors": {
+     "StateGraphExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "tu93": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "StateGraphExplorer": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "vc33": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "ClickStateGraphExplorer": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "wa30": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "StateGraphExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   }
+  }
+ },
+ "covts": {
+  "aggregate": 0.1434053455355045,
+  "per_game": {
+   "ar25": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "bp35": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "cd82": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "cn04": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "DeterministicExecutor": 199,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "dc22": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "ft09": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.8,
+    "executors": {
+     "DeterministicExecutor": 201
+    },
+    "throttled": false
+   },
+   "g50t": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.6,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "ka59": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "lf52": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 199,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "lp85": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "DeterministicExecutor": 197,
+     "n/a": 4
+    },
+    "throttled": false
+   },
+   "ls20": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.4,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "m0r0": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "r11l": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "re86": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.7,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "s5i5": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "sb26": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.2,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "sc25": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "sk48": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 201
+    },
+    "throttled": false
+   },
+   "sp80": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 195,
+     "n/a": 6
+    },
+    "throttled": false
+   },
+   "su15": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "tn36": {
+    "levels": 1,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 199,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "tr87": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "tu93": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.0,
+    "executors": {
+     "FrontierCoverageExplorer": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "vc33": {
+    "levels": 1,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "wa30": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.4,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   }
+  }
+ },
+ "covall": {
+  "aggregate": 0.1434053455355045,
+  "per_game": {
+   "ar25": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "bp35": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "cd82": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "cn04": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 199,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "dc22": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "ft09": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.5,
+    "executors": {
+     "DeterministicExecutor": 201
+    },
+    "throttled": false
+   },
+   "g50t": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.6,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "ka59": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "lf52": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.7,
+    "executors": {
+     "DeterministicExecutor": 199,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "lp85": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 197,
+     "n/a": 4
+    },
+    "throttled": false
+   },
+   "ls20": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.5,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "m0r0": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "r11l": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "re86": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.6,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "s5i5": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "sb26": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.2,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "sc25": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "sk48": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 201
+    },
+    "throttled": false
+   },
+   "sp80": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 195,
+     "n/a": 6
+    },
+    "throttled": false
+   },
+   "su15": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "tn36": {
+    "levels": 1,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "DeterministicExecutor": 199,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "tr87": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "tu93": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.9,
+    "executors": {
+     "FrontierCoverageExplorer": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "vc33": {
+    "levels": 1,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "DeterministicExecutor": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "wa30": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.4,
+    "executors": {
+     "FrontierCoverageExplorer": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   }
+  }
+ },
+ "ts": {
+  "aggregate": 0.0,
+  "per_game": {
+   "ar25": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "CalibrationProbe": 12,
+     "HandBuiltPolicy": 187,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "bp35": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.5,
+    "executors": {
+     "CalibrationProbe": 6,
+     "DeterministicExecutor": 192,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "cd82": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.4,
+    "executors": {
+     "CalibrationProbe": 10,
+     "DeterministicExecutor": 190,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "cn04": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "CalibrationProbe": 10,
+     "DeterministicExecutor": 189,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "dc22": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "ft09": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.7,
+    "executors": {
+     "HandBuiltPolicy": 201
+    },
+    "throttled": false
+   },
+   "g50t": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "CalibrationProbe": 10,
+     "DeterministicExecutor": 190,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "ka59": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "lf52": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.4,
+    "executors": {
+     "CalibrationProbe": 10,
+     "DeterministicExecutor": 189,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "lp85": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "HandBuiltPolicy": 201
+    },
+    "throttled": false
+   },
+   "ls20": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.8,
+    "executors": {
+     "CalibrationProbe": 8,
+     "HandBuiltPolicy": 193
+    },
+    "throttled": false
+   },
+   "m0r0": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "CalibrationProbe": 10,
+     "DeterministicExecutor": 190,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "r11l": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "HandBuiltPolicy": 61,
+     "n/a": 3,
+     "DeterministicExecutor": 137
+    },
+    "throttled": false
+   },
+   "re86": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.3,
+    "executors": {
+     "CalibrationProbe": 10,
+     "HandBuiltPolicy": 190,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "s5i5": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "HandBuiltPolicy": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "sb26": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.1,
+    "executors": {
+     "CalibrationProbe": 4,
+     "DeterministicExecutor": 196,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "sc25": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "CalibrationProbe": 8,
+     "DeterministicExecutor": 190,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "sk48": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "CalibrationProbe": 10,
+     "DeterministicExecutor": 191
+    },
+    "throttled": false
+   },
+   "sp80": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.5,
+    "executors": {
+     "CalibrationProbe": 10,
+     "HandBuiltPolicy": 185,
+     "n/a": 6
+    },
+    "throttled": false
+   },
+   "su15": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "CalibrationProbe": 2,
+     "DeterministicExecutor": 196,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "tn36": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "HandBuiltPolicy": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "tr87": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "CalibrationProbe": 8,
+     "DeterministicExecutor": 192,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "tu93": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "CalibrationProbe": 8,
+     "DeterministicExecutor": 190,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "vc33": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "HandBuiltPolicy": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "wa30": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.6,
+    "executors": {
+     "CalibrationProbe": 10,
+     "HandBuiltPolicy": 190,
+     "n/a": 1
+    },
+    "throttled": false
+   }
+  }
+ }
+}

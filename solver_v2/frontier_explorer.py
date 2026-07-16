@@ -402,6 +402,36 @@ class FrontierCoverageExplorer:
             1, len(self._moves)
         )
 
+    def reset_episode(self) -> None:
+        """Clear per-episode transients for cross-episode reuse (g-315-370).
+
+        Mirrors the kit port's level-restart contract ("layout and physics
+        persist, so learned effects and coverage are KEPT; the in-flight
+        commit/observation do not survive") and the g-315-253/g-315-261
+        cross-episode cache pattern (StateGraphExplorer/ClickStateGraphExplorer
+        reset_episode). KEEPS the learned layout knowledge: displacement models
+        (_effects/_obs/_obs_pos/_effects_pos), walls (_blocked_edges), the
+        coverage visit map, bootstrap progress, classifiers, and the
+        knowledge-conditional exhaustion sets. CLEARS only what must not cross
+        a boundary seam: the pending deferred-observe pair (comparing cursors
+        across a reset seam poisons the effect/wall models — the g-315-367
+        seam rule), the in-flight commitment, and the steering locks/stall
+        trackers (cursor position does not survive the seam).
+        """
+        self._prev_cursor = None
+        self._prev_action = None
+        self._prev_cell = None
+        self._committed = None
+        self._commit_run = 0
+        self._blind_streak = 0
+        self._candidate = None
+        self._steer_stall = 0
+        self._steer_best_dist = None
+        self._dock_stall = 0
+        self._dock_best_dist = None
+        self._cc_stall = 0
+        self._cc_best_dist = None
+
     # ---------- inspection (tests / provenance) ---------- #
 
     @property

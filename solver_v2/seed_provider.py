@@ -28,6 +28,7 @@ evaluation's job (a later goal).
 
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from collections import Counter
 from typing import Any, Optional
@@ -273,6 +274,28 @@ class DeterministicOracleSeedProvider(SeedProvider):
 
     SEED_SOURCE = "deterministic-oracle"
 
+    def __init__(self, *, coverage_seeds: bool | None = None) -> None:
+        # g-315-370 coverage-seeds toggle (DEFAULT OFF -> byte-identical priors).
+        # ON: SKIP the single-frame goal-cell labelling below, emitting UNTRUSTED
+        # priors (objective unknown / goal_cell None / confidence 0.0) so the
+        # adapter's per-episode routing selects the COVERAGE paths instead of
+        # steering at a palette-salience guess: untrusted movement-class ->
+        # FrontierCoverageExplorer (g-315-214), untrusted click-class -> the
+        # DeterministicExecutor low-discrepancy click sweep (g-315-256). The
+        # kit-protocol benchmark gap audit (g-315-368: adapter 0.0 vs port
+        # 0.5244 at 200 actions) traced the dominant delta to exactly this
+        # routing: the stub's SEED_TRUST_MIN floor exists to prove the trusted
+        # WIRE, but offline it locks every movement game onto goal-steering
+        # toward a best-guess cell while the port wins by systematic coverage.
+        # Same reversible-toggle pattern as SOLVER_V2_CLICK_PRIOR /
+        # SOLVER_V2_STATE_GRAPH (constructor kwarg OR env var).
+        self._coverage_seeds: bool = (
+            bool(coverage_seeds)
+            if coverage_seeds is not None
+            else os.environ.get("SOLVER_V2_COVERAGE_SEEDS", "").strip().lower()
+            in ("1", "true", "yes", "on")
+        )
+
     def seed(self, context: EpisodeContext) -> EpisodePrior:
         avail = set(context.available_actions)
 
@@ -319,7 +342,8 @@ class DeterministicOracleSeedProvider(SeedProvider):
             else OBJECTIVE_UNKNOWN
         )
         if (
-            frame_objective != OBJECTIVE_UNKNOWN
+            not self._coverage_seeds  # g-315-370: ON -> untrusted prior, coverage routing
+            and frame_objective != OBJECTIVE_UNKNOWN
             and context.frame is not None
             and context.frame.frame
         ):

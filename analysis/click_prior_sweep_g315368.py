@@ -116,7 +116,10 @@ class AdapterDrive(Agent):
         return ea
 
 
-def run_arm(label: str, click_prior_on: bool) -> dict:
+def run_arm(label: str, click_prior_on: bool = False, **adapter_kwargs: bool) -> dict:
+    """One full-25-game arm. adapter_kwargs pass straight to the adapter
+    constructor (g-315-370 arms: coverage_seeds / fcx_cache / use_state_graph),
+    so every arm runs in one process without env-var leakage."""
     arc = arc_agi.Arcade(
         operation_mode=OperationMode.NORMAL,
         environments_dir=str(KIT / "environment_files"),
@@ -132,7 +135,7 @@ def run_arm(label: str, click_prior_on: bool) -> dict:
             per_game[short] = {"error": "env-create-failed"}
             continue
         adapter = SolverV2StreamingAdapter(
-            arc_game_id=full_gid, click_prior=click_prior_on
+            arc_game_id=full_gid, click_prior=click_prior_on, **adapter_kwargs
         )
         throttle = (
             PRIOR_ARM_THROTTLE_S if (click_prior_on and short in QUALIFYING) else 0.0
@@ -186,13 +189,43 @@ def run_arm(label: str, click_prior_on: bool) -> dict:
     return {"aggregate": aggregate, "per_game": per_game}
 
 
+# g-315-370 arms: adapter constructor kwargs per arm label. "off"/"on" keep the
+# g-315-368 click-prior semantics; the cov* arms measure the backported routing
+# levers (coverage seeds -> FCX/click-sweep; fcx_cache -> cross-episode FCX
+# reuse; covsg -> the state-graph discovery lane on coverage routing).
+ARMS: dict[str, dict[str, bool]] = {
+    "off": {},
+    "on": {"click_prior": True},
+    "cov": {"coverage_seeds": True},
+    "covcache": {"coverage_seeds": True, "fcx_cache": True},
+    "covsg": {
+        "coverage_seeds": True,
+        "fcx_cache": True,
+        "use_state_graph": True,
+    },
+    "covts": {"coverage_seeds": True, "target_sweep": True},
+    "covall": {
+        "coverage_seeds": True,
+        "fcx_cache": True,
+        "target_sweep": True,
+    },
+    "ts": {"target_sweep": True},
+}
+
+
 def main() -> None:
     which = sys.argv[1] if len(sys.argv) > 1 else "both"
+    arm_names = (
+        ["off", "on"]
+        if which == "both"
+        else [a.strip() for a in which.split(",") if a.strip()]
+    )
+    unknown = [a for a in arm_names if a not in ARMS]
+    if unknown:
+        raise SystemExit(f"unknown arm(s) {unknown}; valid: {sorted(ARMS)} or 'both'")
     results: dict[str, dict] = {}
-    if which in ("off", "both"):
-        results["off"] = run_arm("off", False)
-    if which in ("on", "both"):
-        results["on"] = run_arm("on", True)
+    for name in arm_names:
+        results[name] = run_arm(name, **ARMS[name])
 
     if "off" in results and "on" in results:
         off, on = results["off"], results["on"]
@@ -218,7 +251,14 @@ def main() -> None:
         for line in regressions:
             print(line, flush=True)
 
-    out = Path(__file__).parent / "click_prior_sweep_g315368.json"
+    # g-315-368's off/on artifact stays frozen; any other arm set writes the
+    # g-315-370 results file instead (never clobber committed evidence).
+    fname = (
+        "click_prior_sweep_g315368.json"
+        if set(results) <= {"off", "on"}
+        else "adapter_arms_sweep_g315370.json"
+    )
+    out = Path(__file__).parent / fname
     out.write_text(json.dumps(results, indent=1))
     print(f"wrote {out}", flush=True)
 
