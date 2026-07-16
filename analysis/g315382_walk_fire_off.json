@@ -1,0 +1,53 @@
+{
+ "arm": "off",
+ "decide_ticks": 1614,
+ "walk_calls": 27,
+ "walk_hits": 27,
+ "walk_none": 0,
+ "tie_firings": 0,
+ "divergences": 5,
+ "first_divergence": {
+  "tick": 407,
+  "want": "ACTION1",
+  "got": "ACTION2",
+  "want_xy": [
+   null,
+   null
+  ],
+  "got_xy": [
+   null,
+   null
+  ]
+ },
+ "matched": 1609,
+ "walk_call_ticks": [
+  312,
+  355,
+  448,
+  493,
+  579,
+  622,
+  670,
+  713,
+  756,
+  799,
+  842,
+  890,
+  933,
+  981,
+  1025,
+  1073,
+  1121,
+  1169,
+  1217,
+  1260,
+  1303,
+  1346,
+  1394,
+  1437,
+  1481,
+  1529,
+  1572
+ ],
+ "tie_size_hist": {}
+}
