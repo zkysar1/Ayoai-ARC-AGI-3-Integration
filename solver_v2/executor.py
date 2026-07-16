@@ -75,6 +75,7 @@ class DeterministicExecutor:
         self,
         click_prior: Optional[ClickPriorEngine] = None,
         target_sweep: bool | None = None,
+        sweep_escape_after: int | None = None,
     ) -> None:
         self._click_prior = click_prior
         # g-315-370 target-sweep toggle (DEFAULT OFF -> byte-identical golden
@@ -97,6 +98,40 @@ class DeterministicExecutor:
         )
         self._click_tally: dict[tuple[int, int], int] = {}
         self._ever_target: set[tuple[int, int]] = set()
+        # g-315-373 sweep-escape hatch (DEFAULT OFF -> byte-identical). N =
+        # target-pool clicks allowed per LEVEL without a bank before the
+        # executor abandons the target pool and replays the golden sweep from
+        # index 0 (its OWN counter — resuming at tick_in_episode would skip
+        # golden's early segment, and r11l's win cell sits at golden index 71).
+        # Motivation (g-315-370/372 arm matrix): target-sweep wins tn36 (bank
+        # after 23 clicks) + vc33 (bank after 111 clicks) but loses r11l — its
+        # detected/ever targets EXIST and preempt the golden walk while never
+        # banking in 200 actions (pool-semantics refinement measured dead,
+        # g-315-372). N must exceed 111 (vc33's bank) and leave >= 72 golden
+        # clicks (r11l's bank index) in a 200-action budget: N=120 -> 80
+        # remaining. notice_bank() resets the counter AND re-enables the pool
+        # (each level gets a fresh chance — a banked level re-arranges the
+        # board, so the new level's targets are unproven either way).
+        env_escape = os.environ.get("SOLVER_V2_SWEEP_ESCAPE_AFTER", "").strip()
+        self._sweep_escape_after: Optional[int] = (
+            int(sweep_escape_after)
+            if sweep_escape_after is not None
+            else (int(env_escape) if env_escape.isdigit() else None)
+        )
+        self._target_clicks_since_bank: int = 0
+        self._escaped: bool = False
+        self._escape_clicks: int = 0
+
+    def notice_bank(self) -> None:
+        """A level banked — reset the sweep-escape state (g-315-373).
+
+        Called by the adapter on any observed score increase. The new level's
+        board is a different puzzle: the target pool gets a fresh N-click
+        budget and the golden replay counter re-arms.
+        """
+        self._target_clicks_since_bank = 0
+        self._escaped = False
+        self._escape_clicks = 0
 
     def _pick_target_cell(
         self, features: FrameFeatures
@@ -243,16 +278,34 @@ class DeterministicExecutor:
                 if suggested is not None:
                     x, y = suggested
                 else:
+                    # g-315-373 sweep-escape: after N fruitless target-pool
+                    # clicks this level, abandon the pool and replay the golden
+                    # sweep from index 0 on a dedicated counter (see __init__).
+                    escape_on = self._sweep_escape_after is not None
+                    if (
+                        escape_on
+                        and not self._escaped
+                        and self._target_clicks_since_bank
+                        >= (self._sweep_escape_after or 0)
+                    ):
+                        self._escaped = True
                     # g-315-370 target sweep (flag-gated, see __init__): click
                     # the least-clicked detected target — the kit port's click
                     # policy — before degrading to the golden grid sweep.
                     target = (
                         self._pick_target_cell(features)
-                        if self._target_sweep
+                        if self._target_sweep and not self._escaped
                         else None
                     )
                     if target is not None:
+                        if escape_on:
+                            self._target_clicks_since_bank += 1
                         x, y = target[1], target[0]
+                    elif self._escaped:
+                        x, y = explore_action6_coord(
+                            self._escape_clicks, features.width, features.height
+                        )
+                        self._escape_clicks += 1
                     else:
                         x, y = explore_action6_coord(
                             tick_in_episode, features.width, features.height

@@ -144,6 +144,7 @@ class SolverV2StreamingAdapter:
         target_sweep: bool = False,
         mixed_movement: bool = False,
         interact_ride_guard: bool = False,
+        sweep_escape_after: Optional[int] = None,
     ) -> None:
         # streaming_url / api_key / session / http_timeout_s / retry_sleep
         # are accepted-and-ignored -- the adapter does no network I/O. Kept in
@@ -239,9 +240,13 @@ class SolverV2StreamingAdapter:
         # g-315-370: target_sweep threads into the DEFAULT executor only (an
         # INJECTED executor owns its own config, mirroring click_prior). Kwarg
         # OR env SOLVER_V2_TARGET_SWEEP — the executor resolves the env side.
+        # g-315-373: sweep-escape N threads through to the executor (which also
+        # env-resolves SOLVER_V2_SWEEP_ESCAPE_AFTER when None). See executor
+        # __init__ for the threshold arithmetic (N=120 recommended).
         self._executor = executor or DeterministicExecutor(
             click_prior=self._click_prior_engine,
             target_sweep=(bool(target_sweep) or None),
+            sweep_escape_after=sweep_escape_after,
         )
         # Last ACTION6 click awaiting its outcome observation: the grid the
         # click was issued ON (layered form) + the click (x, y). Cleared on
@@ -613,6 +618,21 @@ class SolverV2StreamingAdapter:
         # resets the engine instead (Goose per-level reset: new level = new
         # dynamics, stale buffer/model dropped) — the level-transition frame
         # jump is not click-effect signal.
+        # g-315-373: any observed level bank resets the executor's sweep-escape
+        # state (fresh target-pool budget per level). Duck-typed so injected
+        # test executors without the method are fine; no-op when the escape
+        # flag is OFF (notice_bank just zeroes idle counters).
+        prev_bank = self._previous_frame
+        if (
+            prev_bank is not None
+            and prev_bank.score is not None
+            and frame.score is not None
+            and frame.score > prev_bank.score
+        ):
+            nb = getattr(self._executor, "notice_bank", None)
+            if nb is not None:
+                nb()
+
         if self._click_prior_engine is not None:
             prev = self._previous_frame
             leveled_up = (

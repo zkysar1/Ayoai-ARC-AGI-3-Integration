@@ -247,6 +247,17 @@ ARMS: dict[str, dict[str, bool]] = {
         "mixed_movement": True,
         "fcx_cache": True,
     },
+    # g-315-373: covmix + sweep-escape hatch. Target-sweep wins tn36 (bank
+    # after 23 clicks) + vc33 (bank after 111) but loses r11l (198 fruitless
+    # target clicks; golden banks it at index 71 — bank_timing_probe_g315373).
+    # N=120: vc33/tn36 never escape; r11l escapes at click 120 and replays
+    # golden from index 0 on a dedicated counter (80 clicks >= 72 needed).
+    "covmixesc": {
+        "coverage_seeds": True,
+        "target_sweep": True,
+        "mixed_movement": True,
+        "sweep_escape_after": 120,
+    },
     # g-315-377: covmix + interact-ride guard. sp80's ACTION5 (interact/bank)
     # entered _effects at tick 5 from ONE spurious moving sample and was
     # commit-ridden 4-8 consecutive ticks; ride ticks were 6 of 8 GAME_OVERs
