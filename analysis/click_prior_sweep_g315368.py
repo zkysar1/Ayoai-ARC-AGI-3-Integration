@@ -116,15 +116,26 @@ class AdapterDrive(Agent):
         return ea
 
 
-def run_arm(label: str, click_prior_on: bool = False, **adapter_kwargs: bool) -> dict:
-    """One full-25-game arm. adapter_kwargs pass straight to the adapter
-    constructor (g-315-370 arms: coverage_seeds / fcx_cache / use_state_graph),
-    so every arm runs in one process without env-var leakage."""
+def run_arm(
+    label: str,
+    click_prior_on: bool = False,
+    games: list[str] | None = None,
+    **adapter_kwargs: bool,
+) -> dict:
+    """One arm over all 25 games (default) or a `games` short-id subset
+    (g-315-372 focused re-measures — NOTE the Arcade aggregate then averages
+    over the subset only, NOT /25; compare per-game scores, not aggregates).
+    adapter_kwargs pass straight to the adapter constructor (g-315-370 arms:
+    coverage_seeds / fcx_cache / use_state_graph / target_sweep), so every
+    arm runs in one process without env-var leakage."""
     arc = arc_agi.Arcade(
         operation_mode=OperationMode.NORMAL,
         environments_dir=str(KIT / "environment_files"),
     )
     envs = sorted(arc.get_environments(), key=lambda e: e.game_id)
+    if games:
+        wanted = {g.strip() for g in games}
+        envs = [e for e in envs if e.game_id.split("-")[0] in wanted]
     per_game: dict[str, dict] = {}
     t_arm = time.time()
     for i, einfo in enumerate(envs, 1):
@@ -182,11 +193,18 @@ def run_arm(label: str, click_prior_on: bool = False, **adapter_kwargs: bool) ->
         )
     sc = arc.get_scorecard()
     aggregate = sc.score if hasattr(sc, "score") else sc
+    # Full per-game scorecard entries (g-315-372): final-frame `levels=` above
+    # understates (banking across GAME_OVER->RESET replays) and per-level score
+    # is efficiency-weighted — the scorecard detail is the only per-game truth.
+    try:
+        scorecard = json.loads(json.dumps(sc.get(), default=str))
+    except Exception as e:  # never lose the sweep to a detail-dump failure
+        scorecard = {"error": f"{type(e).__name__}: {e}"}
     print(
         f"[{label}] AGGREGATE={aggregate} wall={round(time.time() - t_arm, 1)}s",
         flush=True,
     )
-    return {"aggregate": aggregate, "per_game": per_game}
+    return {"aggregate": aggregate, "per_game": per_game, "scorecard": scorecard}
 
 
 # g-315-370 arms: adapter constructor kwargs per arm label. "off"/"on" keep the
@@ -210,11 +228,25 @@ ARMS: dict[str, dict[str, bool]] = {
         "target_sweep": True,
     },
     "ts": {"target_sweep": True},
+    # g-315-372 NEGATIVE RESULT (both levers reverted, arms removed):
+    #   - "covfocus" (click_focus: 3-of-4 ACTION6 concentration on untrusted
+    #     mixed-action games) engaged correctly on sp80 (45/60 clicks probed)
+    #     yet banked 0 levels — concentration alone does not win sp80.
+    #   - refining _pick_target_cell to detected/ever-only (dropping the
+    #     non-terrain fallback pool) did NOT recover r11l (still 0.0) and
+    #     REGRESSED the two covts wins: tn36 3.571→2.822, vc33 0.014→0.0.
+    #     The fallback pool was load-bearing on tn36/vc33.
+    # Evidence: adapter_arms_focused_g315372.json. covts stays the best arm.
 }
 
 
 def main() -> None:
     which = sys.argv[1] if len(sys.argv) > 1 else "both"
+    games = (
+        [g.strip() for g in sys.argv[2].split(",") if g.strip()]
+        if len(sys.argv) > 2
+        else None
+    )
     arm_names = (
         ["off", "on"]
         if which == "both"
@@ -225,7 +257,7 @@ def main() -> None:
         raise SystemExit(f"unknown arm(s) {unknown}; valid: {sorted(ARMS)} or 'both'")
     results: dict[str, dict] = {}
     for name in arm_names:
-        results[name] = run_arm(name, **ARMS[name])
+        results[name] = run_arm(name, games=games, **ARMS[name])
 
     if "off" in results and "on" in results:
         off, on = results["off"], results["on"]
@@ -253,8 +285,12 @@ def main() -> None:
 
     # g-315-368's off/on artifact stays frozen; any other arm set writes the
     # g-315-370 results file instead (never clobber committed evidence).
+    # A game-SUBSET run writes its own file — subset aggregates are not
+    # comparable to full-25 aggregates and must never overwrite them.
     fname = (
-        "click_prior_sweep_g315368.json"
+        "adapter_arms_focused_g315372.json"
+        if games
+        else "click_prior_sweep_g315368.json"
         if set(results) <= {"off", "on"}
         else "adapter_arms_sweep_g315370.json"
     )
