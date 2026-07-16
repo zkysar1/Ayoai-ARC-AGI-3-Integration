@@ -1,0 +1,79 @@
+[
+ {
+  "game": "r11l",
+  "ticks": 199,
+  "unique_pairs": 199,
+  "repeated_pairs_any_outcome": 0,
+  "noop_rate": 0.0,
+  "pairs_repeat_noop": 0,
+  "prunable_events": 0,
+  "prunable_frac": 0.0,
+  "dead_action_ids": []
+ },
+ {
+  "game": "sp80",
+  "ticks": 194,
+  "unique_pairs": 189,
+  "repeated_pairs_any_outcome": 5,
+  "noop_rate": 0.0,
+  "pairs_repeat_noop": 0,
+  "prunable_events": 0,
+  "prunable_frac": 0.0,
+  "dead_action_ids": []
+ },
+ {
+  "game": "tn36",
+  "ticks": 199,
+  "unique_pairs": 197,
+  "repeated_pairs_any_outcome": 2,
+  "noop_rate": 0.0,
+  "pairs_repeat_noop": 0,
+  "prunable_events": 0,
+  "prunable_frac": 0.0,
+  "dead_action_ids": []
+ },
+ {
+  "game": "vc33",
+  "ticks": 198,
+  "unique_pairs": 194,
+  "repeated_pairs_any_outcome": 4,
+  "noop_rate": 0.0,
+  "pairs_repeat_noop": 0,
+  "prunable_events": 0,
+  "prunable_frac": 0.0,
+  "dead_action_ids": []
+ },
+ {
+  "game": "ls20",
+  "ticks": 200,
+  "unique_pairs": 197,
+  "repeated_pairs_any_outcome": 3,
+  "noop_rate": 0.0,
+  "pairs_repeat_noop": 0,
+  "prunable_events": 0,
+  "prunable_frac": 0.0,
+  "dead_action_ids": []
+ },
+ {
+  "game": "tu93",
+  "ticks": 198,
+  "unique_pairs": 173,
+  "repeated_pairs_any_outcome": 24,
+  "noop_rate": 0.0,
+  "pairs_repeat_noop": 0,
+  "prunable_events": 0,
+  "prunable_frac": 0.0,
+  "dead_action_ids": []
+ },
+ {
+  "game": "wa30",
+  "ticks": 200,
+  "unique_pairs": 192,
+  "repeated_pairs_any_outcome": 8,
+  "noop_rate": 0.045,
+  "pairs_repeat_noop": 2,
+  "prunable_events": 2,
+  "prunable_frac": 0.01,
+  "dead_action_ids": []
+ }
+]
