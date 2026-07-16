@@ -57,6 +57,7 @@ from solver_v2.calibration import (
     CalibrationProbe,
     move_actions_from,
 )
+from solver_v2.click_prior import ClickPriorEngine
 from solver_v2.episode import (
     OBJECTIVE_ALIGN_TO_CELL,
     OBJECTIVE_AVOID,
@@ -137,6 +138,7 @@ class SolverV2StreamingAdapter:
         salience_priority: bool = False,
         effect_salience_priority: bool = False,
         action_value_store: bool = False,
+        click_prior: bool = False,
     ) -> None:
         # streaming_url / api_key / session / http_timeout_s / retry_sleep
         # are accepted-and-ignored -- the adapter does no network I/O. Kept in
@@ -174,7 +176,28 @@ class SolverV2StreamingAdapter:
             else DeterministicOracleSeedProvider()
         )
         self._detector = detector or EpisodeBoundaryDetector()
-        self._executor = executor or DeterministicExecutor()
+        # g-315-367: async action-effect click-prior (DEFAULT OFF -> the
+        # DeterministicExecutor click path is byte-identical). Enabled via
+        # constructor kwarg OR env SOLVER_V2_CLICK_PRIOR (same reversible-
+        # toggle pattern as SOLVER_V2_STATE_GRAPH). The engine self-gates on
+        # runtime label balance (guard-818: degenerate ~all-positive games
+        # keep the pure coverage sweep) and lazy-imports torch off the hot
+        # path (torch absent -> engine self-disables, sweep unchanged). An
+        # INJECTED executor bypasses the engine (tests own their executor).
+        self._click_prior_engine: Optional[ClickPriorEngine] = None
+        if bool(click_prior) or (
+            os.environ.get("SOLVER_V2_CLICK_PRIOR", "").strip().lower()
+            in ("1", "true", "yes", "on")
+        ):
+            self._click_prior_engine = ClickPriorEngine(enabled=True)
+        self._executor = executor or DeterministicExecutor(
+            click_prior=self._click_prior_engine
+        )
+        # Last ACTION6 click awaiting its outcome observation: the grid the
+        # click was issued ON (layered form) + the click (x, y). Cleared on
+        # episode boundaries / game-control transitions / level-ups so the
+        # frame_changed label never compares across a reset or level seam.
+        self._last_click: Optional[tuple[Any, int, int]] = None
         self._policy_factory = policy_factory
 
         # g-315-147 per-EPISODE routing (Option A). A movement-class episode
@@ -398,9 +421,22 @@ class SolverV2StreamingAdapter:
             "cached_keys": len(explorers),
         }
 
+    @property
+    def click_prior_stats(self) -> Optional[dict[str, Any]]:
+        """Compact ClickPriorEngine observability snapshot (g-315-367), or
+        None when the engine is not wired (default-OFF). Read by the offline
+        validation harness; same read-only convention as click_explorer_stats.
+        """
+        if self._click_prior_engine is None:
+            return None
+        return self._click_prior_engine.stats()
+
     def close(self) -> None:
-        # No session, socket, or file handle to release. Match the
-        # context-manager contract so callers can do `with adapter as x:`.
+        # No session, socket, or file handle to release; only the optional
+        # click-prior worker thread (g-315-367). Matches the context-manager
+        # contract so callers can do `with adapter as x:`.
+        if self._click_prior_engine is not None:
+            self._click_prior_engine.close()
         return None
 
     def __enter__(self) -> "SolverV2StreamingAdapter":
@@ -447,6 +483,9 @@ class SolverV2StreamingAdapter:
         """
         # Game-control RESET (parity with AyoaiStreamingClient.choose_action).
         if frame.state in (GameState.NOT_PLAYED, GameState.GAME_OVER):
+            # g-315-367: a pending click observation would compare grids
+            # across a death/reset seam — meaningless label; drop it.
+            self._last_click = None
             return AyoaiDecision(
                 action=GameAction.RESET,
                 provenance={
@@ -498,6 +537,34 @@ class SolverV2StreamingAdapter:
             # CalibrationProbe over the move-actions present at episode start
             # (g-315-148).
             self._route_episode(available_action_ids)
+
+        # g-315-367: resolve the pending click observation against THIS frame.
+        # The label is (grid this frame) != (grid the click was issued on) —
+        # the exact (state, action) -> frame_changed supervision the Goose CNN
+        # trains on (g-315-366). Guards: never observe across an episode
+        # boundary (reset seam), and a LEVEL-UP (score increased mid-play)
+        # resets the engine instead (Goose per-level reset: new level = new
+        # dynamics, stale buffer/model dropped) — the level-transition frame
+        # jump is not click-effect signal.
+        if self._click_prior_engine is not None:
+            prev = self._previous_frame
+            leveled_up = (
+                prev is not None
+                and prev.score is not None
+                and frame.score is not None
+                and frame.score > prev.score
+            )
+            if leveled_up:
+                self._click_prior_engine.reset()
+                self._last_click = None
+            elif self._last_click is not None and not boundary.is_boundary:
+                grid_before, cx, cy = self._last_click
+                self._click_prior_engine.observe(
+                    grid_before, cx, cy, changed=(frame.frame != grid_before)
+                )
+                self._last_click = None
+            else:
+                self._last_click = None
 
         # Defensive: a boundary MUST have produced a prior on the first
         # strategic frame (episode_active=False forces initial-episode), so
@@ -665,6 +732,25 @@ class SolverV2StreamingAdapter:
             self._finalized_axis_map = None
         if decision.x is not None and decision.y is not None:
             provenance["action6_target"] = {"x": decision.x, "y": decision.y}
+
+        # g-315-367 click-prior integration points (engine wired only):
+        # 1. Queue THIS tick's click for next-tick outcome observation. EVERY
+        #    routed ACTION6 with coordinates is legitimate (state, coord) ->
+        #    frame_changed supervision — executor sweep/prior clicks, seeded
+        #    goal_cell clicks, and policy arrival clicks alike.
+        # 2. On episode-boundary ticks, stamp the engine's compact stats into
+        #    provenance (same lean one-shot convention as seed_prior) so
+        #    gate/generation state is diagnosable offline from the recording.
+        if self._click_prior_engine is not None:
+            if (
+                decision.action == 6
+                and decision.x is not None
+                and decision.y is not None
+                and frame.frame
+            ):
+                self._last_click = (frame.frame, decision.x, decision.y)
+            if boundary_reason is not None:
+                provenance["click_prior"] = self._click_prior_engine.stats()
 
         # Remember this tick's frame for next tick's boundary detection AND the
         # HandBuiltPolicy deferred-observe loop (_decide_via_policy reads it

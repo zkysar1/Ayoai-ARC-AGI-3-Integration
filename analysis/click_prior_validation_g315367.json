@@ -1,0 +1,90 @@
+{
+ "ft09": {
+  "random": {
+   "attempts": 2483,
+   "changes": 272,
+   "changed_rate": 0.1095,
+   "actions_per_change": 9.13,
+   "levels_completed": 1,
+   "wall_s": 1.7
+  },
+  "sweep": {
+   "attempts": 2487,
+   "changes": 334,
+   "changed_rate": 0.1343,
+   "actions_per_change": 7.45,
+   "levels_completed": 1,
+   "wall_s": 2.7
+  },
+  "prior": {
+   "attempts": 2449,
+   "changes": 905,
+   "changed_rate": 0.3695,
+   "actions_per_change": 2.71,
+   "levels_completed": 1,
+   "suggested_used": 796,
+   "suggested_attempts": 773,
+   "suggested_changes": 649,
+   "suggested_changed_rate": 0.8396,
+   "engine": {
+    "enabled": true,
+    "gate_open": true,
+    "changed_rate": 0.765,
+    "gate_samples": 200,
+    "buffer": 966,
+    "eval_buffer": 241,
+    "rounds": 51,
+    "steps": 208,
+    "auc": 0.995,
+    "generation": 24,
+    "suggested": 796,
+    "disabled_reason": null
+   },
+   "wall_s": 637.3
+  }
+ },
+ "lp85": {
+  "random": {
+   "attempts": 2494,
+   "changes": 48,
+   "changed_rate": 0.0192,
+   "actions_per_change": 51.96,
+   "levels_completed": 0,
+   "wall_s": 1.8
+  },
+  "sweep": {
+   "attempts": 2492,
+   "changes": 52,
+   "changed_rate": 0.0209,
+   "actions_per_change": 47.92,
+   "levels_completed": 0,
+   "wall_s": 1.5
+  },
+  "prior": {
+   "attempts": 2485,
+   "changes": 99,
+   "changed_rate": 0.0398,
+   "actions_per_change": 25.1,
+   "levels_completed": 1,
+   "suggested_used": 1248,
+   "suggested_attempts": 1240,
+   "suggested_changes": 75,
+   "suggested_changed_rate": 0.0605,
+   "engine": {
+    "enabled": true,
+    "gate_open": true,
+    "changed_rate": 0.0,
+    "gate_samples": 200,
+    "buffer": 1006,
+    "eval_buffer": 250,
+    "rounds": 49,
+    "steps": 216,
+    "auc": null,
+    "generation": 7,
+    "suggested": 1248,
+    "disabled_reason": null
+   },
+   "wall_s": 609.4
+  }
+ }
+}

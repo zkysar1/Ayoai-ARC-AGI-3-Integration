@@ -27,6 +27,7 @@ from typing import Optional
 
 from solver_v0.perception import FrameFeatures
 from solver_v2.action6_explore import explore_action6_coord
+from solver_v2.click_prior import ClickPriorEngine
 from solver_v2.episode import (
     OBJECTIVE_REACH_CELL,
     OBJECTIVE_TOGGLE_AT_CELL,
@@ -59,7 +60,17 @@ class DeterministicExecutor:
 
     Stateless: the caller passes tick_in_episode (0-based, reset to 0 at each
     episode boundary), so the executor itself holds no per-episode state.
+
+    Optional ``click_prior`` (g-315-367): a ClickPriorEngine consulted ONLY on
+    the untrusted-click explore branch — the seed-labelled goal_cell and the
+    explicit action6_target branches are untouched. When the engine declines
+    (disabled, label-balance gate closed, nothing learned yet, or its
+    deterministic exploration slot), the coverage sweep runs byte-identically
+    to the engine-less executor. Default None = pre-g-315-367 behavior.
     """
+
+    def __init__(self, click_prior: Optional[ClickPriorEngine] = None) -> None:
+        self._click_prior = click_prior
 
     def execute(
         self,
@@ -137,8 +148,26 @@ class DeterministicExecutor:
                 # is the click counter on a pure-ACTION6 episode (every tick is a
                 # click). Stays tiny-compute + generalization-preserving (pure
                 # index->coord math, no game-specific constants).
-                x, y = explore_action6_coord(
-                    tick_in_episode, features.width, features.height
+                #
+                # g-315-367: when a ClickPriorEngine is wired AND chooses to
+                # drive this click (enabled + label-balance gate open + a
+                # trained ranking published + not its exploration slot), its
+                # prior-ranked coordinate replaces the sweep pick — the
+                # measured x6.6-x10.2 top-decile lift over unguided clicking
+                # (g-315-366). suggest() is torch-free O(K); on None the sweep
+                # below is byte-identical to the engine-less path.
+                suggested = (
+                    self._click_prior.suggest(
+                        tick_in_episode, features.width, features.height
+                    )
+                    if self._click_prior is not None
+                    else None
                 )
+                if suggested is not None:
+                    x, y = suggested
+                else:
+                    x, y = explore_action6_coord(
+                        tick_in_episode, features.width, features.height
+                    )
 
         return ExecutorDecision(action=action, x=x, y=y)
