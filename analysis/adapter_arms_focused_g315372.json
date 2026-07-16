@@ -6,6 +6,104 @@
     "levels": 1,
     "actions": 201,
     "state": "NOT_FINISHED",
+    "wall_s": 1.7,
+    "executors": {
+     "FrontierCoverageExplorer": 193,
+     "n/a": 8
+    },
+    "throttled": false
+   }
+  },
+  "scorecard": {
+   "source_url": null,
+   "tags": null,
+   "opaque": null,
+   "card_id": "ef3e1732-9533-42b5-96c1-64559c99de74",
+   "api_key": null,
+   "score": 0.9569107072079726,
+   "environments": [
+    {
+     "id": "sp80-589a99af",
+     "runs": [
+      {
+       "id": null,
+       "guid": "fc18ac12-e8c2-4289-985b-a25305982995",
+       "score": 0.9569107072079726,
+       "levels_completed": 1,
+       "actions": 201,
+       "resets": 8,
+       "state": "GAME_OVER",
+       "completed": false,
+       "level_scores": [
+        20.095124851367423,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+       ],
+       "level_actions": [
+        87,
+        114,
+        0,
+        0,
+        0,
+        0
+       ],
+       "level_baseline_actions": [
+        39,
+        58,
+        25,
+        148,
+        96,
+        152
+       ],
+       "number_of_levels": null,
+       "number_of_environments": null,
+       "message": null
+      }
+     ],
+     "score": 0.9569107072079726,
+     "actions": 201,
+     "levels_completed": 1,
+     "completed": false,
+     "level_count": 6,
+     "resets": 8
+    }
+   ],
+   "tags_scores": [
+    {
+     "id": "keyboard_click",
+     "guid": null,
+     "score": 0.9569107072079726,
+     "levels_completed": 1,
+     "actions": 201,
+     "resets": null,
+     "state": null,
+     "completed": null,
+     "level_scores": null,
+     "level_actions": null,
+     "level_baseline_actions": null,
+     "number_of_levels": 6,
+     "number_of_environments": 1,
+     "message": null
+    }
+   ],
+   "competition_mode": null,
+   "total_environments_completed": 0,
+   "total_environments": 1,
+   "total_levels_completed": 1,
+   "total_levels": 6,
+   "total_actions": 201
+  }
+ },
+ "covmixcache": {
+  "aggregate": 0.9569107072079726,
+  "per_game": {
+   "sp80": {
+    "levels": 1,
+    "actions": 201,
+    "state": "NOT_FINISHED",
     "wall_s": 1.6,
     "executors": {
      "FrontierCoverageExplorer": 193,
@@ -18,7 +116,7 @@
    "source_url": null,
    "tags": null,
    "opaque": null,
-   "card_id": "523bbca5-83ab-4d1e-9ef6-527e8184d6f7",
+   "card_id": "3bf32272-9c92-4c31-b3b6-31733988a245",
    "api_key": null,
    "score": 0.9569107072079726,
    "environments": [
@@ -27,7 +125,7 @@
      "runs": [
       {
        "id": null,
-       "guid": "a1a90559-86e1-4cf9-8af4-565884e117aa",
+       "guid": "262049dc-92e3-4661-8f61-711502ffa54a",
        "score": 0.9569107072079726,
        "levels_completed": 1,
        "actions": 201,

@@ -236,6 +236,17 @@ ARMS: dict[str, dict[str, bool]] = {
         "target_sweep": True,
         "mixed_movement": True,
     },
+    # g-315-376: covmix + cross-episode FCX cache. fcx_cache was inert on
+    # movement-only games (~1 episode/game at 200 actions - nothing to reuse)
+    # but sp80's GAME_OVER->RESET cadence yields ~9 episodes/200 ticks: the
+    # cache lets attempt N resume the learned layout instead of re-exploring
+    # (fcx_sp80_trace_g315376: fresh-FCX covmix banks L1 at tick 86, attempt 5).
+    "covmixcache": {
+        "coverage_seeds": True,
+        "target_sweep": True,
+        "mixed_movement": True,
+        "fcx_cache": True,
+    },
     # g-315-372 NEGATIVE RESULT (both levers reverted, arms removed):
     #   - "covfocus" (click_focus: 3-of-4 ACTION6 concentration on untrusted
     #     mixed-action games) engaged correctly on sp80 (45/60 clicks probed)
