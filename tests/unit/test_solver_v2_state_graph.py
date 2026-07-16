@@ -379,3 +379,78 @@ def test_reset_episode_preserves_graph_resets_transient() -> None:
     assert isinstance(d, ExecutorDecision)
     assert d.action in _LS20_MOVES
     assert explorer.node_count >= graph_before
+
+
+# ---------------------------------------------------------------------------
+# g-315-379 — AEVS wiring (movement-class mirror of the click-class g-315-279)
+# ---------------------------------------------------------------------------
+def test_aevs_flag_defaults_off_and_threads() -> None:
+    # Default OFF = byte-identical: the store is not instantiated. Opt-in via
+    # the constructor param flips it on (mirrors --action-value-store).
+    off = StateGraphExplorer(_LS20_MOVES)
+    assert off._use_aevs is False and off._aevs is None
+    on = StateGraphExplorer(_LS20_MOVES, action_value_store=True)
+    assert on._use_aevs is True and on._aevs is not None
+
+
+def test_aevs_off_emits_identical_sequence_to_baseline() -> None:
+    # Passing action_value_store=False is byte-identical to not passing it:
+    # same seed + frame stream -> identical emitted actions (the OFF guarantee
+    # the movement path inherits from the click-class precedent).
+    frames = [
+        _features(_scene((2, 2), hud_val=1)),
+        _features(_scene((2, 3), hud_val=1)),
+        _features(_scene((3, 3), hud_val=1)),
+        _features(_scene((3, 2), hud_val=1)),
+        _features(_scene((2, 2), hud_val=2)),
+    ]
+
+    def emit(e: StateGraphExplorer) -> list[int]:
+        return [e.decide(f).action for f in frames]
+
+    explicit_off = StateGraphExplorer(_LS20_MOVES, seed=7, action_value_store=False)
+    omitted = StateGraphExplorer(_LS20_MOVES, seed=7)
+    assert emit(explicit_off) == emit(omitted)
+
+
+def test_aevs_accumulates_move_observation() -> None:
+    # Deferred-observe: the SECOND decide attributes the first action's effect
+    # to ("move", action_id) -- changed because the cursor moved (masked-state
+    # transition), magnitude = the observed cursor displacement.
+    e = StateGraphExplorer(_LS20_MOVES, seed=0, action_value_store=True)
+    d1 = e.decide(_features(_scene((2, 2), hud_val=1)))
+    e.decide(_features(_scene((2, 3), hud_val=1)))  # cursor moved -> changed
+    assert e._aevs is not None
+    stat = e._aevs.stat(("move", int(d1.action)))
+    assert stat is not None
+    assert stat.n == 1
+    assert stat.live_n == 1
+    assert e._aevs.effect_value(("move", int(d1.action))) > 0.0
+
+
+def test_aevs_reranks_untested_selection() -> None:
+    # A hand-fed high-effect action outranks unseen peers in _salience_order
+    # when AEVS is ON (effect_value * novelty_discount > unseen_bonus C0);
+    # OFF ranks by displacement salience (all unknown -> action-id order).
+    on = StateGraphExplorer(_LS20_MOVES, action_value_store=True)
+    assert on._aevs is not None
+    # Action 3: two live observations of magnitude 5 -> effect_value 5.0,
+    # novelty_discount 1/(1+2) -> score ~1.67 > unseen_bonus 1.0.
+    on._aevs.update(("move", 3), changed=True, cells_changed=5.0, tick=1)
+    on._aevs.update(("move", 3), changed=True, cells_changed=5.0, tick=2)
+    node = sg._Node(state_hash="h", first_seen_tick=1)
+    assert on._salience_order(node)[0] == 3
+
+    off = StateGraphExplorer(_LS20_MOVES)  # AEVS OFF -> displacement path
+    assert off._salience_order(node)[0] == _LS20_MOVES[0]
+
+
+def test_reset_episode_preserves_aevs_store() -> None:
+    # The store PERSISTS across the episode boundary (held in __init__, NOT
+    # reset in reset_episode) -- the cross-attempt life _graph/_effects have.
+    e = StateGraphExplorer(_LS20_MOVES, seed=0, action_value_store=True)
+    e.decide(_features(_scene((2, 2), hud_val=1)))
+    e.decide(_features(_scene((2, 3), hud_val=1)))
+    assert e._aevs is not None and len(e._aevs) == 1
+    e.reset_episode()
+    assert e._aevs is not None and len(e._aevs) == 1  # PRESERVED

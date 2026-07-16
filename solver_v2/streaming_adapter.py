@@ -1139,6 +1139,7 @@ class SolverV2StreamingAdapter:
                     new_sg = StateGraphExplorer(
                         move_actions_from(available_action_ids),
                         game_class=self._game_class,
+                        action_value_store=self._action_value_store,
                     )
                     self._state_graph_cache[sg_key] = new_sg
                     self._explorer = new_sg

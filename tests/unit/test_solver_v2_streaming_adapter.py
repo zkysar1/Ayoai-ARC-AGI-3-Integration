@@ -1233,3 +1233,22 @@ def test_state_graph_off_by_default_keeps_frontier_explorer() -> None:
     assert d.provenance["executor"] == "FrontierCoverageExplorer"
     assert not isinstance(adapter.explorer, StateGraphExplorer)
     assert len(adapter._state_graph_cache) == 0
+
+
+def test_action_value_store_threads_through_movement_explorer() -> None:
+    # g-315-379: the --action-value-store flag threads main.py -> adapter ->
+    # MOVEMENT explorer too (the click-class threading precedent, g-315-279).
+    # use_state_graph + action_value_store ON -> the routed StateGraphExplorer
+    # has its store instantiated; held on the episode-cached explorer, it is
+    # the cross-episode memory the g-315-303 trend proof measures.
+    seed = _ScriptedSeedProvider(_prior(OBJECTIVE_UNKNOWN))
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card",
+        arc_game_id="ls20-test",
+        seed_provider=seed,
+        use_state_graph=True,
+        action_value_store=True,
+    )
+    adapter.choose_action(_strategic())
+    assert isinstance(adapter.explorer, StateGraphExplorer)
+    assert adapter.explorer._aevs is not None

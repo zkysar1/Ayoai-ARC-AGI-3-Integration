@@ -603,6 +603,7 @@ class StateGraphExplorer:
         game_class: Optional[str] = None,
         *,
         seed: int = 0,
+        action_value_store: bool = False,
     ) -> None:
         self._moves: list[int] = move_actions_from(move_actions) or sorted(
             {int(a) for a in move_actions}
@@ -610,6 +611,20 @@ class StateGraphExplorer:
         self._game_class = game_class
         self._processor = FrameProcessor()
         self._graph: dict[str, _Node] = {}
+        # -- AEVS (g-315-379): the movement-class mirror of the click-class wiring
+        # at ClickStateGraphExplorer (g-315-279). OFF (default) = byte-identical:
+        # _aevs is None, so no update + no re-rank -- the existing displacement-
+        # salience path is untouched. Keys are ("move", action_id) per the
+        # primitive's own movement-class key shape. The store PERSISTS across the
+        # server's short episodes (held here, NOT reset in reset_episode -- the
+        # _graph/_effects/_blocked_edges cross-episode life), so accumulated
+        # action-effect experience biases the NEXT episode's sweep order -- the
+        # g-315-303 cross-episode mechanism. STEP-1 boundary: reward_delta stays 0
+        # (ARC cold-start), so ranking optimises COVERAGE EFFICIENCY.
+        self._use_aevs = bool(action_value_store)
+        self._aevs: Optional[ActionEffectValueStore] = (
+            ActionEffectValueStore() if self._use_aevs else None
+        )
         # Deterministic PRNG -- Algorithm 1's "pick uniformly at random" must be
         # replayable / offline-testable (design section 3.4).
         self._rng = random.Random(seed)
@@ -661,10 +676,12 @@ class StateGraphExplorer:
         fallback; an under-cap graph (the ls20 case: ~135 nodes/episode vs the
         50k cap) resumes graph-driven exploration from the accumulated frontier.
         Preserves (cross-episode): ``_graph``, the ``_obs``/``_effects``
-        displacement model, ``_blocked_edges`` walls, the cumulative
-        ``_curtail_log`` diagnostic, and the PRNG stream (continuing the
-        sequence keeps exploration diverse rather than replaying the same
-        random choices each episode).
+        displacement model, ``_blocked_edges`` walls, the ``_aevs``
+        action-effect value store (g-315-379 -- the accumulated cross-attempt
+        experience that biases the next episode's sweep, mirroring the
+        click-class contract), the cumulative ``_curtail_log`` diagnostic, and
+        the PRNG stream (continuing the sequence keeps exploration diverse
+        rather than replaying the same random choices each episode).
         """
         self._prev_hash = None
         self._prev_action = None
@@ -724,8 +741,26 @@ class StateGraphExplorer:
     def _salience_order(self, node: _Node) -> list[int]:
         """Untested actions first, ordered most-salient-first. Salience = known
         displacement magnitude; an UNTESTED-displacement action is maximally
-        salient (we have not learned its effect, so testing it is high-value)."""
+        salient (we have not learned its effect, so testing it is high-value).
+
+        AEVS re-rank (g-315-379, OFF by default): when the Action-Effect Value
+        Store is enabled it is the SOLE untested-action ranker -- the movement
+        mirror of the click-class live-control re-rank. explore_score =
+        effect_value * novelty_discount + unseen_bonus: prefer actions known to
+        DO something (liveness x displacement magnitude), de-weight over-fired
+        ones (anti-fixation), keep never-tried keys competitive (unseen_bonus)
+        so reach never shrinks -- the per-node untested() filter already
+        guarantees every action gets tried at each node; AEVS only re-ORDERS.
+        Deterministic (-score, action) sort mirrors the existing shape. OFF ->
+        falls through to the byte-identical displacement path below."""
         untested = node.untested(self._moves)
+
+        if self._aevs is not None:
+            av = self._aevs
+            return sorted(
+                untested,
+                key=lambda a: (-av.explore_score(("move", int(a))), a),
+            )
 
         def rank(action: int) -> float:
             eff = self._effects.get(action)
@@ -842,6 +877,30 @@ class StateGraphExplorer:
             if prev_node is not None:
                 prev_node.outgoing[self._prev_action] = cur_hash
                 prev_node.tested.add(self._prev_action)
+            # AEVS accumulation (g-315-379): record the previous action's effect
+            # into the cross-attempt value store -- the movement mirror of the
+            # click-class update (key = ("cell", x, y) there; ("move", action_id)
+            # here, the primitive's own movement-class key). changed = the masked
+            # state moved; magnitude = the observed cursor displacement -- the
+            # explorer's NATIVE effect-size signal (the same delta
+            # _learn_displacement just attributed), falling back to 1.0 for a
+            # state change with no readable cursor. reward_delta stays 0 (ARC
+            # cold-start; score is read separately in step 3), so the store
+            # optimises COVERAGE EFFICIENCY (the STEP-1 boundary). OFF (default)
+            # -> _aevs is None, no-op, byte-identical.
+            if self._aevs is not None:
+                if self._prev_cursor is not None and cursor is not None:
+                    _dr = cursor[0] - self._prev_cursor[0]
+                    _dc = cursor[1] - self._prev_cursor[1]
+                    mag = float((_dr**2 + _dc**2) ** 0.5)
+                else:
+                    mag = 1.0 if cur_hash != self._prev_hash else 0.0
+                self._aevs.update(
+                    ("move", int(self._prev_action)),
+                    changed=(cur_hash != self._prev_hash),
+                    cells_changed=mag,
+                    tick=self._tick,
+                )
 
         # 2. Register current node.
         node = self._graph.get(cur_hash)
