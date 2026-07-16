@@ -72,6 +72,26 @@ thresholds (PRIMARY / SECONDARY ≥1.2 / TERTIARY). The OFF arm is unchanged
 code; the ON arm = AEVS + the fix. Null/inverted again = honest CORRECTED
 finding on the destination-novelty hypothesis.
 
+## Addendum — run 3 (g-315-381 walk conditioning, registered 2026-07-16T21:5x BEFORE the re-run)
+
+Run 2 (results in `g315380_aevs_trend_run2_results.md`): SECONDARY inverted
+again (0.787); the fixed 129-tick ON episode signature persisted — the herding
+seam is the tested-action walk (`_route_to_frontier` first-found BFS retraces
+one deterministic route over the persistent graph). The g-315-381 fix adds
+walk diversification: the BFS scans the full shallowest level and, AEVS-gated,
+breaks equidistant-frontier ties toward the first-action least walked from the
+current node across episodes (`_walk_counts`, preserved across
+`reset_episode`). Run 3 repeats the EXACT protocol — same arms, game, episode/
+action budget, analyzer, thresholds (PRIMARY / SECONDARY ≥1.2 / TERTIARY). The
+OFF arm is unchanged code (byte-identical walk pinned by test); the ON arm =
+AEVS + destination-novelty (380) + walk-count tie-break (381). Additional
+registered observable: per-episode TICK VARIANCE in the ON arm — the fixed-
+length signature breaking (episode lengths varying like OFF's 129–144) is the
+direct fingerprint of the walk seam unfreezing, reported alongside the
+thresholds. Null/inverted again = honest CORRECTED finding on the walk-seam
+hypothesis (and the residual mechanism moves to the final unconditioned seam:
+the least-used-move fallback, or beyond the salience/walk layer entirely).
+
 ## Outcome-1 wording delta (declared up front)
 
 The goal's outcome 1 says AEVS "biases server-side BT generation"; the landed
