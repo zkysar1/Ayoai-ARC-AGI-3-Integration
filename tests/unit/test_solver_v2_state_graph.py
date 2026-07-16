@@ -507,3 +507,57 @@ def test_visited_cells_recorded_and_preserved_across_reset() -> None:
     assert (2, 3) in e._visited_cells
     e.reset_episode()
     assert (2, 3) in e._visited_cells  # PRESERVED (g-315-380)
+
+
+def _two_frontier_graph(explorer: StateGraphExplorer) -> None:
+    """Seed a start node S whose actions 1/2 are TESTED, each leading to a
+    frontier node (untested actions remain there) at the SAME depth 1. BFS pop
+    order enqueues via S.outgoing insertion order, so first-found = action 1's
+    frontier ("f1")."""
+    start = sg._Node(state_hash="S", first_seen_tick=1)
+    start.outgoing = {1: "f1", 2: "f2"}
+    start.tested = {1, 2, 3, 4}  # no untested at S -> _select_action would walk
+    f1 = sg._Node(state_hash="f1", first_seen_tick=2)
+    f2 = sg._Node(state_hash="f2", first_seen_tick=3)
+    explorer._graph = {"S": start, "f1": f1, "f2": f2}
+
+
+def test_walk_tiebreak_prefers_least_walked_first_action() -> None:
+    # THE branch-discriminating pin (g-315-381): two frontiers tie at depth 1;
+    # first-found order says action 1, but the cross-episode walk counts say
+    # action 1 has been walked from S five times and action 2 never. With the
+    # diversification branch the tie breaks to 2; without it (pre-381 code or
+    # branch deleted) first-found returns 1 — exactly the fixed-route
+    # stereotypy run-2 measured.
+    on = StateGraphExplorer(_LS20_MOVES, action_value_store=True)
+    assert on._aevs is not None
+    _two_frontier_graph(on)
+    on._walk_counts = {("S", 1): 5, ("S", 2): 0}
+    assert on._route_to_frontier("S") == 2
+
+
+def test_walk_tiebreak_off_path_first_found_unchanged() -> None:
+    # OFF arm: identical graph AND identical counts present -> the counts are
+    # ignored and the first-found first-action (1) returns, byte-identical to
+    # the pre-381 walk.
+    off = StateGraphExplorer(_LS20_MOVES, action_value_store=False)
+    assert off._aevs is None
+    _two_frontier_graph(off)
+    off._walk_counts = {("S", 1): 5, ("S", 2): 0}
+    assert off._route_to_frontier("S") == 1
+
+
+def test_walk_counts_recorded_and_preserved_across_reset() -> None:
+    # AEVS ON: every decided (node, action) increments the cross-episode walk
+    # memory; reset_episode PRESERVES it (resetting would re-freeze the route).
+    e = StateGraphExplorer(_LS20_MOVES, seed=0, action_value_store=True)
+    s1 = _scene((2, 2), hud_val=1)
+    s2 = _scene((2, 3), hud_val=1)
+    e.decide(_features(s2, history=[s1]))
+    assert len(e._walk_counts) == 1 and next(iter(e._walk_counts.values())) == 1
+    e.reset_episode()
+    assert len(e._walk_counts) == 1  # PRESERVED (g-315-381)
+    # OFF arm records nothing (byte-identical guarantee).
+    off = StateGraphExplorer(_LS20_MOVES, seed=0, action_value_store=False)
+    off.decide(_features(s2, history=[s1]))
+    assert off._walk_counts == {}

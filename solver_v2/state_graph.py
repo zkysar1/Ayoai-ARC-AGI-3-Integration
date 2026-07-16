@@ -638,6 +638,14 @@ class StateGraphExplorer:
         # occupied. Feeds the AEVS destination-novelty rank in _salience_order —
         # bounded by grid size (<= 64x64), preserved across reset_episode.
         self._visited_cells: set[tuple[int, int]] = set()
+        # Cross-episode (state_hash, action) decision counts (g-315-381): the
+        # tested-action WALK conditioning. g-315-380's run-2 proved conditioning
+        # only the untested-action queue is insufficient — _route_to_frontier's
+        # first-found BFS retraced the same route every episode (fixed 129-tick
+        # death path). These counts break equidistant-frontier ties toward the
+        # least-walked first-action FROM THIS NODE. AEVS-gated recording keeps
+        # OFF byte-identical; bounded by |graph| x |moves| (graph already capped).
+        self._walk_counts: dict[tuple[str, int], int] = {}
         # deferred-observe linkage
         self._prev_hash: Optional[str] = None
         self._prev_action: Optional[int] = None
@@ -685,9 +693,12 @@ class StateGraphExplorer:
         experience that biases the next episode's sweep, mirroring the
         click-class contract), the ``_visited_cells`` memory (g-315-380 --
         the destination-novelty rank's cross-episode frontier signal), the
-        cumulative ``_curtail_log`` diagnostic, and the PRNG stream
-        (continuing the sequence keeps exploration diverse rather than
-        replaying the same random choices each episode).
+        ``_walk_counts`` (node, action) decision memory (g-315-381 -- the
+        walk-seam diversification signal; resetting it would re-freeze every
+        episode onto the same frontier route), the cumulative ``_curtail_log``
+        diagnostic, and the PRNG stream (continuing the sequence keeps
+        exploration diverse rather than replaying the same random choices
+        each episode).
         """
         self._prev_hash = None
         self._prev_action = None
@@ -803,27 +814,59 @@ class StateGraphExplorer:
     def _route_to_frontier(self, start_hash: str) -> Optional[int]:
         """Return the first action of the shortest known-edge path from
         ``start_hash`` to any state with an untested action. Bounded by
-        ``_BFS_MAX_NODES`` (tiny-compute)."""
+        ``_BFS_MAX_NODES`` (tiny-compute).
+
+        Walk diversification (g-315-381; AEVS-gated, OFF byte-identical): when
+        multiple frontier states tie at the shallowest depth, first-found order
+        is deterministic (dict insertion), so with a persistent cross-episode
+        graph every episode retraces the SAME route — the residual stereotypy
+        run-2 measured after the g-315-380 untested-queue fix (fixed 129-tick
+        episodes while OFF varied). With AEVS on, the tie is broken toward the
+        candidate first-action LEAST walked from this node across episodes
+        (``_walk_counts``), state-conditioning the walk seam itself. OFF (or a
+        single candidate) returns the first-found first-action exactly as
+        before."""
         if start_hash not in self._graph:
             return None
         visited = {start_hash}
-        # queue of (node_hash, first_action_taken)
-        queue: deque[tuple[str, Optional[int]]] = deque([(start_hash, None)])
+        # queue of (node_hash, first_action_taken, depth)
+        queue: deque[tuple[str, Optional[int], int]] = deque([(start_hash, None, 0)])
         expanded = 0
+        candidates: list[int] = []  # distinct first-actions at the shallowest hit depth
+        hit_depth: Optional[int] = None
         while queue and expanded < _BFS_MAX_NODES:
-            node_hash, first_action = queue.popleft()
+            node_hash, first_action, depth = queue.popleft()
+            if hit_depth is not None and depth > hit_depth:
+                break  # level with hits fully scanned
             expanded += 1
             node = self._graph.get(node_hash)
             if node is None:
                 continue
             if node_hash != start_hash and node.untested(self._moves):
-                return first_action
+                # first_action is never None here (>=1 edge from start).
+                if first_action is not None and first_action not in candidates:
+                    candidates.append(first_action)
+                hit_depth = depth
+                continue  # keep scanning THIS depth for tied frontiers
             for action, succ in node.outgoing.items():
                 if succ == _UNTESTED or succ in visited:
                     continue
                 visited.add(succ)
-                queue.append((succ, first_action if first_action is not None else action))
-        return None
+                queue.append(
+                    (
+                        succ,
+                        first_action if first_action is not None else action,
+                        depth + 1,
+                    )
+                )
+        if not candidates:
+            return None
+        if self._aevs is not None and len(candidates) > 1:
+            return min(
+                candidates,
+                key=lambda a: (self._walk_counts.get((start_hash, a), 0), a),
+            )
+        return candidates[0]  # first-found (pop order) — the pre-381 behavior
 
     # -- shortest-path replay to a scored node (design section 2.5) ------------
     def _shortest_path_actions(self, target_hash: str) -> list[int]:
@@ -986,6 +1029,12 @@ class StateGraphExplorer:
 
         # 7. Advance bookkeeping.
         self._actions_used += 1
+        if self._aevs is not None:
+            # Cross-episode (node, action) walk memory (g-315-381) — feeds the
+            # _route_to_frontier equidistant-tie diversification. AEVS-gated so
+            # OFF stays byte-identical (no dict growth, no behavior delta).
+            key = (cur_hash, int(action))
+            self._walk_counts[key] = self._walk_counts.get(key, 0) + 1
         self._prev_hash = cur_hash
         self._prev_action = action
         self._prev_cursor = cursor
