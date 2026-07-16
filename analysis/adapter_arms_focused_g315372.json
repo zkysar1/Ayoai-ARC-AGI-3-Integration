@@ -1,48 +1,15 @@
 {
- "covts": {
-  "aggregate": 0.8962834095969031,
+ "covmix": {
+  "aggregate": 0.9569107072079726,
   "per_game": {
-   "r11l": {
-    "levels": 0,
-    "actions": 201,
-    "state": "NOT_FINISHED",
-    "wall_s": 1.2,
-    "executors": {
-     "DeterministicExecutor": 198,
-     "n/a": 3
-    },
-    "throttled": false
-   },
    "sp80": {
-    "levels": 0,
-    "actions": 201,
-    "state": "NOT_FINISHED",
-    "wall_s": 1.2,
-    "executors": {
-     "DeterministicExecutor": 195,
-     "n/a": 6
-    },
-    "throttled": false
-   },
-   "tn36": {
     "levels": 1,
     "actions": 201,
     "state": "NOT_FINISHED",
-    "wall_s": 1.1,
+    "wall_s": 1.6,
     "executors": {
-     "DeterministicExecutor": 199,
-     "n/a": 2
-    },
-    "throttled": false
-   },
-   "vc33": {
-    "levels": 1,
-    "actions": 201,
-    "state": "NOT_FINISHED",
-    "wall_s": 1.2,
-    "executors": {
-     "DeterministicExecutor": 198,
-     "n/a": 3
+     "FrontierCoverageExplorer": 193,
+     "n/a": 8
     },
     "throttled": false
    }
@@ -51,72 +18,24 @@
    "source_url": null,
    "tags": null,
    "opaque": null,
-   "card_id": "bc3c9eea-26c4-431e-8bed-e1d2f2e6796f",
+   "card_id": "523bbca5-83ab-4d1e-9ef6-527e8184d6f7",
    "api_key": null,
-   "score": 0.8962834095969031,
+   "score": 0.9569107072079726,
    "environments": [
-    {
-     "id": "r11l-495a7899",
-     "runs": [
-      {
-       "id": null,
-       "guid": "83728b52-fea9-4c10-ad77-5ee0ca7f0e10",
-       "score": 0.0,
-       "levels_completed": 0,
-       "actions": 201,
-       "resets": 3,
-       "state": "GAME_OVER",
-       "completed": false,
-       "level_scores": [
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0
-       ],
-       "level_actions": [
-        201,
-        0,
-        0,
-        0,
-        0,
-        0
-       ],
-       "level_baseline_actions": [
-        22,
-        33,
-        51,
-        26,
-        52,
-        49
-       ],
-       "number_of_levels": null,
-       "number_of_environments": null,
-       "message": null
-      }
-     ],
-     "score": 0.0,
-     "actions": 201,
-     "levels_completed": 0,
-     "completed": false,
-     "level_count": 6,
-     "resets": 3
-    },
     {
      "id": "sp80-589a99af",
      "runs": [
       {
        "id": null,
-       "guid": "3b20beeb-1474-4847-8c28-8afd6989dcfd",
-       "score": 0.0,
-       "levels_completed": 0,
+       "guid": "a1a90559-86e1-4cf9-8af4-565884e117aa",
+       "score": 0.9569107072079726,
+       "levels_completed": 1,
        "actions": 201,
-       "resets": 6,
+       "resets": 8,
        "state": "GAME_OVER",
        "completed": false,
        "level_scores": [
-        0.0,
+        20.095124851367423,
         0.0,
         0.0,
         0.0,
@@ -124,8 +43,8 @@
         0.0
        ],
        "level_actions": [
-        201,
-        0,
+        87,
+        114,
         0,
         0,
         0,
@@ -144,138 +63,20 @@
        "message": null
       }
      ],
-     "score": 0.0,
+     "score": 0.9569107072079726,
      "actions": 201,
-     "levels_completed": 0,
+     "levels_completed": 1,
      "completed": false,
      "level_count": 6,
-     "resets": 6
-    },
-    {
-     "id": "tn36-ef4dde99",
-     "runs": [
-      {
-       "id": null,
-       "guid": "f7ad781d-d4ef-4b5c-912c-892f696a2d77",
-       "score": 3.571428571428571,
-       "levels_completed": 1,
-       "actions": 201,
-       "resets": 2,
-       "state": "GAME_OVER",
-       "completed": false,
-       "level_scores": [
-        115.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0
-       ],
-       "level_actions": [
-        23,
-        178,
-        0,
-        0,
-        0,
-        0,
-        0
-       ],
-       "level_baseline_actions": [
-        32,
-        72,
-        26,
-        40,
-        30,
-        55,
-        62
-       ],
-       "number_of_levels": null,
-       "number_of_environments": null,
-       "message": null
-      }
-     ],
-     "score": 3.571428571428571,
-     "actions": 201,
-     "levels_completed": 1,
-     "completed": false,
-     "level_count": 7,
-     "resets": 2
-    },
-    {
-     "id": "vc33-5430563c",
-     "runs": [
-      {
-       "id": null,
-       "guid": "d827d91d-561b-4bd1-a0b5-adffa4512ef9",
-       "score": 0.01370506695904143,
-       "levels_completed": 1,
-       "actions": 201,
-       "resets": 3,
-       "state": "GAME_OVER",
-       "completed": false,
-       "level_scores": [
-        0.38374187485316,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0
-       ],
-       "level_actions": [
-        113,
-        88,
-        0,
-        0,
-        0,
-        0,
-        0
-       ],
-       "level_baseline_actions": [
-        7,
-        18,
-        44,
-        61,
-        131,
-        34,
-        152
-       ],
-       "number_of_levels": null,
-       "number_of_environments": null,
-       "message": null
-      }
-     ],
-     "score": 0.01370506695904143,
-     "actions": 201,
-     "levels_completed": 1,
-     "completed": false,
-     "level_count": 7,
-     "resets": 3
+     "resets": 8
     }
    ],
    "tags_scores": [
     {
-     "id": "click",
-     "guid": null,
-     "score": 1.4984901542188722,
-     "levels_completed": 2,
-     "actions": 603,
-     "resets": null,
-     "state": null,
-     "completed": null,
-     "level_scores": null,
-     "level_actions": null,
-     "level_baseline_actions": null,
-     "number_of_levels": 20,
-     "number_of_environments": 3,
-     "message": null
-    },
-    {
      "id": "keyboard_click",
      "guid": null,
-     "score": 0.0,
-     "levels_completed": 0,
+     "score": 0.9569107072079726,
+     "levels_completed": 1,
      "actions": 201,
      "resets": null,
      "state": null,
@@ -290,33 +91,10 @@
    ],
    "competition_mode": null,
    "total_environments_completed": 0,
-   "total_environments": 4,
-   "total_levels_completed": 2,
-   "total_levels": 26,
-   "total_actions": 804
+   "total_environments": 1,
+   "total_levels_completed": 1,
+   "total_levels": 6,
+   "total_actions": 201
   }
- },
- "_g315372_negative_result": {
-  "what_was_tested": [
-   "Lever 1 (r11l divergence): refine executor._pick_target_cell to detected/ever-targets-only, dropping the non-terrain fallback pool that was hypothesized to starve r11l's golden sweep",
-   "Lever 2 (sp80 divergence): flag-gated click_focus - on untrusted mixed-action games concentrate ACTION6 to 3-of-4 ticks (round-robin dilutes clicks to ~33/200)"
-  ],
-  "refined_covts_per_game": {
-   "r11l": 0.0,
-   "sp80": 0.0,
-   "tn36": 2.821869488536155,
-   "vc33": 0.0,
-   "subset_aggregate": 0.7054673721340388
-  },
-  "covfocus_per_game": "identical to refined covts (subset_aggregate 0.7054673721340388) - click_focus verified ENGAGED on sp80 (probe: 45/60 ticks ACTION6 with 3-of-4 rotation) yet banked 0 levels",
-  "committed_covts_per_game": {
-   "r11l": 0.0,
-   "sp80": 0.0,
-   "tn36": 3.571428571428571,
-   "vc33": 0.01370506695904143,
-   "subset_aggregate": 0.8962834095969031
-  },
-  "conclusion": "Both levers reverted (solver_v2 back to 3a31e73 bytes). Lever 1 recovered nothing on r11l and REGRESSED tn36 3.571->2.822 and vc33 0.014->0.0 - the non-terrain fallback pool is load-bearing on the two covts wins. Lever 2 engaged correctly but click concentration alone does not win sp80 (port's 4.762 there rests on more than click share).",
-  "provenance": "refined-arm per-game scores transcribed from run logs 2026-07-16 04:39-04:43; this file was then overwritten by the committed-baseline confirmation run (the harness reuses one filename per subset run - keep that hazard in mind)"
  }
 }

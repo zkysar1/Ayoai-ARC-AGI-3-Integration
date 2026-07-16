@@ -142,6 +142,7 @@ class SolverV2StreamingAdapter:
         coverage_seeds: bool = False,
         fcx_cache: bool = False,
         target_sweep: bool = False,
+        mixed_movement: bool = False,
     ) -> None:
         # streaming_url / api_key / session / http_timeout_s / retry_sleep
         # are accepted-and-ignored -- the adapter does no network I/O. Kept in
@@ -183,6 +184,20 @@ class SolverV2StreamingAdapter:
         # seed_provider is never overridden (tests/BitNet own their provider).
         self._coverage_seeds: bool = bool(coverage_seeds) or (
             os.environ.get("SOLVER_V2_COVERAGE_SEEDS", "").strip().lower()
+            in ("1", "true", "yes", "on")
+        )
+        # g-315-374 mixed-movement routing (DEFAULT OFF -> byte-identical). ON
+        # (kwarg OR env SOLVER_V2_MIXED_MOVEMENT): an UNTRUSTED episode exposing
+        # BOTH move-actions AND ACTION6 routes to the FrontierCoverageExplorer
+        # (movement subset via move_actions_from) instead of the
+        # DeterministicExecutor blind round-robin — mirroring the kit port's
+        # classification (movement-if-move-actions-present; its sp80 4.762 win
+        # used ZERO clicks: ACTION1-4 x45 + ACTION5 x16, level 1 banked tick 35
+        # by a movement run ending in ACTION5 — port_sp80_trace_g315374.json).
+        # Trusted mixed episodes keep the steering route (branch above);
+        # pure-click episodes (no move-actions) keep the executor sweep.
+        self._mixed_movement: bool = bool(mixed_movement) or (
+            os.environ.get("SOLVER_V2_MIXED_MOVEMENT", "").strip().lower()
             in ("1", "true", "yes", "on")
         )
         self._seed_provider: SeedProvider = (
@@ -988,7 +1003,14 @@ class SolverV2StreamingAdapter:
                         self._start_toggle_probe(None)
         elif (
             prior is not None
-            and _ACTION6_ID not in available_action_ids
+            and (
+                _ACTION6_ID not in available_action_ids
+                # g-315-374: mixed_movement widens this route to UNTRUSTED
+                # episodes that expose ACTION6 ALONGSIDE move-actions (sp80
+                # class) — move_actions_from below already excludes ACTION6,
+                # so the explorer runs the port-mirroring movement subset.
+                or self._mixed_movement
+            )
             and move_actions_from(available_action_ids)
         ):
             # g-315-213: an UNTRUSTED (or non-steering) seed on a MOVEMENT-class

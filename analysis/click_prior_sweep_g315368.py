@@ -228,6 +228,14 @@ ARMS: dict[str, dict[str, bool]] = {
         "target_sweep": True,
     },
     "ts": {"target_sweep": True},
+    # g-315-374: covts + mixed-movement routing (untrusted move+ACTION6 games
+    # -> FrontierCoverageExplorer movement subset, mirroring the port's
+    # classification; its sp80 win used ZERO clicks - port_sp80_trace_g315374).
+    "covmix": {
+        "coverage_seeds": True,
+        "target_sweep": True,
+        "mixed_movement": True,
+    },
     # g-315-372 NEGATIVE RESULT (both levers reverted, arms removed):
     #   - "covfocus" (click_focus: 3-of-4 ACTION6 concentration on untrusted
     #     mixed-action games) engaged correctly on sp80 (45/60 clicks probed)
