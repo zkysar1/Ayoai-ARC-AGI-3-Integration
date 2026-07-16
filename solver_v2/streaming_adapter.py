@@ -145,6 +145,7 @@ class SolverV2StreamingAdapter:
         mixed_movement: bool = False,
         interact_ride_guard: bool = False,
         sweep_escape_after: Optional[int] = None,
+        ema_churn: bool = False,
     ) -> None:
         # streaming_url / api_key / session / http_timeout_s / retry_sleep
         # are accepted-and-ignored -- the adapter does no network I/O. Kept in
@@ -215,6 +216,25 @@ class SolverV2StreamingAdapter:
             os.environ.get("SOLVER_V2_INTERACT_RIDE_GUARD", "").strip().lower()
             in ("1", "true", "yes", "on")
         )
+        # g-315-378 port-parity EMA churn (DEFAULT OFF -> byte-identical). ON
+        # (kwarg OR env SOLVER_V2_EMA_CHURN): features.churns is replaced with a
+        # per-cell EMA (alpha 0.30, session-persistent, seeded on first frame or
+        # dimension change) — the kit port's churn signal — instead of the
+        # short-window ratio over DEFAULT_HISTORY_DEPTH=8 frames. WHY (r11l pool
+        # diff, analysis/{port,adapter}_r11l_pool_trace_g315378): the identical
+        # detect_cursor_and_targets logic emits targets on 3/198 port ticks vs
+        # 68/198 adapter ticks (up to 46 cells) — the short-window ratio lets
+        # click-mutated cells clear CURSOR_CHURN_FLOOR, fabricating a "cursor"
+        # + noisy targets on click-only games. The port's brief PRECISE
+        # detections seed _ever_target with just the puzzle cluster, and
+        # ex-target-first concentration banks r11l at click 11; our diluted
+        # ever_target set clicks the win cell only at 86 (state already wrong).
+        self._ema_churn_enabled: bool = bool(ema_churn) or (
+            os.environ.get("SOLVER_V2_EMA_CHURN", "").strip().lower()
+            in ("1", "true", "yes", "on")
+        )
+        self._ema_churn: Optional[list[float]] = None
+        self._ema_prev_vals: Optional[list[int]] = None
         self._seed_provider: SeedProvider = (
             seed_provider
             if seed_provider is not None
@@ -673,6 +693,26 @@ class SolverV2StreamingAdapter:
                 history=list(self._frame_history),
                 score=frame.score,
             )
+            # g-315-378 (flag-gated, see __init__): splice the port-parity
+            # per-cell EMA churn over the extract() output. In-place list
+            # splice — FrameFeatures is frozen but churns is a plain list;
+            # every downstream consumer (detect_cursor_and_targets, FCX
+            # deferred-observe, steering) sees the EMA signal uniformly.
+            if self._ema_churn_enabled:
+                vals = features.values
+                if (
+                    self._ema_churn is None
+                    or self._ema_prev_vals is None
+                    or len(vals) != len(self._ema_prev_vals)
+                ):
+                    self._ema_churn = [0.0] * len(vals)
+                else:
+                    ch = self._ema_churn
+                    pv = self._ema_prev_vals
+                    for i, v in enumerate(vals):
+                        ch[i] = 0.7 * ch[i] + (0.3 if v != pv[i] else 0.0)
+                self._ema_prev_vals = list(vals)
+                features.churns[:] = self._ema_churn
         except Exception as e:
             raise AyoaiStreamingError(
                 f"solver-v2 perception.extract failed (tick {self._tick}): {e}"

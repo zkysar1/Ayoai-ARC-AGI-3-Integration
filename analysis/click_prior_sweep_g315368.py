@@ -258,6 +258,30 @@ ARMS: dict[str, dict[str, bool]] = {
         "mixed_movement": True,
         "sweep_escape_after": 120,
     },
+    # g-315-378: covmix + port-parity EMA churn. The r11l pool diff showed the
+    # identical detector emits targets on 3/198 port ticks vs 68/198 adapter
+    # ticks — the short-window churn ratio fabricates cursors/targets on
+    # click-only games; the port's session-EMA (alpha 0.30) keeps detection
+    # precise, seeding ever_target with just the puzzle cluster (port banks
+    # r11l at click 11 via ex-target concentration; we click the win cell at
+    # 86 with the board state already wrong).
+    "covmixema": {
+        "coverage_seeds": True,
+        "target_sweep": True,
+        "mixed_movement": True,
+        "ema_churn": True,
+    },
+    # g-315-378: EMA + escape composed. EMA-precise detection banks r11l L1 at
+    # 97 target clicks (< the 120 escape threshold), so the hatch stays dormant
+    # on the recovered path and remains a pure safety net for levels where the
+    # pool is still wrong after 120 fruitless clicks (e.g. r11l L2, tn36 L2).
+    "covmixescema": {
+        "coverage_seeds": True,
+        "target_sweep": True,
+        "mixed_movement": True,
+        "sweep_escape_after": 120,
+        "ema_churn": True,
+    },
     # g-315-377: covmix + interact-ride guard. sp80's ACTION5 (interact/bank)
     # entered _effects at tick 5 from ONE spurious moving sample and was
     # commit-ridden 4-8 consecutive ticks; ride ticks were 6 of 8 GAME_OVERs
