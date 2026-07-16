@@ -138,6 +138,7 @@ class SolverV2StreamingAdapter:
         salience_priority: bool = False,
         effect_salience_priority: bool = False,
         action_value_store: bool = False,
+        novel_tie_conditioning: bool = False,
         click_prior: bool = False,
         coverage_seeds: bool = False,
         fcx_cache: bool = False,
@@ -177,6 +178,12 @@ class SolverV2StreamingAdapter:
         # byte-identical pre-g-315-279). ON ranks live-control selection by the
         # learned cross-attempt explore_score (g-315-276 design / g-315-277 build).
         self._action_value_store: bool = action_value_store
+        # g-315-384: novel-node tie conditioning for the movement-class
+        # StateGraphExplorer (default False = byte-identical run-3 behavior).
+        # ON binds the all-novel destination-novelty tie at NOVEL nodes to a
+        # per-(node, action) hash rotation instead of the global explore_score
+        # prior — the ~98% seam the g-315-382 forensics quantified.
+        self._novel_tie_conditioning: bool = novel_tie_conditioning
         # g-315-370 coverage-seeds toggle (DEFAULT OFF -> byte-identical). ON
         # (constructor kwarg OR env SOLVER_V2_COVERAGE_SEEDS): the DEFAULT oracle
         # provider emits UNTRUSTED priors so per-episode routing selects the
@@ -1140,6 +1147,7 @@ class SolverV2StreamingAdapter:
                         move_actions_from(available_action_ids),
                         game_class=self._game_class,
                         action_value_store=self._action_value_store,
+                        novel_tie_conditioning=self._novel_tie_conditioning,
                     )
                     self._state_graph_cache[sg_key] = new_sg
                     self._explorer = new_sg

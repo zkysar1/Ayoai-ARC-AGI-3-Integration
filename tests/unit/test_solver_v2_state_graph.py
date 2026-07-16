@@ -13,6 +13,7 @@ determinism).
 from __future__ import annotations
 
 import json
+import zlib
 from pathlib import Path
 from typing import Optional
 
@@ -561,3 +562,81 @@ def test_walk_counts_recorded_and_preserved_across_reset() -> None:
     off = StateGraphExplorer(_LS20_MOVES, seed=0, action_value_store=False)
     off.decide(_features(s2, history=[s1]))
     assert off._walk_counts == {}
+
+
+# ---------------------------------------------------------------------------
+# g-315-384 — novel-node tie conditioning (the ~98% seam degeneracy fix)
+# ---------------------------------------------------------------------------
+def test_novel_tie_flag_defaults_off_and_threads() -> None:
+    off = StateGraphExplorer(_LS20_MOVES, action_value_store=True)
+    assert off._novel_tie is False
+    on = StateGraphExplorer(
+        _LS20_MOVES, action_value_store=True, novel_tie_conditioning=True
+    )
+    assert on._novel_tie is True
+
+
+def test_novel_tie_off_degenerate_order_is_run3_global_prior() -> None:
+    # OFF (the run-3 ON-arm behavior, byte-identical pin): all-novel tie falls
+    # through to the global explore_score prior — the hand-fed high-effect
+    # action ranks first, exactly as test_aevs_novelty_neutral_falls_back_...
+    off = StateGraphExplorer(_LS20_MOVES, action_value_store=True)
+    assert off._aevs is not None
+    off._aevs.update(("move", 3), changed=True, cells_changed=5.0, tick=1)
+    off._aevs.update(("move", 3), changed=True, cells_changed=5.0, tick=2)
+    off._effects = {1: (0.0, 1.0), 3: (1.0, 0.0)}
+    node = sg._Node(state_hash="alpha", first_seen_tick=1)
+    assert off._salience_order(node, (2, 2))[0] == 3
+
+
+def test_novel_tie_on_degenerate_uses_node_local_rotation() -> None:
+    # THE branch-discriminating pin: identical local conditions at two
+    # DIFFERENT nodes produce DIFFERENT orderings (node-LOCAL variation) from
+    # the registered per-(node, action) CRC key — the global-prior winner
+    # (action 3) no longer decides. Deterministic per node (replayable).
+    on = StateGraphExplorer(
+        _LS20_MOVES, action_value_store=True, novel_tie_conditioning=True
+    )
+    assert on._aevs is not None
+    on._aevs.update(("move", 3), changed=True, cells_changed=5.0, tick=1)
+    on._effects = {1: (0.0, 1.0), 3: (1.0, 0.0)}
+    node_a = sg._Node(state_hash="alpha", first_seen_tick=1)
+    node_b = sg._Node(state_hash="beta", first_seen_tick=1)
+    order_a = on._salience_order(node_a, (2, 2))
+    order_b = on._salience_order(node_b, (2, 2))
+    expected = lambda h: sorted(  # noqa: E731 — pins the exact registered key
+        _LS20_MOVES, key=lambda a: (zlib.crc32(f"{h}:{a}".encode()), a)
+    )
+    assert order_a == expected("alpha") == [3, 2, 4, 1]
+    assert order_b == expected("beta") == [4, 1, 3, 2]
+    assert order_a != order_b  # node-local: sweep direction varies spatially
+    assert order_a == on._salience_order(node_a, (2, 2))  # deterministic
+
+
+def test_novel_tie_on_non_degenerate_keeps_run3_key() -> None:
+    # ANY known-visited destination -> NOT degenerate -> the run-3 key applies
+    # untouched: novel destination outranks, visited global-winner sinks last
+    # (the g-315-380 pin, unchanged by the flag).
+    on = StateGraphExplorer(
+        _LS20_MOVES, action_value_store=True, novel_tie_conditioning=True
+    )
+    assert on._aevs is not None
+    on._aevs.update(("move", 3), changed=True, cells_changed=5.0, tick=1)
+    on._aevs.update(("move", 3), changed=True, cells_changed=5.0, tick=2)
+    on._effects = {1: (0.0, 1.0), 3: (1.0, 0.0)}
+    on._visited_cells = {(3, 2)}
+    node = sg._Node(state_hash="alpha", first_seen_tick=1)
+    order = on._salience_order(node, (2, 2))
+    assert order[0] == 1 and order[-1] == 3
+
+
+def test_novel_tie_vanilla_arm_ignores_flag() -> None:
+    # action_value_store=False: the AEVS branch never runs, so the flag is
+    # inert — displacement-magnitude path byte-identical (unknown-effect
+    # actions 2/4 first, then 1/3 by magnitude-tie action id).
+    off = StateGraphExplorer(
+        _LS20_MOVES, action_value_store=False, novel_tie_conditioning=True
+    )
+    off._effects = {1: (0.0, 1.0), 3: (1.0, 0.0)}
+    node = sg._Node(state_hash="alpha", first_seen_tick=1)
+    assert off._salience_order(node, (2, 2)) == [2, 4, 1, 3]

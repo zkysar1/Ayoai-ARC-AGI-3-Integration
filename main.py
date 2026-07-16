@@ -565,6 +565,21 @@ def main() -> None:
             "LIVE efficiency measured by g-315-280."
         ),
     )
+    parser.add_argument(
+        "--novel-tie-conditioning",
+        action="store_true",
+        help=(
+            "g-315-384: condition the movement-class StateGraphExplorer salience "
+            "seam at its degenerate case. When destination-novelty (g-315-380) "
+            "ties ALL-NOVEL at a novel node, break the tie with a deterministic "
+            "per-(node, action) hash rotation (node-LOCAL variation, zero memory) "
+            "instead of the global (move, action) explore_score prior -- the "
+            "~98%-of-ticks seam the g-315-382 forensics identified as the frozen-"
+            "sweep mechanism. Effective only with --action-value-store (it "
+            "conditions the AEVS ranking branch). OFF (default) = byte-identical "
+            "run-3 ordering. Env-agnostic, tiny-compute, replayable."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -831,6 +846,7 @@ def main() -> None:
             salience_priority=args.click_salience_priority,
             effect_salience_priority=args.click_effect_salience_priority,
             action_value_store=args.action_value_store,
+            novel_tie_conditioning=args.novel_tie_conditioning,
         )
     else:
         # streaming_url is resolved by this point (live: ayoai_session.streaming_url;
@@ -1015,6 +1031,7 @@ def main() -> None:
                 "tag": "arc-metrics",
                 "game": args.game,
                 "aevs": bool(getattr(args, "action_value_store", False)),
+                "novel_tie": bool(getattr(args, "novel_tie_conditioning", False)),
                 "episodes": _episodes,
                 "ticks": action_counter,
                 "elapsed_s": round(elapsed, 2),

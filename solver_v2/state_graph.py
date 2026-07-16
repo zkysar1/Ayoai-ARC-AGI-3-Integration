@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+import zlib
 from collections import Counter, deque
 from dataclasses import dataclass, field
 from typing import Callable, Optional
@@ -604,6 +605,7 @@ class StateGraphExplorer:
         *,
         seed: int = 0,
         action_value_store: bool = False,
+        novel_tie_conditioning: bool = False,
     ) -> None:
         self._moves: list[int] = move_actions_from(move_actions) or sorted(
             {int(a) for a in move_actions}
@@ -625,6 +627,16 @@ class StateGraphExplorer:
         self._aevs: Optional[ActionEffectValueStore] = (
             ActionEffectValueStore() if self._use_aevs else None
         )
+        # -- Novel-node tie conditioning (g-315-384): binds the ~98% salience
+        # seam at its DEGENERATE case. g-315-382 forensics: at a NOVEL node
+        # every predicted destination is unvisited, the destination-novelty
+        # primary key ties all-0, ordering falls to the GLOBAL (move, action)
+        # explore_score prior -- the same ordering at every node = the frozen
+        # 129-tick sweep. When ON and the tie is total, the fallback is a
+        # deterministic per-(node, action) hash rotation (node-LOCAL variation,
+        # zero memory, replayable) instead of the global prior. Only consulted
+        # inside the AEVS branch; OFF (default) = byte-identical run-3 ordering.
+        self._novel_tie = bool(novel_tie_conditioning)
         # Deterministic PRNG -- Algorithm 1's "pick uniformly at random" must be
         # replayable / offline-testable (design section 3.4).
         self._rng = random.Random(seed)
@@ -792,6 +804,30 @@ class StateGraphExplorer:
                     int(round(cell[1] + eff[1])),
                 )
                 return 1 if dest in self._visited_cells else 0
+
+            # Novel-node degeneracy fallback (g-315-384; gated, OFF = run-3
+            # ordering byte-identical). When EVERY untested action's predicted
+            # destination is novel-or-unknown the primary key carries no signal
+            # and the global explore_score prior would impose the SAME ordering
+            # at every node -- the frozen-sweep mechanism the g-315-382 replay
+            # quantified at ~98% of decide ticks. Bind the tie to the NODE
+            # instead: a deterministic per-(node, action) CRC rotation (zero
+            # memory, cross-process replayable -- NOT Python's salted hash())
+            # varies sweep direction spatially. A node with ANY known-visited
+            # destination is NOT degenerate -- destination novelty is doing its
+            # job there, so the run-3 key applies untouched.
+            if (
+                self._novel_tie
+                and untested
+                and all(_dest_revisit(a) == 0 for a in untested)
+            ):
+                return sorted(
+                    untested,
+                    key=lambda a: (
+                        zlib.crc32(f"{node.state_hash}:{int(a)}".encode()),
+                        a,
+                    ),
+                )
 
             return sorted(
                 untested,

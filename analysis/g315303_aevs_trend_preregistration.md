@@ -92,6 +92,62 @@ thresholds. Null/inverted again = honest CORRECTED finding on the walk-seam
 hypothesis (and the residual mechanism moves to the final unconditioned seam:
 the least-used-move fallback, or beyond the salience/walk layer entirely).
 
+## Addendum — run 4 (g-315-384 novel-tie conditioning, registered 2026-07-16T23:2x BEFORE the re-run)
+
+Run 3 (results in `g315381_aevs_trend_run3_results.md`): SECONDARY inverted a
+third time (0.779); ON tick stdev 0.0 (all 12 episodes exactly 129). The
+g-315-382 forensics then QUANTIFIED the seams from the run-3 recordings
+(results in `g315382_tick129_forensics_results.md`): the g-315-381 walk
+tie-break DOES fire (ties present 31/32 walk firings) but the walk decides
+only ~2% of ticks (episode start + the two flash events); ~98% of decisions
+are `_salience_order` at NOVEL nodes, where the destination-novelty primary
+key ties ALL-NOVEL and ordering falls to the GLOBAL (move, action)
+explore_score prior — the same ordering at every node = the frozen sweep. The
+129-tick invariant itself is the ls20 countdown clock (82-cell value-11 bar;
+ticks − pauses = 128 in all 24 episodes; ON's herded sweep contains zero
+in-play budget-free ticks).
+
+The g-315-384 fix conditions the dominant seam AT ITS DEGENERATE CASE: when
+every untested action's predicted destination is novel-or-unknown (the
+all-novel tie), the ordering falls back to a deterministic per-(node, action)
+CRC32 rotation (node-LOCAL variation, zero memory, replayable) instead of the
+global prior. A node with any known-visited destination keeps the run-3 key
+untouched. Flag: `--novel-tie-conditioning` (OFF default, byte-identical —
+pinned by test_novel_tie_off_degenerate_order_is_run3_global_prior).
+
+Run 4 repeats the EXACT protocol — same arms, game, episode/action budget,
+analyzer, thresholds (PRIMARY / SECONDARY ≥1.2 / TERTIARY). OFF arm unchanged
+code; ON arm = AEVS + destination-novelty (380) + walk tie-break (381) +
+novel-tie conditioning (384):
+
+```
+ON : main.py --game ls20-9607627b --use-solver-v2 --state-graph --action-value-store \
+       --novel-tie-conditioning --episodes 12 --max-actions 200 --record --tags "g-315-384,aevs-trend,on"
+OFF: main.py --game ls20-9607627b --use-solver-v2 --state-graph \
+       --episodes 12 --max-actions 200 --record --tags "g-315-384,aevs-trend,off"
+```
+
+The run-3 registered tick-variance observable now has a VERIFIED mechanism
+reading (g-315-382: episode length = 128 draining transitions + N in-play
+pause ticks): ON episode-length variation — any ON episode ≠ 129 ticks, or ON
+tick stdev > 0 — means the conditioned sweep reached at least one in-play
+budget-free action-context, the direct fingerprint of route variation. This
+observable is necessary-but-not-sufficient for SECONDARY (a varied route may
+still not convert to new-state coverage); it is reported alongside the
+thresholds, and the verdict branches remain zero-discretion:
+- PRIMARY pass + SECONDARY pass → the novel-tie seam was the binding
+  constraint; encode CONFIRMED.
+- PRIMARY pass + SECONDARY fail + tick-variance moved (stdev > 0) → the sweep
+  unfroze but did not convert to coverage; honest CORRECTED naming the
+  conversion gap (route variation ≠ frontier progress).
+- PRIMARY pass + SECONDARY fail + tick-variance unmoved (stdev = 0) → the
+  degenerate-case fallback did not change the live trajectory (ordering
+  changed but the sweep re-converged, or the branch rarely fired live);
+  honest CORRECTED naming the next mechanism (instrument fire-counts per
+  rb-3759 BEFORE any further fix).
+- PRIMARY fail → exogenous variation / attribution downgrade per the
+  original guard.
+
 ## Outcome-1 wording delta (declared up front)
 
 The goal's outcome 1 says AEVS "biases server-side BT generation"; the landed
