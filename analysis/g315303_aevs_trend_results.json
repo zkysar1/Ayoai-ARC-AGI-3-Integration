@@ -1,0 +1,253 @@
+{
+ "episodes": {
+  "on": 12,
+  "off": 12
+ },
+ "per_episode": {
+  "on": [
+   {
+    "seq_hash": "5b3eb771c4dd",
+    "ticks": 129,
+    "new_states": 130,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "818024229f45",
+    "ticks": 130,
+    "new_states": 118,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "a861903a586a",
+    "ticks": 129,
+    "new_states": 98,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "59fb3d162a96",
+    "ticks": 129,
+    "new_states": 110,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "f1db5dae3c0c",
+    "ticks": 129,
+    "new_states": 89,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "7e6c2fb696a0",
+    "ticks": 129,
+    "new_states": 76,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "8dfd2de550ee",
+    "ticks": 129,
+    "new_states": 80,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "5e1d49cf4bb1",
+    "ticks": 129,
+    "new_states": 67,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "08f6ea64fba8",
+    "ticks": 129,
+    "new_states": 92,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "389ddd895f3d",
+    "ticks": 129,
+    "new_states": 85,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "57bdc1741332",
+    "ticks": 129,
+    "new_states": 87,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "82be339481e1",
+    "ticks": 129,
+    "new_states": 62,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   }
+  ],
+  "off": [
+   {
+    "seq_hash": "098d932b2a02",
+    "ticks": 134,
+    "new_states": 135,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "10a07a432d89",
+    "ticks": 134,
+    "new_states": 129,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "b0db1792c1b2",
+    "ticks": 131,
+    "new_states": 89,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "3506cc164486",
+    "ticks": 136,
+    "new_states": 113,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "55f381b411b9",
+    "ticks": 134,
+    "new_states": 129,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "b0b3b12253a7",
+    "ticks": 129,
+    "new_states": 84,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "8a091fc70b9f",
+    "ticks": 134,
+    "new_states": 87,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "5c0a3ace5297",
+    "ticks": 140,
+    "new_states": 132,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "724e80a632e2",
+    "ticks": 144,
+    "new_states": 131,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "250eb8c16072",
+    "ticks": 129,
+    "new_states": 83,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "0d3d2f9e4f00",
+    "ticks": 135,
+    "new_states": 103,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   },
+   {
+    "seq_hash": "e9f5d1e3cea4",
+    "ticks": 134,
+    "new_states": 121,
+    "score_max": 0,
+    "end_state": "GAME_OVER"
+   }
+  ]
+ },
+ "primary": {
+  "divergent_episodes": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10,
+   11,
+   12
+  ],
+  "pass": true,
+  "attribution_guard_identical_ep1_prefix": false,
+  "ep1_prefix_on": [
+   "ACTION1",
+   "ACTION2",
+   "ACTION2"
+  ],
+  "ep1_prefix_off": [
+   "ACTION1",
+   "ACTION1",
+   "ACTION2"
+  ]
+ },
+ "secondary": {
+  "on_second_half_new_states": 473,
+  "off_second_half_new_states": 657,
+  "ratio": 0.72,
+  "pass_a_frontier_alive": true,
+  "pass_b_ratio_1_2": false,
+  "pass": false
+ },
+ "tertiary": {
+  "on_scores": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "off_scores": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "any_score_positive": false
+ },
+ "totals": {
+  "on_ticks": 1549,
+  "off_ticks": 1614,
+  "on_total_new_states": 1094,
+  "off_total_new_states": 1336
+ }
+}
