@@ -1,0 +1,940 @@
+{
+ "off": {
+  "aggregate": 0.0,
+  "per_game": {
+   "ar25": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "CalibrationProbe": 12,
+     "HandBuiltPolicy": 187,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "bp35": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.3,
+    "executors": {
+     "CalibrationProbe": 6,
+     "DeterministicExecutor": 192,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "cd82": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.2,
+    "executors": {
+     "CalibrationProbe": 10,
+     "DeterministicExecutor": 190,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "cn04": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "CalibrationProbe": 10,
+     "DeterministicExecutor": 189,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "dc22": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "ft09": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.5,
+    "executors": {
+     "HandBuiltPolicy": 201
+    },
+    "throttled": false
+   },
+   "g50t": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "CalibrationProbe": 10,
+     "DeterministicExecutor": 190,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "ka59": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.0,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "lf52": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "CalibrationProbe": 10,
+     "DeterministicExecutor": 189,
+     "n/a": 2
+    },
+    "throttled": false
+   },
+   "lp85": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "HandBuiltPolicy": 201
+    },
+    "throttled": false
+   },
+   "ls20": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.6,
+    "executors": {
+     "CalibrationProbe": 8,
+     "HandBuiltPolicy": 193
+    },
+    "throttled": false
+   },
+   "m0r0": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "CalibrationProbe": 10,
+     "DeterministicExecutor": 190,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "r11l": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "HandBuiltPolicy": 61,
+     "n/a": 3,
+     "DeterministicExecutor": 137
+    },
+    "throttled": false
+   },
+   "re86": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.1,
+    "executors": {
+     "CalibrationProbe": 10,
+     "HandBuiltPolicy": 190,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "s5i5": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "HandBuiltPolicy": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "sb26": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.2,
+    "executors": {
+     "CalibrationProbe": 4,
+     "DeterministicExecutor": 196,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "sc25": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.4,
+    "executors": {
+     "CalibrationProbe": 8,
+     "DeterministicExecutor": 190,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "sk48": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "CalibrationProbe": 10,
+     "DeterministicExecutor": 191
+    },
+    "throttled": false
+   },
+   "sp80": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.5,
+    "executors": {
+     "CalibrationProbe": 10,
+     "HandBuiltPolicy": 185,
+     "n/a": 6
+    },
+    "throttled": false
+   },
+   "su15": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "CalibrationProbe": 2,
+     "DeterministicExecutor": 196,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "tn36": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "HandBuiltPolicy": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "tr87": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.1,
+    "executors": {
+     "CalibrationProbe": 8,
+     "DeterministicExecutor": 192,
+     "n/a": 1
+    },
+    "throttled": false
+   },
+   "tu93": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "CalibrationProbe": 8,
+     "DeterministicExecutor": 190,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "vc33": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "HandBuiltPolicy": 198,
+     "n/a": 3
+    },
+    "throttled": false
+   },
+   "wa30": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.6,
+    "executors": {
+     "CalibrationProbe": 10,
+     "HandBuiltPolicy": 190,
+     "n/a": 1
+    },
+    "throttled": false
+   }
+  }
+ },
+ "on": {
+  "aggregate": 0.0,
+  "per_game": {
+   "ar25": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.2,
+    "executors": {
+     "CalibrationProbe": 12,
+     "HandBuiltPolicy": 187,
+     "n/a": 2
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": false,
+     "changed_rate": 0.0,
+     "gate_samples": 18,
+     "buffer": 15,
+     "eval_buffer": 3,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "bp35": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.2,
+    "executors": {
+     "CalibrationProbe": 6,
+     "DeterministicExecutor": 192,
+     "n/a": 3
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": false,
+     "changed_rate": 1.0,
+     "gate_samples": 45,
+     "buffer": 12,
+     "eval_buffer": 3,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "cd82": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 2.1,
+    "executors": {
+     "CalibrationProbe": 10,
+     "DeterministicExecutor": 190,
+     "n/a": 1
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": false,
+     "changed_rate": 1.0,
+     "gate_samples": 32,
+     "buffer": 26,
+     "eval_buffer": 6,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "cn04": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.1,
+    "executors": {
+     "CalibrationProbe": 10,
+     "DeterministicExecutor": 189,
+     "n/a": 2
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": true,
+     "changed_rate": 0.452,
+     "gate_samples": 31,
+     "buffer": 26,
+     "eval_buffer": 5,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "dc22": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 33.0,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": true,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": true,
+     "changed_rate": 0.538,
+     "gate_samples": 39,
+     "buffer": 32,
+     "eval_buffer": 7,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "ft09": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 34.3,
+    "executors": {
+     "HandBuiltPolicy": 201
+    },
+    "throttled": true,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": true,
+     "changed_rate": 0.005,
+     "gate_samples": 200,
+     "buffer": 1,
+     "eval_buffer": 0,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "g50t": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "CalibrationProbe": 10,
+     "DeterministicExecutor": 190,
+     "n/a": 1
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": false,
+     "changed_rate": null,
+     "gate_samples": 0,
+     "buffer": 0,
+     "eval_buffer": 0,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "ka59": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 2.1,
+    "executors": {
+     "DeterministicExecutor": 200,
+     "n/a": 1
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": true,
+     "changed_rate": 0.579,
+     "gate_samples": 38,
+     "buffer": 31,
+     "eval_buffer": 7,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "lf52": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.1,
+    "executors": {
+     "CalibrationProbe": 10,
+     "DeterministicExecutor": 189,
+     "n/a": 2
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": false,
+     "changed_rate": 1.0,
+     "gate_samples": 32,
+     "buffer": 25,
+     "eval_buffer": 6,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "lp85": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 33.5,
+    "executors": {
+     "HandBuiltPolicy": 201
+    },
+    "throttled": true,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": true,
+     "changed_rate": 0.0,
+     "gate_samples": 200,
+     "buffer": 1,
+     "eval_buffer": 0,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "ls20": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.5,
+    "executors": {
+     "CalibrationProbe": 8,
+     "HandBuiltPolicy": 193
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": false,
+     "changed_rate": null,
+     "gate_samples": 0,
+     "buffer": 0,
+     "eval_buffer": 0,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "m0r0": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 33.4,
+    "executors": {
+     "CalibrationProbe": 10,
+     "DeterministicExecutor": 190,
+     "n/a": 1
+    },
+    "throttled": true,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": true,
+     "changed_rate": 0.375,
+     "gate_samples": 32,
+     "buffer": 26,
+     "eval_buffer": 6,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "r11l": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.8,
+    "executors": {
+     "HandBuiltPolicy": 61,
+     "n/a": 3,
+     "DeterministicExecutor": 137
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": false,
+     "changed_rate": 1.0,
+     "gate_samples": 194,
+     "buffer": 95,
+     "eval_buffer": 23,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "re86": {
+    "levels": 0,
+    "actions": 201,
+    "state": "GAME_OVER",
+    "wall_s": 1.2,
+    "executors": {
+     "CalibrationProbe": 10,
+     "HandBuiltPolicy": 190,
+     "n/a": 1
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": false,
+     "changed_rate": null,
+     "gate_samples": 0,
+     "buffer": 0,
+     "eval_buffer": 0,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "s5i5": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.9,
+    "executors": {
+     "HandBuiltPolicy": 198,
+     "n/a": 3
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": false,
+     "changed_rate": 1.0,
+     "gate_samples": 194,
+     "buffer": 72,
+     "eval_buffer": 17,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "sb26": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 33.6,
+    "executors": {
+     "CalibrationProbe": 4,
+     "DeterministicExecutor": 196,
+     "n/a": 1
+    },
+    "throttled": true,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": true,
+     "changed_rate": 0.0,
+     "gate_samples": 65,
+     "buffer": 52,
+     "eval_buffer": 12,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "sc25": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.2,
+    "executors": {
+     "CalibrationProbe": 8,
+     "DeterministicExecutor": 190,
+     "n/a": 3
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": false,
+     "changed_rate": 0.921,
+     "gate_samples": 38,
+     "buffer": 11,
+     "eval_buffer": 2,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "sk48": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.3,
+    "executors": {
+     "CalibrationProbe": 10,
+     "DeterministicExecutor": 191
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": true,
+     "changed_rate": 0.0,
+     "gate_samples": 32,
+     "buffer": 26,
+     "eval_buffer": 6,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "sp80": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.3,
+    "executors": {
+     "CalibrationProbe": 10,
+     "HandBuiltPolicy": 185,
+     "n/a": 6
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": false,
+     "changed_rate": 1.0,
+     "gate_samples": 14,
+     "buffer": 12,
+     "eval_buffer": 2,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "su15": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 32.5,
+    "executors": {
+     "CalibrationProbe": 2,
+     "DeterministicExecutor": 196,
+     "n/a": 3
+    },
+    "throttled": true,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": false,
+     "changed_rate": 1.0,
+     "gate_samples": 94,
+     "buffer": 25,
+     "eval_buffer": 6,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "tn36": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 2.9,
+    "executors": {
+     "HandBuiltPolicy": 198,
+     "n/a": 3
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": false,
+     "changed_rate": 1.0,
+     "gate_samples": 194,
+     "buffer": 100,
+     "eval_buffer": 24,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "tr87": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.0,
+    "executors": {
+     "CalibrationProbe": 8,
+     "DeterministicExecutor": 192,
+     "n/a": 1
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": false,
+     "changed_rate": null,
+     "gate_samples": 0,
+     "buffer": 0,
+     "eval_buffer": 0,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "tu93": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.2,
+    "executors": {
+     "CalibrationProbe": 8,
+     "DeterministicExecutor": 190,
+     "n/a": 3
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": false,
+     "changed_rate": null,
+     "gate_samples": 0,
+     "buffer": 0,
+     "eval_buffer": 0,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "vc33": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 3.0,
+    "executors": {
+     "HandBuiltPolicy": 198,
+     "n/a": 3
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": false,
+     "changed_rate": 1.0,
+     "gate_samples": 194,
+     "buffer": 72,
+     "eval_buffer": 17,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   },
+   "wa30": {
+    "levels": 0,
+    "actions": 201,
+    "state": "NOT_FINISHED",
+    "wall_s": 1.6,
+    "executors": {
+     "CalibrationProbe": 10,
+     "HandBuiltPolicy": 190,
+     "n/a": 1
+    },
+    "throttled": false,
+    "click_prior": {
+     "enabled": true,
+     "gate_open": false,
+     "changed_rate": null,
+     "gate_samples": 0,
+     "buffer": 0,
+     "eval_buffer": 0,
+     "rounds": 0,
+     "steps": 0,
+     "auc": null,
+     "generation": 0,
+     "suggested": 0,
+     "disabled_reason": null
+    }
+   }
+  }
+ }
+}
