@@ -60,6 +60,18 @@ Per episode k (episodes delimited by RESET boundaries in the recording JSONL):
 Null results on PRIMARY/SECONDARY are reportable outcomes (the g-315-280
 precedent: byte-identical ON==OFF was the day's most valuable finding).
 
+## Addendum — run 2 (g-315-380 fix, registered 2026-07-16T21:0x BEFORE the re-run)
+
+Run 1 (results in `g315303_aevs_trend_results.md`): PRIMARY passed, SECONDARY
+inverted (0.72). The g-315-380 fix adds destination-novelty ranking to the AEVS
+branch (`_salience_order`: predicted destination = cell + modal displacement;
+never-visited destinations rank first; explore_score is the tie-break;
+`_visited_cells` persists across episodes). Run 2 repeats the EXACT protocol —
+same arms, same game, same episode/action budget, same analyzer, same
+thresholds (PRIMARY / SECONDARY ≥1.2 / TERTIARY). The OFF arm is unchanged
+code; the ON arm = AEVS + the fix. Null/inverted again = honest CORRECTED
+finding on the destination-novelty hypothesis.
+
 ## Outcome-1 wording delta (declared up front)
 
 The goal's outcome 1 says AEVS "biases server-side BT generation"; the landed

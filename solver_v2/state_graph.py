@@ -634,6 +634,10 @@ class StateGraphExplorer:
         self._effects: dict[int, tuple[float, float]] = {}
         # Position-dependent walls (guard-689): ((row, col), action) seen as no-op.
         self._blocked_edges: set[tuple[tuple[int, int], int]] = set()
+        # Cross-episode visited-cell memory (g-315-380): every cursor cell ever
+        # occupied. Feeds the AEVS destination-novelty rank in _salience_order —
+        # bounded by grid size (<= 64x64), preserved across reset_episode.
+        self._visited_cells: set[tuple[int, int]] = set()
         # deferred-observe linkage
         self._prev_hash: Optional[str] = None
         self._prev_action: Optional[int] = None
@@ -679,9 +683,11 @@ class StateGraphExplorer:
         displacement model, ``_blocked_edges`` walls, the ``_aevs``
         action-effect value store (g-315-379 -- the accumulated cross-attempt
         experience that biases the next episode's sweep, mirroring the
-        click-class contract), the cumulative ``_curtail_log`` diagnostic, and
-        the PRNG stream (continuing the sequence keeps exploration diverse
-        rather than replaying the same random choices each episode).
+        click-class contract), the ``_visited_cells`` memory (g-315-380 --
+        the destination-novelty rank's cross-episode frontier signal), the
+        cumulative ``_curtail_log`` diagnostic, and the PRNG stream
+        (continuing the sequence keeps exploration diverse rather than
+        replaying the same random choices each episode).
         """
         self._prev_hash = None
         self._prev_action = None
@@ -738,28 +744,51 @@ class StateGraphExplorer:
                 self._blocked_edges.add((self._prev_cell, self._prev_action))
 
     # -- salience (priority by displacement magnitude, not id; invariant 4) ----
-    def _salience_order(self, node: _Node) -> list[int]:
+    def _salience_order(
+        self, node: _Node, cell: Optional[tuple[int, int]] = None
+    ) -> list[int]:
         """Untested actions first, ordered most-salient-first. Salience = known
         displacement magnitude; an UNTESTED-displacement action is maximally
         salient (we have not learned its effect, so testing it is high-value).
 
-        AEVS re-rank (g-315-379, OFF by default): when the Action-Effect Value
-        Store is enabled it is the SOLE untested-action ranker -- the movement
-        mirror of the click-class live-control re-rank. explore_score =
-        effect_value * novelty_discount + unseen_bonus: prefer actions known to
-        DO something (liveness x displacement magnitude), de-weight over-fired
-        ones (anti-fixation), keep never-tried keys competitive (unseen_bonus)
-        so reach never shrinks -- the per-node untested() filter already
-        guarantees every action gets tried at each node; AEVS only re-ORDERS.
-        Deterministic (-score, action) sort mirrors the existing shape. OFF ->
-        falls through to the byte-identical displacement path below."""
+        AEVS re-rank (g-315-379 wiring; g-315-380 destination-novelty fix; OFF
+        by default): when the Action-Effect Value Store is enabled the branch
+        ranks untested actions FRONTIER-FIRST -- (1) primary key: does the
+        action's PREDICTED destination (current cell + modal displacement from
+        the learned _effects model) land on a cell never occupied across ALL
+        episodes (_visited_cells)? novel-or-unknown destinations sort before
+        known-visited ones; (2) tie-break: explore_score descending (the
+        g-315-379 global prior); (3) action id. The g-315-303 two-arm run
+        proved the pure global-prior sort ((class,action) stats, no position
+        conditioning) herds every episode down the same path -- 18% FEWER
+        distinct states than OFF (stereotypy). Destination novelty makes the
+        cross-episode memory push OUTWARD toward unvisited territory instead:
+        at re-visited nodes all-known destinations tie and the walk crosses
+        known ground fast; at the frontier the unvisited direction wins. An
+        unknown-displacement action ranks novel (test-first preserved).
+        OFF -> falls through to the byte-identical displacement path below."""
         untested = node.untested(self._moves)
 
         if self._aevs is not None:
             av = self._aevs
+
+            def _dest_revisit(a: int) -> int:
+                eff = self._effects.get(a)
+                if eff is None or cell is None:
+                    return 0  # unknown destination -> treat as novel
+                dest = (
+                    int(round(cell[0] + eff[0])),
+                    int(round(cell[1] + eff[1])),
+                )
+                return 1 if dest in self._visited_cells else 0
+
             return sorted(
                 untested,
-                key=lambda a: (-av.explore_score(("move", int(a))), a),
+                key=lambda a: (
+                    _dest_revisit(a),
+                    -av.explore_score(("move", int(a))),
+                    a,
+                ),
             )
 
         def rank(action: int) -> float:
@@ -826,11 +855,13 @@ class StateGraphExplorer:
         return []
 
     # -- Algorithm 1: hierarchical action selection ----------------------------
-    def _select_action(self, node: _Node) -> int:
+    def _select_action(
+        self, node: _Node, cell: Optional[tuple[int, int]] = None
+    ) -> int:
         """At the current node: pick a maximally-salient untested action; else
         navigate one step toward the nearest reachable frontier state; else widen
         to any untested action here; else fall back to the least-committed move."""
-        ranked_untested = self._salience_order(node)
+        ranked_untested = self._salience_order(node, cell)
         if ranked_untested:
             # Top salience band: all actions sharing the most-salient rank, picked
             # uniformly at random (seeded). p widens implicitly because ties at
@@ -869,6 +900,10 @@ class StateGraphExplorer:
         )
         cur_hash = self._processor.hash(features)
         score = features.score if features.score is not None else 0
+        if cur_cell is not None:
+            # Cross-episode visited-cell memory (g-315-380) — feeds the AEVS
+            # destination-novelty rank; bounded by grid size.
+            self._visited_cells.add(cur_cell)
 
         # 1. Deferred-observe: learn displacement + record the edge from prev.
         self._learn_displacement(cursor)
@@ -933,7 +968,7 @@ class StateGraphExplorer:
             action = self._replay_queue.popleft()
         else:
             # 5. Algorithm 1 selection (or budget-exhausted coverage residue).
-            action = self._select_action(node)
+            action = self._select_action(node, cur_cell)
 
         # 6. Block-edge prune: if this exact (cell, action) is a known wall, prefer
         #    a different untested action (guard-689: walls are position-keyed).
@@ -943,7 +978,7 @@ class StateGraphExplorer:
         ):
             alternatives = [
                 a
-                for a in self._salience_order(node)
+                for a in self._salience_order(node, cur_cell)
                 if (cur_cell, a) not in self._blocked_edges
             ]
             if alternatives:

@@ -454,3 +454,56 @@ def test_reset_episode_preserves_aevs_store() -> None:
     assert e._aevs is not None and len(e._aevs) == 1
     e.reset_episode()
     assert e._aevs is not None and len(e._aevs) == 1  # PRESERVED
+
+
+# ---------------------------------------------------------------------------
+# g-315-380 — destination-novelty rank (the stereotypy fix from g-315-303)
+# ---------------------------------------------------------------------------
+def test_aevs_destination_novelty_outranks_global_prior() -> None:
+    # THE branch-discriminating pin: the globally-strongest action's predicted
+    # destination is already visited -> it sinks BELOW every novel-destination
+    # peer. Without the g-315-380 novelty key this test fails (the pure
+    # explore_score sort of g-315-379 would rank action 3 FIRST -- exactly the
+    # stereotypy the g-315-303 two-arm run measured).
+    on = StateGraphExplorer(_LS20_MOVES, action_value_store=True)
+    assert on._aevs is not None
+    # Action 3: two live magnitude-5 observations -> the global prior winner.
+    on._aevs.update(("move", 3), changed=True, cells_changed=5.0, tick=1)
+    on._aevs.update(("move", 3), changed=True, cells_changed=5.0, tick=2)
+    # Displacement model: action 1 -> right, action 3 -> down.
+    on._effects = {1: (0.0, 1.0), 3: (1.0, 0.0)}
+    # From cell (2,2): action 3's destination (3,2) is KNOWN-VISITED; action
+    # 1's destination (2,3) is novel; actions 2/4 have unknown displacement
+    # (novel by contract).
+    on._visited_cells = {(3, 2)}
+    node = sg._Node(state_hash="h", first_seen_tick=1)
+    order = on._salience_order(node, (2, 2))
+    assert order[0] == 1, order  # novel destination outranks the prior winner
+    assert order[-1] == 3, order  # visited-destination global winner sinks last
+
+
+def test_aevs_novelty_neutral_falls_back_to_global_prior() -> None:
+    # All destinations novel (or no cell context) -> the g-315-379 explore_score
+    # order is unchanged: the hand-fed high-effect action ranks first.
+    on = StateGraphExplorer(_LS20_MOVES, action_value_store=True)
+    assert on._aevs is not None
+    on._aevs.update(("move", 3), changed=True, cells_changed=5.0, tick=1)
+    on._aevs.update(("move", 3), changed=True, cells_changed=5.0, tick=2)
+    on._effects = {1: (0.0, 1.0), 3: (1.0, 0.0)}
+    node = sg._Node(state_hash="h", first_seen_tick=1)
+    # No cell -> novelty neutral (all 0) -> prior order.
+    assert on._salience_order(node)[0] == 3
+    # Cell given but nothing visited -> same.
+    assert on._salience_order(node, (2, 2))[0] == 3
+
+
+def test_visited_cells_recorded_and_preserved_across_reset() -> None:
+    # Cursor detection is motion-based (needs history), so feed each frame
+    # with its predecessor — mirrors the live adapter's frame stream.
+    e = StateGraphExplorer(_LS20_MOVES, seed=0, action_value_store=True)
+    s1 = _scene((2, 2), hud_val=1)
+    s2 = _scene((2, 3), hud_val=1)
+    e.decide(_features(s2, history=[s1]))
+    assert (2, 3) in e._visited_cells
+    e.reset_episode()
+    assert (2, 3) in e._visited_cells  # PRESERVED (g-315-380)
