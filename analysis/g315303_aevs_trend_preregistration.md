@@ -204,6 +204,60 @@ Zero-discretion verdict branches:
 - OFF-invariance broken → attribution downgrade; report and stop (no
   further conditioning claims from this run).
 
+## Addendum — run 6 (g-315-389 frontier-TARGET coordination, registered 2026-07-17T01:0x BEFORE the run)
+
+**Mechanism under test:** cross-episode frontier-TARGET coordination
+(`--frontier-coordination`, commit pending this registration). g-315-388
+(commit b30145d) sized the lanes: cross-episode redundancy is the dominant
+late-run sink (OFF 159/816 2nd-half redundant ticks; every conditioning ON arm
+MORE at 183–301; coordination ceiling 2.6–3.9× the pause pool). The mechanism
+retargets `_route_to_frontier` toward the frontier node in the LEAST-episode-
+seen region (full bounded BFS, key `(episodes_seen, depth, action)`) instead
+of the shallowest hit — varying the episode-level TARGET, NOT the seam
+ordering (the exhausted variety family, runs 1–5).
+
+**Arms (12 episodes each, same game, same budget):**
+```
+ON:  main.py --game ls20-9607627b --use-solver-v2 --state-graph \
+       --action-value-store --novel-tie-conditioning --frontier-coordination \
+       --episodes 12 --max-actions 200 --record --tags "g-315-389,aevs-trend,on"
+OFF: main.py --game ls20-9607627b --use-solver-v2 --state-graph \
+       --episodes 12 --max-actions 200 --record --tags "g-315-389,aevs-trend,off"
+```
+ON keeps `--novel-tie-conditioning` (run-4 form, the family peak) per the
+run-5 config note; `--novel-tie-episode-varying` stays OFF.
+
+**Attribution control (rb-3765/rb-3768, unchanged):** OFF-arm cross-run
+invariance — run-6 OFF sequences must be byte-identical to run-5 OFF (12/12
+seq-hash), extending the 3-run chain. If OFF drifts: attribution downgrade;
+report and stop.
+
+**NEW REQUIRED primary observable — the g315388 cross-redundancy metric**
+(`analysis/g315388_visited_overlap.py`, unchanged code, run on both arms):
+ON 2nd-half cross-redundant ticks. Family range to beat: 183–301 (runs 1–5
+ON); OFF reference: 159.
+
+**Zero-discretion verdict branches:**
+- REDUNDANCY pass (ON 2nd-half cross-redundant ticks < 159, i.e. below OFF)
+  AND SECONDARY ≥ 1.2 → coordination converts; encode CONFIRMED.
+- REDUNDANCY pass (< 159) but SECONDARY < 1.2 → the coordinator reduces
+  re-crossing but the freed budget is not converting to novel states (walk
+  overhead or pause-budget gap dominates); honest CORRECTED — decompose the
+  residual exactly as g315388 did (redundancy pool vs episode-length pool)
+  and name which pool remains.
+- REDUNDANCY partial (159 ≤ ON < 183, better than the whole family but not
+  below OFF) → mechanism works but incompletely; CORRECTED naming the
+  residual redundancy source (inspect which regions still re-cross).
+- REDUNDANCY fail (ON ≥ 183, within/above family range) → target-selection
+  is NOT the redundancy driver (the driver is en-route re-crossing, not
+  destination choice); honest CORRECTED; the coordination lane closes for
+  DESTINATION-selection mechanisms — remaining lanes: pause exploitation
+  (g-315-385) and route-level (path-choice) mechanisms, instrument-first.
+- TERTIARY unchanged (any score > 0 reportable; none expected, rb-1500).
+- Total new-states < OFF's 1336 − 5% (i.e. < 1269) → regression guard: the
+  coordinator costs more than it frees regardless of redundancy verdict;
+  config note flips to leave the flag OFF in future ON arms.
+
 ## Outcome-1 wording delta (declared up front)
 
 The goal's outcome 1 says AEVS "biases server-side BT generation"; the landed

@@ -1284,3 +1284,33 @@ def test_novel_tie_flags_thread_through_movement_explorer() -> None:
     adapter_off.choose_action(_strategic())
     assert adapter_off.explorer._novel_tie is False
     assert adapter_off.explorer._novel_tie_ep is False
+
+
+def test_frontier_coordination_threads_through_movement_explorer() -> None:
+    # g-315-389: the --frontier-coordination flag threads adapter -> movement
+    # StateGraphExplorer (same sq-019 passthrough class the g-315-386 pin
+    # covers for the novel-tie flags). A silently-dropped kwarg would run the
+    # run-6 ON arm as the run-4 form and the two-arm result would be garbage.
+    seed = _ScriptedSeedProvider(_prior(OBJECTIVE_UNKNOWN))
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card",
+        arc_game_id="ls20-test",
+        seed_provider=seed,
+        use_state_graph=True,
+        action_value_store=True,
+        novel_tie_conditioning=True,
+        frontier_coordination=True,
+    )
+    adapter.choose_action(_strategic())
+    assert isinstance(adapter.explorer, StateGraphExplorer)
+    assert adapter.explorer._frontier_coord is True
+    # Default stays OFF (byte-identical contract).
+    adapter_off = SolverV2StreamingAdapter(
+        ayo_server_key="card",
+        arc_game_id="ls20-test",
+        seed_provider=_ScriptedSeedProvider(_prior(OBJECTIVE_UNKNOWN)),
+        use_state_graph=True,
+        action_value_store=True,
+    )
+    adapter_off.choose_action(_strategic())
+    assert adapter_off.explorer._frontier_coord is False

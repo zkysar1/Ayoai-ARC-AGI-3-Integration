@@ -594,6 +594,21 @@ def main() -> None:
             "per-node counter."
         ),
     )
+    parser.add_argument(
+        "--frontier-coordination",
+        action="store_true",
+        help=(
+            "g-315-389: cross-episode frontier-TARGET coordination in the "
+            "movement StateGraphExplorer. g-315-388 sized cross-episode "
+            "redundancy as the dominant late-run sink (2.6-3.9x the pause "
+            "pool); when ON, _route_to_frontier targets the frontier node in "
+            "the LEAST-episode-seen region (full bounded BFS scan, key = "
+            "(episodes_seen, depth, action)) instead of the shallowest hit. "
+            "Varies the episode-level TARGET, not the seam ordering (the "
+            "exhausted variety family). OFF (default) = byte-identical. "
+            "Deterministic, replayable, same _BFS_MAX_NODES cap."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -862,6 +877,7 @@ def main() -> None:
             action_value_store=args.action_value_store,
             novel_tie_conditioning=args.novel_tie_conditioning,
             novel_tie_episode_varying=args.novel_tie_episode_varying,
+            frontier_coordination=args.frontier_coordination,
         )
     else:
         # streaming_url is resolved by this point (live: ayoai_session.streaming_url;
@@ -1048,6 +1064,7 @@ def main() -> None:
                 "aevs": bool(getattr(args, "action_value_store", False)),
                 "novel_tie": bool(getattr(args, "novel_tie_conditioning", False)),
                 "novel_tie_ep": bool(getattr(args, "novel_tie_episode_varying", False)),
+                "frontier_coord": bool(getattr(args, "frontier_coordination", False)),
                 "episodes": _episodes,
                 "ticks": action_counter,
                 "elapsed_s": round(elapsed, 2),

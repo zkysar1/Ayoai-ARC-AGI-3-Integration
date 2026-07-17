@@ -717,3 +717,90 @@ def test_ep_varying_off_arms_no_dict_growth() -> None:
         s2 = _scene((2, 3), hud_val=1)
         e.decide(_features(s2, history=[s1]))
         assert e._node_episode_seen == {} and e._episode_seen_nodes == set()
+
+
+# ---------------------------------------------------------------------------
+# g-315-389 — cross-episode frontier-TARGET coordination (the g-315-388 lane)
+# ---------------------------------------------------------------------------
+def test_frontier_coord_flag_defaults_off_and_threads() -> None:
+    off = StateGraphExplorer(_LS20_MOVES)
+    assert off._frontier_coord is False
+    on = StateGraphExplorer(_LS20_MOVES, frontier_coordination=True)
+    assert on._frontier_coord is True
+
+
+def _coord_graph(explorer: StateGraphExplorer) -> None:
+    """S's actions are all tested: action 1 -> f1 (frontier at depth 1),
+    action 2 -> m2 (fully tested) -> action 3 -> f2 (frontier at depth 2).
+    Shallowest-hit policy always returns 1; the coordinator may prefer 2."""
+    start = sg._Node(state_hash="S", first_seen_tick=1)
+    start.outgoing = {1: "f1", 2: "m2"}
+    start.tested = {1, 2, 3, 4}
+    f1 = sg._Node(state_hash="f1", first_seen_tick=2)
+    m2 = sg._Node(state_hash="m2", first_seen_tick=3)
+    m2.outgoing = {3: "f2"}
+    m2.tested = {1, 2, 3, 4}
+    f2 = sg._Node(state_hash="f2", first_seen_tick=4)
+    explorer._graph = {"S": start, "f1": f1, "m2": m2, "f2": f2}
+
+
+def test_frontier_coord_targets_least_episode_seen_region() -> None:
+    # THE branch-discriminating pin (g-315-389): the near frontier f1 sits in a
+    # region worked by 3 prior episodes; the deeper frontier f2 was never
+    # episode-counted. Coordinator ON retargets the walk toward f2 (action 2)
+    # — the least-episode-seen region — instead of the shallowest hit.
+    on = StateGraphExplorer(
+        _LS20_MOVES,
+        action_value_store=True,
+        novel_tie_conditioning=True,
+        frontier_coordination=True,
+    )
+    _coord_graph(on)
+    on._node_episode_seen = {"f1": 3, "S": 3}
+    assert on._route_to_frontier("S") == 2
+
+
+def test_frontier_coord_off_keeps_shallowest_hit() -> None:
+    # OFF arm: identical graph AND identical episode counters present — the
+    # counters are ignored and the shallowest-hit first-action (1) returns,
+    # byte-identical to the pre-389 walk.
+    off = StateGraphExplorer(_LS20_MOVES, action_value_store=True)
+    _coord_graph(off)
+    off._node_episode_seen = {"f1": 3, "S": 3}
+    assert off._route_to_frontier("S") == 1
+
+
+def test_frontier_coord_equal_seen_prefers_nearest() -> None:
+    # No coverage signal (all frontiers equally episode-seen) -> depth breaks
+    # the tie and the coordinator behaves like the shallowest-hit policy.
+    on = StateGraphExplorer(_LS20_MOVES, frontier_coordination=True)
+    _coord_graph(on)
+    on._node_episode_seen = {"f1": 1, "f2": 1}
+    assert on._route_to_frontier("S") == 1
+
+
+def test_frontier_coord_counter_increments_without_ep_varying() -> None:
+    # The episodes_seen counter must populate under frontier_coordination
+    # ALONE (novel_tie_episode_varying stays OFF in the run-6 ON arm).
+    e = StateGraphExplorer(_LS20_MOVES, seed=0, frontier_coordination=True)
+    assert e._novel_tie_ep is False
+    s1 = _scene((2, 2), hud_val=1)
+    s2 = _scene((2, 3), hud_val=1)
+    e.decide(_features(s2, history=[s1]))
+    assert list(e._node_episode_seen.values()) == [1]
+    e.reset_episode()
+    assert list(e._node_episode_seen.values()) == [1]  # PERSISTED
+    e.decide(_features(s2, history=[s1]))
+    assert list(e._node_episode_seen.values()) == [2]
+
+
+def test_frontier_coord_off_arm_no_dict_growth() -> None:
+    # Byte-identical OFF guarantee extends to the coordinator arm: the run-4
+    # ON config (aevs + novel-tie, coordinator OFF) grows nothing.
+    e = StateGraphExplorer(
+        _LS20_MOVES, seed=0, action_value_store=True, novel_tie_conditioning=True
+    )
+    s1 = _scene((2, 2), hud_val=1)
+    s2 = _scene((2, 3), hud_val=1)
+    e.decide(_features(s2, history=[s1]))
+    assert e._node_episode_seen == {} and e._episode_seen_nodes == set()

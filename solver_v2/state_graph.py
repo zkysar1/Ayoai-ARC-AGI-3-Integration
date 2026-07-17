@@ -607,6 +607,7 @@ class StateGraphExplorer:
         action_value_store: bool = False,
         novel_tie_conditioning: bool = False,
         novel_tie_episode_varying: bool = False,
+        frontier_coordination: bool = False,
     ) -> None:
         self._moves: list[int] = move_actions_from(move_actions) or sorted(
             {int(a) for a in move_actions}
@@ -650,6 +651,19 @@ class StateGraphExplorer:
         # _walk_counts); _episode_seen_nodes is the per-episode dedup set.
         # Writes are flag-gated so OFF stays byte-identical (no dict growth).
         self._novel_tie_ep = bool(novel_tie_episode_varying)
+        # -- Cross-episode frontier coordination (g-315-389): g-315-388 sized the
+        # lanes — cross-episode redundancy is the dominant late-run sink (OFF
+        # burns 159/816 2nd-half ticks re-walking prior-episode states; every
+        # conditioning ON arm burned MORE, 183–301). Mechanism: the nearest-
+        # frontier walk policy relocates every episode to the closest untested
+        # state, which sits in the region prior episodes already worked. When
+        # ON, _route_to_frontier scans the FULL bounded BFS (same _BFS_MAX_NODES
+        # cap) and targets the frontier node seen in the FEWEST episodes
+        # (episodes_seen_at_node, shared with g-315-386's counter), tie-broken
+        # by depth then action — varying the episode-level TARGET, not the
+        # ordering at the seam (the exhausted variety family, runs 1–5).
+        # OFF (default) = byte-identical shallowest-hit behavior.
+        self._frontier_coord = bool(frontier_coordination)
         self._node_episode_seen: dict[str, int] = {}
         self._episode_seen_nodes: set[str] = set()
         # Deterministic PRNG -- Algorithm 1's "pick uniformly at random" must be
@@ -902,10 +916,18 @@ class StateGraphExplorer:
         expanded = 0
         candidates: list[int] = []  # distinct first-actions at the shallowest hit depth
         hit_depth: Optional[int] = None
+        # Frontier coordination (g-315-389): full-scan hit list — every frontier
+        # reached within the SAME BFS bound, as (episodes_seen, depth,
+        # first_action). Empty unless _frontier_coord.
+        coord_hits: list[tuple[int, int, int]] = []
         while queue and expanded < _BFS_MAX_NODES:
             node_hash, first_action, depth = queue.popleft()
-            if hit_depth is not None and depth > hit_depth:
-                break  # level with hits fully scanned
+            if (
+                hit_depth is not None
+                and depth > hit_depth
+                and not self._frontier_coord
+            ):
+                break  # level with hits fully scanned (OFF: shallowest-only)
             expanded += 1
             node = self._graph.get(node_hash)
             if node is None:
@@ -914,8 +936,16 @@ class StateGraphExplorer:
                 # first_action is never None here (>=1 edge from start).
                 if first_action is not None and first_action not in candidates:
                     candidates.append(first_action)
-                hit_depth = depth
-                continue  # keep scanning THIS depth for tied frontiers
+                if self._frontier_coord and first_action is not None:
+                    coord_hits.append(
+                        (
+                            self._node_episode_seen.get(node_hash, 0),
+                            depth,
+                            first_action,
+                        )
+                    )
+                hit_depth = depth if hit_depth is None else hit_depth
+                continue  # never expand THROUGH a frontier (same as before)
             for action, succ in node.outgoing.items():
                 if succ == _UNTESTED or succ in visited:
                     continue
@@ -929,6 +959,12 @@ class StateGraphExplorer:
                 )
         if not candidates:
             return None
+        if self._frontier_coord and coord_hits:
+            # Target the frontier in the LEAST-episode-seen region; among ties
+            # prefer the nearest, then the smallest action (deterministic,
+            # replayable). Varies the episode-level TARGET as prior episodes
+            # accumulate episodes_seen on worked regions.
+            return min(coord_hits)[2]
         if self._aevs is not None and len(candidates) > 1:
             return min(
                 candidates,
@@ -1069,7 +1105,9 @@ class StateGraphExplorer:
         #      episode, on the node's first visit this episode. Always the
         #      CURRENT node — _salience_order only ever ranks the current node,
         #      so the counter is fresh at every read.
-        if self._novel_tie_ep and cur_hash not in self._episode_seen_nodes:
+        if (
+            self._novel_tie_ep or self._frontier_coord
+        ) and cur_hash not in self._episode_seen_nodes:
             self._episode_seen_nodes.add(cur_hash)
             self._node_episode_seen[cur_hash] = (
                 self._node_episode_seen.get(cur_hash, 0) + 1

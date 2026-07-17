@@ -140,6 +140,7 @@ class SolverV2StreamingAdapter:
         action_value_store: bool = False,
         novel_tie_conditioning: bool = False,
         novel_tie_episode_varying: bool = False,
+        frontier_coordination: bool = False,
         click_prior: bool = False,
         coverage_seeds: bool = False,
         fcx_cache: bool = False,
@@ -190,6 +191,12 @@ class SolverV2StreamingAdapter:
         # so the same node orders differently across episodes — the run-4
         # conversion-gap fix. Threaded to the movement StateGraphExplorer.
         self._novel_tie_episode_varying: bool = novel_tie_episode_varying
+        # g-315-389: cross-episode frontier-TARGET coordination (default False =
+        # byte-identical shallowest-hit walk). ON retargets _route_to_frontier
+        # toward the least-episode-seen frontier region — attacks the dominant
+        # late-run sink g-315-388 sized (cross-episode redundancy, 2.6–3.9× the
+        # pause pool). Threaded to the movement StateGraphExplorer.
+        self._frontier_coordination: bool = frontier_coordination
         # g-315-370 coverage-seeds toggle (DEFAULT OFF -> byte-identical). ON
         # (constructor kwarg OR env SOLVER_V2_COVERAGE_SEEDS): the DEFAULT oracle
         # provider emits UNTRUSTED priors so per-episode routing selects the
@@ -1155,6 +1162,7 @@ class SolverV2StreamingAdapter:
                         action_value_store=self._action_value_store,
                         novel_tie_conditioning=self._novel_tie_conditioning,
                         novel_tie_episode_varying=self._novel_tie_episode_varying,
+                        frontier_coordination=self._frontier_coordination,
                     )
                     self._state_graph_cache[sg_key] = new_sg
                     self._explorer = new_sg
