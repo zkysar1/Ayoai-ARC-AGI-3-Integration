@@ -1,0 +1,1354 @@
+{
+ "runs": {
+  "run1-303": {
+   "on": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.0,
+      "cross_redundant_ticks": 0,
+      "cross_redundant_frac": 0.0,
+      "novel_ticks": 129
+     },
+     {
+      "ep": 2,
+      "ticks": 130,
+      "distinct_states": 130,
+      "overlap_frac": 0.0923,
+      "cross_redundant_ticks": 12,
+      "cross_redundant_frac": 0.0923,
+      "novel_ticks": 118
+     },
+     {
+      "ep": 3,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.2403,
+      "cross_redundant_ticks": 31,
+      "cross_redundant_frac": 0.2403,
+      "novel_ticks": 98
+     },
+     {
+      "ep": 4,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.1473,
+      "cross_redundant_ticks": 19,
+      "cross_redundant_frac": 0.1473,
+      "novel_ticks": 110
+     },
+     {
+      "ep": 5,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3101,
+      "cross_redundant_ticks": 40,
+      "cross_redundant_frac": 0.3101,
+      "novel_ticks": 89
+     },
+     {
+      "ep": 6,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.4109,
+      "cross_redundant_ticks": 53,
+      "cross_redundant_frac": 0.4109,
+      "novel_ticks": 76
+     },
+     {
+      "ep": 7,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3798,
+      "cross_redundant_ticks": 49,
+      "cross_redundant_frac": 0.3798,
+      "novel_ticks": 80
+     },
+     {
+      "ep": 8,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.4806,
+      "cross_redundant_ticks": 62,
+      "cross_redundant_frac": 0.4806,
+      "novel_ticks": 67
+     },
+     {
+      "ep": 9,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.2868,
+      "cross_redundant_ticks": 37,
+      "cross_redundant_frac": 0.2868,
+      "novel_ticks": 92
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3411,
+      "cross_redundant_ticks": 44,
+      "cross_redundant_frac": 0.3411,
+      "novel_ticks": 85
+     },
+     {
+      "ep": 11,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3256,
+      "cross_redundant_ticks": 42,
+      "cross_redundant_frac": 0.3256,
+      "novel_ticks": 87
+     },
+     {
+      "ep": 12,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.5194,
+      "cross_redundant_ticks": 67,
+      "cross_redundant_frac": 0.5194,
+      "novel_ticks": 62
+     }
+    ],
+    "total_distinct_states": 1093,
+    "first_half": {
+     "ticks": 775,
+     "cross_redundant_ticks": 155,
+     "cross_redundant_frac": 0.2,
+     "novel_ticks": 620,
+     "mean_overlap_frac": 0.2001
+    },
+    "second_half": {
+     "ticks": 774,
+     "cross_redundant_ticks": 301,
+     "cross_redundant_frac": 0.3889,
+     "novel_ticks": 473,
+     "mean_overlap_frac": 0.3889
+    },
+    "recording": "ab44587c",
+    "n_episodes": 12
+   },
+   "off": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.0,
+      "cross_redundant_ticks": 0,
+      "cross_redundant_frac": 0.0,
+      "novel_ticks": 134
+     },
+     {
+      "ep": 2,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.0373,
+      "cross_redundant_ticks": 5,
+      "cross_redundant_frac": 0.0373,
+      "novel_ticks": 129
+     },
+     {
+      "ep": 3,
+      "ticks": 131,
+      "distinct_states": 131,
+      "overlap_frac": 0.3206,
+      "cross_redundant_ticks": 42,
+      "cross_redundant_frac": 0.3206,
+      "novel_ticks": 89
+     },
+     {
+      "ep": 4,
+      "ticks": 136,
+      "distinct_states": 136,
+      "overlap_frac": 0.1691,
+      "cross_redundant_ticks": 23,
+      "cross_redundant_frac": 0.1691,
+      "novel_ticks": 113
+     },
+     {
+      "ep": 5,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.0373,
+      "cross_redundant_ticks": 5,
+      "cross_redundant_frac": 0.0373,
+      "novel_ticks": 129
+     },
+     {
+      "ep": 6,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3488,
+      "cross_redundant_ticks": 45,
+      "cross_redundant_frac": 0.3488,
+      "novel_ticks": 84
+     },
+     {
+      "ep": 7,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.3507,
+      "cross_redundant_ticks": 47,
+      "cross_redundant_frac": 0.3507,
+      "novel_ticks": 87
+     },
+     {
+      "ep": 8,
+      "ticks": 140,
+      "distinct_states": 140,
+      "overlap_frac": 0.0571,
+      "cross_redundant_ticks": 8,
+      "cross_redundant_frac": 0.0571,
+      "novel_ticks": 132
+     },
+     {
+      "ep": 9,
+      "ticks": 144,
+      "distinct_states": 144,
+      "overlap_frac": 0.0903,
+      "cross_redundant_ticks": 13,
+      "cross_redundant_frac": 0.0903,
+      "novel_ticks": 131
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3566,
+      "cross_redundant_ticks": 46,
+      "cross_redundant_frac": 0.3566,
+      "novel_ticks": 83
+     },
+     {
+      "ep": 11,
+      "ticks": 135,
+      "distinct_states": 135,
+      "overlap_frac": 0.237,
+      "cross_redundant_ticks": 32,
+      "cross_redundant_frac": 0.237,
+      "novel_ticks": 103
+     },
+     {
+      "ep": 12,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.097,
+      "cross_redundant_ticks": 13,
+      "cross_redundant_frac": 0.097,
+      "novel_ticks": 121
+     }
+    ],
+    "total_distinct_states": 1335,
+    "first_half": {
+     "ticks": 798,
+     "cross_redundant_ticks": 120,
+     "cross_redundant_frac": 0.1504,
+     "novel_ticks": 678,
+     "mean_overlap_frac": 0.1522
+    },
+    "second_half": {
+     "ticks": 816,
+     "cross_redundant_ticks": 159,
+     "cross_redundant_frac": 0.1949,
+     "novel_ticks": 657,
+     "mean_overlap_frac": 0.1981
+    },
+    "recording": "8fdca4f5",
+    "n_episodes": 12
+   }
+  },
+  "run2-380": {
+   "on": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.0,
+      "cross_redundant_ticks": 0,
+      "cross_redundant_frac": 0.0,
+      "novel_ticks": 129
+     },
+     {
+      "ep": 2,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.0388,
+      "cross_redundant_ticks": 5,
+      "cross_redundant_frac": 0.0388,
+      "novel_ticks": 124
+     },
+     {
+      "ep": 3,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.0543,
+      "cross_redundant_ticks": 7,
+      "cross_redundant_frac": 0.0543,
+      "novel_ticks": 122
+     },
+     {
+      "ep": 4,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.0698,
+      "cross_redundant_ticks": 9,
+      "cross_redundant_frac": 0.0698,
+      "novel_ticks": 120
+     },
+     {
+      "ep": 5,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3721,
+      "cross_redundant_ticks": 48,
+      "cross_redundant_frac": 0.3721,
+      "novel_ticks": 81
+     },
+     {
+      "ep": 6,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3488,
+      "cross_redundant_ticks": 45,
+      "cross_redundant_frac": 0.3488,
+      "novel_ticks": 84
+     },
+     {
+      "ep": 7,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.2248,
+      "cross_redundant_ticks": 29,
+      "cross_redundant_frac": 0.2248,
+      "novel_ticks": 100
+     },
+     {
+      "ep": 8,
+      "ticks": 130,
+      "distinct_states": 130,
+      "overlap_frac": 0.3769,
+      "cross_redundant_ticks": 49,
+      "cross_redundant_frac": 0.3769,
+      "novel_ticks": 81
+     },
+     {
+      "ep": 9,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.2403,
+      "cross_redundant_ticks": 31,
+      "cross_redundant_frac": 0.2403,
+      "novel_ticks": 98
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.2248,
+      "cross_redundant_ticks": 29,
+      "cross_redundant_frac": 0.2248,
+      "novel_ticks": 100
+     },
+     {
+      "ep": 11,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.5426,
+      "cross_redundant_ticks": 70,
+      "cross_redundant_frac": 0.5426,
+      "novel_ticks": 59
+     },
+     {
+      "ep": 12,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3876,
+      "cross_redundant_ticks": 50,
+      "cross_redundant_frac": 0.3876,
+      "novel_ticks": 79
+     }
+    ],
+    "total_distinct_states": 1177,
+    "first_half": {
+     "ticks": 774,
+     "cross_redundant_ticks": 114,
+     "cross_redundant_frac": 0.1473,
+     "novel_ticks": 660,
+     "mean_overlap_frac": 0.1473
+    },
+    "second_half": {
+     "ticks": 775,
+     "cross_redundant_ticks": 258,
+     "cross_redundant_frac": 0.3329,
+     "novel_ticks": 517,
+     "mean_overlap_frac": 0.3328
+    },
+    "recording": "c148735d",
+    "n_episodes": 12
+   },
+   "off": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.0,
+      "cross_redundant_ticks": 0,
+      "cross_redundant_frac": 0.0,
+      "novel_ticks": 134
+     },
+     {
+      "ep": 2,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.0373,
+      "cross_redundant_ticks": 5,
+      "cross_redundant_frac": 0.0373,
+      "novel_ticks": 129
+     },
+     {
+      "ep": 3,
+      "ticks": 131,
+      "distinct_states": 131,
+      "overlap_frac": 0.3206,
+      "cross_redundant_ticks": 42,
+      "cross_redundant_frac": 0.3206,
+      "novel_ticks": 89
+     },
+     {
+      "ep": 4,
+      "ticks": 136,
+      "distinct_states": 136,
+      "overlap_frac": 0.1691,
+      "cross_redundant_ticks": 23,
+      "cross_redundant_frac": 0.1691,
+      "novel_ticks": 113
+     },
+     {
+      "ep": 5,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.0373,
+      "cross_redundant_ticks": 5,
+      "cross_redundant_frac": 0.0373,
+      "novel_ticks": 129
+     },
+     {
+      "ep": 6,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3488,
+      "cross_redundant_ticks": 45,
+      "cross_redundant_frac": 0.3488,
+      "novel_ticks": 84
+     },
+     {
+      "ep": 7,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.3507,
+      "cross_redundant_ticks": 47,
+      "cross_redundant_frac": 0.3507,
+      "novel_ticks": 87
+     },
+     {
+      "ep": 8,
+      "ticks": 140,
+      "distinct_states": 140,
+      "overlap_frac": 0.0571,
+      "cross_redundant_ticks": 8,
+      "cross_redundant_frac": 0.0571,
+      "novel_ticks": 132
+     },
+     {
+      "ep": 9,
+      "ticks": 144,
+      "distinct_states": 144,
+      "overlap_frac": 0.0903,
+      "cross_redundant_ticks": 13,
+      "cross_redundant_frac": 0.0903,
+      "novel_ticks": 131
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3566,
+      "cross_redundant_ticks": 46,
+      "cross_redundant_frac": 0.3566,
+      "novel_ticks": 83
+     },
+     {
+      "ep": 11,
+      "ticks": 135,
+      "distinct_states": 135,
+      "overlap_frac": 0.237,
+      "cross_redundant_ticks": 32,
+      "cross_redundant_frac": 0.237,
+      "novel_ticks": 103
+     },
+     {
+      "ep": 12,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.097,
+      "cross_redundant_ticks": 13,
+      "cross_redundant_frac": 0.097,
+      "novel_ticks": 121
+     }
+    ],
+    "total_distinct_states": 1335,
+    "first_half": {
+     "ticks": 798,
+     "cross_redundant_ticks": 120,
+     "cross_redundant_frac": 0.1504,
+     "novel_ticks": 678,
+     "mean_overlap_frac": 0.1522
+    },
+    "second_half": {
+     "ticks": 816,
+     "cross_redundant_ticks": 159,
+     "cross_redundant_frac": 0.1949,
+     "novel_ticks": 657,
+     "mean_overlap_frac": 0.1981
+    },
+    "recording": "19978136",
+    "n_episodes": 12
+   }
+  },
+  "run3-381": {
+   "on": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.0,
+      "cross_redundant_ticks": 0,
+      "cross_redundant_frac": 0.0,
+      "novel_ticks": 129
+     },
+     {
+      "ep": 2,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.0388,
+      "cross_redundant_ticks": 5,
+      "cross_redundant_frac": 0.0388,
+      "novel_ticks": 124
+     },
+     {
+      "ep": 3,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.1783,
+      "cross_redundant_ticks": 23,
+      "cross_redundant_frac": 0.1783,
+      "novel_ticks": 106
+     },
+     {
+      "ep": 4,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.186,
+      "cross_redundant_ticks": 24,
+      "cross_redundant_frac": 0.186,
+      "novel_ticks": 105
+     },
+     {
+      "ep": 5,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.2016,
+      "cross_redundant_ticks": 26,
+      "cross_redundant_frac": 0.2016,
+      "novel_ticks": 103
+     },
+     {
+      "ep": 6,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.4496,
+      "cross_redundant_ticks": 58,
+      "cross_redundant_frac": 0.4496,
+      "novel_ticks": 71
+     },
+     {
+      "ep": 7,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.0853,
+      "cross_redundant_ticks": 11,
+      "cross_redundant_frac": 0.0853,
+      "novel_ticks": 118
+     },
+     {
+      "ep": 8,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.0698,
+      "cross_redundant_ticks": 9,
+      "cross_redundant_frac": 0.0698,
+      "novel_ticks": 120
+     },
+     {
+      "ep": 9,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.6822,
+      "cross_redundant_ticks": 88,
+      "cross_redundant_frac": 0.6822,
+      "novel_ticks": 41
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.5659,
+      "cross_redundant_ticks": 73,
+      "cross_redundant_frac": 0.5659,
+      "novel_ticks": 56
+     },
+     {
+      "ep": 11,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3566,
+      "cross_redundant_ticks": 46,
+      "cross_redundant_frac": 0.3566,
+      "novel_ticks": 83
+     },
+     {
+      "ep": 12,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.2713,
+      "cross_redundant_ticks": 35,
+      "cross_redundant_frac": 0.2713,
+      "novel_ticks": 94
+     }
+    ],
+    "total_distinct_states": 1150,
+    "first_half": {
+     "ticks": 774,
+     "cross_redundant_ticks": 136,
+     "cross_redundant_frac": 0.1757,
+     "novel_ticks": 638,
+     "mean_overlap_frac": 0.1757
+    },
+    "second_half": {
+     "ticks": 774,
+     "cross_redundant_ticks": 262,
+     "cross_redundant_frac": 0.3385,
+     "novel_ticks": 512,
+     "mean_overlap_frac": 0.3385
+    },
+    "recording": "065586b4",
+    "n_episodes": 12
+   },
+   "off": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.0,
+      "cross_redundant_ticks": 0,
+      "cross_redundant_frac": 0.0,
+      "novel_ticks": 134
+     },
+     {
+      "ep": 2,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.0373,
+      "cross_redundant_ticks": 5,
+      "cross_redundant_frac": 0.0373,
+      "novel_ticks": 129
+     },
+     {
+      "ep": 3,
+      "ticks": 131,
+      "distinct_states": 131,
+      "overlap_frac": 0.3206,
+      "cross_redundant_ticks": 42,
+      "cross_redundant_frac": 0.3206,
+      "novel_ticks": 89
+     },
+     {
+      "ep": 4,
+      "ticks": 136,
+      "distinct_states": 136,
+      "overlap_frac": 0.1691,
+      "cross_redundant_ticks": 23,
+      "cross_redundant_frac": 0.1691,
+      "novel_ticks": 113
+     },
+     {
+      "ep": 5,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.0373,
+      "cross_redundant_ticks": 5,
+      "cross_redundant_frac": 0.0373,
+      "novel_ticks": 129
+     },
+     {
+      "ep": 6,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3488,
+      "cross_redundant_ticks": 45,
+      "cross_redundant_frac": 0.3488,
+      "novel_ticks": 84
+     },
+     {
+      "ep": 7,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.3507,
+      "cross_redundant_ticks": 47,
+      "cross_redundant_frac": 0.3507,
+      "novel_ticks": 87
+     },
+     {
+      "ep": 8,
+      "ticks": 140,
+      "distinct_states": 140,
+      "overlap_frac": 0.0571,
+      "cross_redundant_ticks": 8,
+      "cross_redundant_frac": 0.0571,
+      "novel_ticks": 132
+     },
+     {
+      "ep": 9,
+      "ticks": 144,
+      "distinct_states": 144,
+      "overlap_frac": 0.0903,
+      "cross_redundant_ticks": 13,
+      "cross_redundant_frac": 0.0903,
+      "novel_ticks": 131
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3566,
+      "cross_redundant_ticks": 46,
+      "cross_redundant_frac": 0.3566,
+      "novel_ticks": 83
+     },
+     {
+      "ep": 11,
+      "ticks": 135,
+      "distinct_states": 135,
+      "overlap_frac": 0.237,
+      "cross_redundant_ticks": 32,
+      "cross_redundant_frac": 0.237,
+      "novel_ticks": 103
+     },
+     {
+      "ep": 12,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.097,
+      "cross_redundant_ticks": 13,
+      "cross_redundant_frac": 0.097,
+      "novel_ticks": 121
+     }
+    ],
+    "total_distinct_states": 1335,
+    "first_half": {
+     "ticks": 798,
+     "cross_redundant_ticks": 120,
+     "cross_redundant_frac": 0.1504,
+     "novel_ticks": 678,
+     "mean_overlap_frac": 0.1522
+    },
+    "second_half": {
+     "ticks": 816,
+     "cross_redundant_ticks": 159,
+     "cross_redundant_frac": 0.1949,
+     "novel_ticks": 657,
+     "mean_overlap_frac": 0.1981
+    },
+    "recording": "b4d98fb3",
+    "n_episodes": 12
+   }
+  },
+  "run4-384": {
+   "on": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 131,
+      "distinct_states": 131,
+      "overlap_frac": 0.0,
+      "cross_redundant_ticks": 0,
+      "cross_redundant_frac": 0.0,
+      "novel_ticks": 131
+     },
+     {
+      "ep": 2,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.0543,
+      "cross_redundant_ticks": 7,
+      "cross_redundant_frac": 0.0543,
+      "novel_ticks": 122
+     },
+     {
+      "ep": 3,
+      "ticks": 139,
+      "distinct_states": 139,
+      "overlap_frac": 0.0288,
+      "cross_redundant_ticks": 4,
+      "cross_redundant_frac": 0.0288,
+      "novel_ticks": 135
+     },
+     {
+      "ep": 4,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.0388,
+      "cross_redundant_ticks": 5,
+      "cross_redundant_frac": 0.0388,
+      "novel_ticks": 124
+     },
+     {
+      "ep": 5,
+      "ticks": 131,
+      "distinct_states": 131,
+      "overlap_frac": 0.0611,
+      "cross_redundant_ticks": 8,
+      "cross_redundant_frac": 0.0611,
+      "novel_ticks": 123
+     },
+     {
+      "ep": 6,
+      "ticks": 130,
+      "distinct_states": 130,
+      "overlap_frac": 0.1077,
+      "cross_redundant_ticks": 14,
+      "cross_redundant_frac": 0.1077,
+      "novel_ticks": 116
+     },
+     {
+      "ep": 7,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.0698,
+      "cross_redundant_ticks": 9,
+      "cross_redundant_frac": 0.0698,
+      "novel_ticks": 120
+     },
+     {
+      "ep": 8,
+      "ticks": 130,
+      "distinct_states": 130,
+      "overlap_frac": 0.2308,
+      "cross_redundant_ticks": 30,
+      "cross_redundant_frac": 0.2308,
+      "novel_ticks": 100
+     },
+     {
+      "ep": 9,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3566,
+      "cross_redundant_ticks": 46,
+      "cross_redundant_frac": 0.3566,
+      "novel_ticks": 83
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.2558,
+      "cross_redundant_ticks": 33,
+      "cross_redundant_frac": 0.2558,
+      "novel_ticks": 96
+     },
+     {
+      "ep": 11,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.2171,
+      "cross_redundant_ticks": 28,
+      "cross_redundant_frac": 0.2171,
+      "novel_ticks": 101
+     },
+     {
+      "ep": 12,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.2868,
+      "cross_redundant_ticks": 37,
+      "cross_redundant_frac": 0.2868,
+      "novel_ticks": 92
+     }
+    ],
+    "total_distinct_states": 1343,
+    "first_half": {
+     "ticks": 789,
+     "cross_redundant_ticks": 38,
+     "cross_redundant_frac": 0.0482,
+     "novel_ticks": 751,
+     "mean_overlap_frac": 0.0485
+    },
+    "second_half": {
+     "ticks": 775,
+     "cross_redundant_ticks": 183,
+     "cross_redundant_frac": 0.2361,
+     "novel_ticks": 592,
+     "mean_overlap_frac": 0.2361
+    },
+    "recording": "5b751730",
+    "n_episodes": 12
+   },
+   "off": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.0,
+      "cross_redundant_ticks": 0,
+      "cross_redundant_frac": 0.0,
+      "novel_ticks": 134
+     },
+     {
+      "ep": 2,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.0373,
+      "cross_redundant_ticks": 5,
+      "cross_redundant_frac": 0.0373,
+      "novel_ticks": 129
+     },
+     {
+      "ep": 3,
+      "ticks": 131,
+      "distinct_states": 131,
+      "overlap_frac": 0.3206,
+      "cross_redundant_ticks": 42,
+      "cross_redundant_frac": 0.3206,
+      "novel_ticks": 89
+     },
+     {
+      "ep": 4,
+      "ticks": 136,
+      "distinct_states": 136,
+      "overlap_frac": 0.1691,
+      "cross_redundant_ticks": 23,
+      "cross_redundant_frac": 0.1691,
+      "novel_ticks": 113
+     },
+     {
+      "ep": 5,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.0373,
+      "cross_redundant_ticks": 5,
+      "cross_redundant_frac": 0.0373,
+      "novel_ticks": 129
+     },
+     {
+      "ep": 6,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3488,
+      "cross_redundant_ticks": 45,
+      "cross_redundant_frac": 0.3488,
+      "novel_ticks": 84
+     },
+     {
+      "ep": 7,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.3507,
+      "cross_redundant_ticks": 47,
+      "cross_redundant_frac": 0.3507,
+      "novel_ticks": 87
+     },
+     {
+      "ep": 8,
+      "ticks": 140,
+      "distinct_states": 140,
+      "overlap_frac": 0.0571,
+      "cross_redundant_ticks": 8,
+      "cross_redundant_frac": 0.0571,
+      "novel_ticks": 132
+     },
+     {
+      "ep": 9,
+      "ticks": 144,
+      "distinct_states": 144,
+      "overlap_frac": 0.0903,
+      "cross_redundant_ticks": 13,
+      "cross_redundant_frac": 0.0903,
+      "novel_ticks": 131
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3566,
+      "cross_redundant_ticks": 46,
+      "cross_redundant_frac": 0.3566,
+      "novel_ticks": 83
+     },
+     {
+      "ep": 11,
+      "ticks": 135,
+      "distinct_states": 135,
+      "overlap_frac": 0.237,
+      "cross_redundant_ticks": 32,
+      "cross_redundant_frac": 0.237,
+      "novel_ticks": 103
+     },
+     {
+      "ep": 12,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.097,
+      "cross_redundant_ticks": 13,
+      "cross_redundant_frac": 0.097,
+      "novel_ticks": 121
+     }
+    ],
+    "total_distinct_states": 1335,
+    "first_half": {
+     "ticks": 798,
+     "cross_redundant_ticks": 120,
+     "cross_redundant_frac": 0.1504,
+     "novel_ticks": 678,
+     "mean_overlap_frac": 0.1522
+    },
+    "second_half": {
+     "ticks": 816,
+     "cross_redundant_ticks": 159,
+     "cross_redundant_frac": 0.1949,
+     "novel_ticks": 657,
+     "mean_overlap_frac": 0.1981
+    },
+    "recording": "c2dfe22b",
+    "n_episodes": 12
+   }
+  },
+  "run5-386": {
+   "on": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 130,
+      "distinct_states": 130,
+      "overlap_frac": 0.0,
+      "cross_redundant_ticks": 0,
+      "cross_redundant_frac": 0.0,
+      "novel_ticks": 130
+     },
+     {
+      "ep": 2,
+      "ticks": 130,
+      "distinct_states": 130,
+      "overlap_frac": 0.0231,
+      "cross_redundant_ticks": 3,
+      "cross_redundant_frac": 0.0231,
+      "novel_ticks": 127
+     },
+     {
+      "ep": 3,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.0465,
+      "cross_redundant_ticks": 6,
+      "cross_redundant_frac": 0.0465,
+      "novel_ticks": 123
+     },
+     {
+      "ep": 4,
+      "ticks": 130,
+      "distinct_states": 130,
+      "overlap_frac": 0.0462,
+      "cross_redundant_ticks": 6,
+      "cross_redundant_frac": 0.0462,
+      "novel_ticks": 124
+     },
+     {
+      "ep": 5,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.2093,
+      "cross_redundant_ticks": 27,
+      "cross_redundant_frac": 0.2093,
+      "novel_ticks": 102
+     },
+     {
+      "ep": 6,
+      "ticks": 130,
+      "distinct_states": 130,
+      "overlap_frac": 0.0615,
+      "cross_redundant_ticks": 8,
+      "cross_redundant_frac": 0.0615,
+      "novel_ticks": 122
+     },
+     {
+      "ep": 7,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.2171,
+      "cross_redundant_ticks": 28,
+      "cross_redundant_frac": 0.2171,
+      "novel_ticks": 101
+     },
+     {
+      "ep": 8,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.186,
+      "cross_redundant_ticks": 24,
+      "cross_redundant_frac": 0.186,
+      "novel_ticks": 105
+     },
+     {
+      "ep": 9,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3566,
+      "cross_redundant_ticks": 46,
+      "cross_redundant_frac": 0.3566,
+      "novel_ticks": 83
+     },
+     {
+      "ep": 10,
+      "ticks": 130,
+      "distinct_states": 130,
+      "overlap_frac": 0.2077,
+      "cross_redundant_ticks": 27,
+      "cross_redundant_frac": 0.2077,
+      "novel_ticks": 103
+     },
+     {
+      "ep": 11,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3798,
+      "cross_redundant_ticks": 49,
+      "cross_redundant_frac": 0.3798,
+      "novel_ticks": 80
+     },
+     {
+      "ep": 12,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.5039,
+      "cross_redundant_ticks": 65,
+      "cross_redundant_frac": 0.5039,
+      "novel_ticks": 64
+     }
+    ],
+    "total_distinct_states": 1264,
+    "first_half": {
+     "ticks": 778,
+     "cross_redundant_ticks": 50,
+     "cross_redundant_frac": 0.0643,
+     "novel_ticks": 728,
+     "mean_overlap_frac": 0.0644
+    },
+    "second_half": {
+     "ticks": 775,
+     "cross_redundant_ticks": 239,
+     "cross_redundant_frac": 0.3084,
+     "novel_ticks": 536,
+     "mean_overlap_frac": 0.3085
+    },
+    "recording": "6ae6782b",
+    "n_episodes": 12
+   },
+   "off": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.0,
+      "cross_redundant_ticks": 0,
+      "cross_redundant_frac": 0.0,
+      "novel_ticks": 134
+     },
+     {
+      "ep": 2,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.0373,
+      "cross_redundant_ticks": 5,
+      "cross_redundant_frac": 0.0373,
+      "novel_ticks": 129
+     },
+     {
+      "ep": 3,
+      "ticks": 131,
+      "distinct_states": 131,
+      "overlap_frac": 0.3206,
+      "cross_redundant_ticks": 42,
+      "cross_redundant_frac": 0.3206,
+      "novel_ticks": 89
+     },
+     {
+      "ep": 4,
+      "ticks": 136,
+      "distinct_states": 136,
+      "overlap_frac": 0.1691,
+      "cross_redundant_ticks": 23,
+      "cross_redundant_frac": 0.1691,
+      "novel_ticks": 113
+     },
+     {
+      "ep": 5,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.0373,
+      "cross_redundant_ticks": 5,
+      "cross_redundant_frac": 0.0373,
+      "novel_ticks": 129
+     },
+     {
+      "ep": 6,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3488,
+      "cross_redundant_ticks": 45,
+      "cross_redundant_frac": 0.3488,
+      "novel_ticks": 84
+     },
+     {
+      "ep": 7,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.3507,
+      "cross_redundant_ticks": 47,
+      "cross_redundant_frac": 0.3507,
+      "novel_ticks": 87
+     },
+     {
+      "ep": 8,
+      "ticks": 140,
+      "distinct_states": 140,
+      "overlap_frac": 0.0571,
+      "cross_redundant_ticks": 8,
+      "cross_redundant_frac": 0.0571,
+      "novel_ticks": 132
+     },
+     {
+      "ep": 9,
+      "ticks": 144,
+      "distinct_states": 144,
+      "overlap_frac": 0.0903,
+      "cross_redundant_ticks": 13,
+      "cross_redundant_frac": 0.0903,
+      "novel_ticks": 131
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "distinct_states": 129,
+      "overlap_frac": 0.3566,
+      "cross_redundant_ticks": 46,
+      "cross_redundant_frac": 0.3566,
+      "novel_ticks": 83
+     },
+     {
+      "ep": 11,
+      "ticks": 135,
+      "distinct_states": 135,
+      "overlap_frac": 0.237,
+      "cross_redundant_ticks": 32,
+      "cross_redundant_frac": 0.237,
+      "novel_ticks": 103
+     },
+     {
+      "ep": 12,
+      "ticks": 134,
+      "distinct_states": 134,
+      "overlap_frac": 0.097,
+      "cross_redundant_ticks": 13,
+      "cross_redundant_frac": 0.097,
+      "novel_ticks": 121
+     }
+    ],
+    "total_distinct_states": 1335,
+    "first_half": {
+     "ticks": 798,
+     "cross_redundant_ticks": 120,
+     "cross_redundant_frac": 0.1504,
+     "novel_ticks": 678,
+     "mean_overlap_frac": 0.1522
+    },
+    "second_half": {
+     "ticks": 816,
+     "cross_redundant_ticks": 159,
+     "cross_redundant_frac": 0.1949,
+     "novel_ticks": 657,
+     "mean_overlap_frac": 0.1981
+    },
+    "recording": "bd458841",
+    "n_episodes": 12
+   }
+  }
+ },
+ "aggregate_on": {
+  "second_half_cross_redundant_frac_by_run": [
+   0.3889,
+   0.3329,
+   0.3385,
+   0.2361,
+   0.3084
+  ],
+  "second_half_cross_redundant_ticks_by_run": [
+   301,
+   258,
+   262,
+   183,
+   239
+  ],
+  "first_half_cross_redundant_frac_by_run": [
+   0.2,
+   0.1473,
+   0.1757,
+   0.0482,
+   0.0643
+  ],
+  "mean_second_half_frac": 0.321,
+  "mean_second_half_redundant_ticks": 248.6
+ },
+ "aggregate_off": {
+  "second_half_cross_redundant_frac_by_run": [
+   0.1949,
+   0.1949,
+   0.1949,
+   0.1949,
+   0.1949
+  ],
+  "second_half_cross_redundant_ticks_by_run": [
+   159,
+   159,
+   159,
+   159,
+   159
+  ],
+  "first_half_cross_redundant_frac_by_run": [
+   0.1504,
+   0.1504,
+   0.1504,
+   0.1504,
+   0.1504
+  ],
+  "mean_second_half_frac": 0.1949,
+  "mean_second_half_redundant_ticks": 159.0
+ }
+}
