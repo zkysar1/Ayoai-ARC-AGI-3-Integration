@@ -36,6 +36,10 @@ RUNS = {
                  "off": "c2dfe22b-f24c-4d3d-9d84-d02d39493b94"},
     "run5-386": {"on": "6ae6782b-5901-4004-80e9-6ead0f668105",
                  "off": "bd458841-20b4-4d23-b9f2-3d66340b14b3"},
+    # run-6 (g-315-389): ON = novel-tie (run-4 form) + frontier-TARGET
+    # coordination; OFF unchanged (verified byte-identical to run-5 OFF, 12/12).
+    "run6-389": {"on": "59b02fc5-86cf-4428-a4a8-4a1efaff6282",
+                 "off": "01b3b022-67c0-44be-882f-9212fca6eb7c"},
 }
 
 
