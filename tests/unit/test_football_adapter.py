@@ -28,6 +28,7 @@ from adapters.football import (
     FootballExecutor,
     FootballProximityModel,
     FootballWorldBuilder,
+    SimulatedPitch,
     Unit,
     run_exploration_episode,
 )
@@ -64,39 +65,6 @@ def _contested_pitch() -> dict[str, object]:
     assert isinstance(players, list)
     players[2] = {"id": "A1", "team": "away", "pos": [5.0, 0.0], "size": 2.0}
     return state
-
-
-class SimulatedPitch:
-    """A movable controlled player on the pitch plane -- the PitchTransport for the driver test.
-
-    Actions 0-3 are unit steps (+x, -x, +y, -y). Action 4 is always refused, so the
-    test also exercises the contested/retry_safe branch. Opponents are static here:
-    the driver test is about the loop closing, and the ADVERSARIAL behaviour of the
-    graph and the metric is proven directly in the slot tests below.
-    """
-
-    _DELTAS = {0: (1.0, 0.0), 1: (-1.0, 0.0), 2: (0.0, 1.0), 3: (0.0, -1.0)}
-
-    def __init__(self) -> None:
-        self._pos: tuple[float, float] = (0.0, 0.0)
-
-    def move(self, action: int) -> tuple[bool, str]:
-        delta = self._DELTAS.get(action)
-        if delta is None:
-            return False, "contested"
-        self._pos = (self._pos[0] + delta[0], self._pos[1] + delta[1])
-        return True, "moved"
-
-    def position(self) -> tuple[float, float]:
-        return self._pos
-
-    def world_state(self) -> Mapping[str, object]:
-        return {
-            "players": [
-                {"id": "H1", "team": "home", "pos": [self._pos[0], self._pos[1]], "size": 2.0},
-                {"id": "A1", "team": "away", "pos": [30.0, 30.0], "size": 2.0},
-            ]
-        }
 
 
 # --------------------------------------------------------------------------- #

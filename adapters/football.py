@@ -65,8 +65,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Callable, Mapping, Optional, Sequence
+from typing import Callable, Mapping, Optional, Protocol, Sequence, cast
 
+from adapters.base import EnvironmentAdapter, Executor, ProximityModel, WorldBuilder
 from primitives.frontier_coverage import Cell, FrontierCoverage
 
 # A pitch is a 2D plane: (length axis, width axis). Same Unit fields as the
@@ -79,6 +80,13 @@ _OBSTACLE_KINDS = ("goal", "post", "obstacle", "barrier")
 
 TEAM_HOME = "home"
 TEAM_AWAY = "away"
+
+# The default move vocabulary: four unit steps on the pitch plane (+x, -x, +y, -y).
+# These ids are the KEYS of SimulatedPitch._DELTAS -- the offline transport and the
+# declared action space must agree, or every declared action is refused as
+# "contested" and the coverage primitive learns a displacement model of nothing.
+# A live transport supplying a different vocabulary passes its own `actions=`.
+DEFAULT_ACTIONS: tuple[int, ...] = (0, 1, 2, 3)
 
 
 # --------------------------------------------------------------------------- #
@@ -146,24 +154,44 @@ class EpisodeReport:
         return self.coverage.action_counts()
 
 
-class PitchTransport:
+class PitchTransport(Protocol):
     """The seam Executor drives to realize a move in a concrete pitch runtime.
 
-    Implemented by a simulated pitch (tests) or a thin wrapper over a live
-    football world's read/act API. ``move`` returns (succeeded, reason);
-    ``position`` / ``world_state`` report the controlled player's coord and the
-    pitch snapshot AFTER the move, so perception re-reads a world in which the
-    opponents have also moved.
+    Implemented by ``SimulatedPitch`` (the offline default) or, in principle, a thin
+    wrapper over a live football world's read/act API. ``move`` returns
+    (succeeded, reason); ``position`` / ``world_state`` report the controlled player's
+    coord and the pitch snapshot AFTER the move, so perception re-reads a world in
+    which the opponents have also moved.
+
+    THERE IS NO LIVE IMPLEMENTATION, AND THAT IS DECIDED, NOT PENDING (g-335-147).
+    The obvious candidate is the Java env-server's football world
+    (``AyoServer/Football``, which since g-335-150 does have a real tick loop and BT
+    executor, so its bodies genuinely move). It was rejected as a live pitch on two
+    independent grounds:
+
+    1. **No seam.** env-server exposes exactly two HTTP routes -- ``/ArcEpisodeSeed``
+       and ``/AyoStreamingUpdates``. There is no per-unit move/action endpoint for an
+       external driver to call, so ``move(action)`` has nothing to bind to. Adding one
+       is an env-server architecture change, not a transport wrapper.
+    2. **Two brains, one body.** ARC works as a live transport because the backend is
+       PASSIVE: the external agent is the only decider. The Java football world is the
+       opposite -- each body is driven by env-server's own intent/BT stack. Pointing
+       this Executor at it would put two independent decision loops on one body, and
+       whichever wrote last would win. That is not a transport; it is a race.
+
+    The two footballs are deliberately different things: the Java world tests
+    MULTI-BODY server-resident NPC behaviour, while this adapter tests whether the
+    env-agnostic coverage primitive survives an ADVERSARIAL, time-varying spatial
+    model. Fusing them would serve neither. A live pitch therefore waits on a runtime
+    that is externally drivable -- and per the goal's own warning, a transport built
+    before such a runtime exists is the single-use-abstraction trap.
     """
 
-    def move(self, action: int) -> tuple[bool, str]:
-        raise NotImplementedError
+    def move(self, action: int) -> tuple[bool, str]: ...
 
-    def position(self) -> Coord:
-        raise NotImplementedError
+    def position(self) -> Coord: ...
 
-    def world_state(self) -> Mapping[str, object]:
-        raise NotImplementedError
+    def world_state(self) -> Mapping[str, object]: ...
 
 
 # --------------------------------------------------------------------------- #
@@ -540,3 +568,96 @@ def run_exploration_episode(
         report.results.append(result)
 
     return report
+
+
+# --------------------------------------------------------------------------- #
+# Offline pitch -- the guard-795-safe default transport (parity with            #
+# adapters/arc.py's SimulatedArcGrid, which lives in the MODULE, not the test). #
+# --------------------------------------------------------------------------- #
+class SimulatedPitch:
+    """An offline pitch: a movable controlled player on the plane.
+
+    The football counterpart of ``adapters/arc.py``'s ``SimulatedArcGrid``, and it
+    lives HERE for the same reason that one does: ``build_football_adapter`` must be
+    able to hand the Executor a working transport WITHOUT touching a live backend
+    (guard-795), so the default cannot live in a test module.
+
+    Actions 0-3 are unit steps (+x, -x, +y, -y). Action 4 is always refused, which
+    keeps the contested / ``retry_safe`` branch exercised on the default transport
+    rather than only under test. Opponents are static: this transport exists to
+    close the decision loop offline. The ADVERSARIAL behaviour that makes football
+    interesting -- contested adjacency, interceptable passing lanes -- lives in
+    ``FootballWorldBuilder`` / ``FootballProximityModel`` and is proven directly
+    against them, not through this transport.
+    """
+
+    _DELTAS: Mapping[int, Coord] = {
+        0: (1.0, 0.0),
+        1: (-1.0, 0.0),
+        2: (0.0, 1.0),
+        3: (0.0, -1.0),
+    }
+
+    def __init__(self, *, start: Coord = (0.0, 0.0)) -> None:
+        self._pos: Coord = start
+
+    def move(self, action: int) -> tuple[bool, str]:
+        delta = self._DELTAS.get(action)
+        if delta is None:
+            return False, "contested"
+        self._pos = (self._pos[0] + delta[0], self._pos[1] + delta[1])
+        return True, "moved"
+
+    def position(self) -> Coord:
+        return self._pos
+
+    def world_state(self) -> Mapping[str, object]:
+        return {
+            "players": [
+                {"id": "H1", "team": TEAM_HOME, "pos": [self._pos[0], self._pos[1]], "size": 2.0},
+                {"id": "A1", "team": TEAM_AWAY, "pos": [30.0, 30.0], "size": 2.0},
+            ]
+        }
+
+
+# --------------------------------------------------------------------------- #
+# Provisioner entry -- the production EnvironmentAdapter construction site.     #
+# --------------------------------------------------------------------------- #
+def build_football_adapter(
+    *,
+    transport: Optional[PitchTransport] = None,
+    actions: Optional[Sequence[int]] = None,
+) -> EnvironmentAdapter:
+    """Construct + conformance-validate the football ``EnvironmentAdapter``.
+
+    Mirrors ``adapters/arc.py``'s ``build_arc_adapter``: assembles the three
+    mandatory slots and hands them to ``EnvironmentAdapter``, whose ``__post_init__``
+    validates each against its Protocol (raising ``ConformanceError`` by name on a
+    non-conforming slot). The returned adapter IS the provisioned football session.
+
+    guard-795 parity: ``transport`` defaults to the offline ``SimulatedPitch``, so a
+    provisioned football session is NEVER bound to a live backend by construction.
+    There is no live pitch transport today, and that is a DECIDED state rather than
+    an omission -- see the module note on ``PitchTransport`` and g-335-147.
+    """
+    tx = transport if transport is not None else SimulatedPitch()
+    acts = list(actions) if actions is not None else list(DEFAULT_ACTIONS)
+    # rb-2280: the football slots use concrete per-env value types (Coord / Unit /
+    # Decision), mirroring arc.py / roblox.py / vinheim.py. They conform to base.py's
+    # env-agnostic value-Protocols at RUNTIME -- validated by
+    # EnvironmentAdapter.__post_init__'s isinstance checks and by the issubclass
+    # conformance tests -- but strict mypy cannot prove it statically, because those
+    # Protocols take `object` / UnitLike / DecisionLike params and concrete types are
+    # a param-contravariance violation against them. cast bridges the runtime-valid
+    # conformance to the static checker at this ONE site, which is exactly the fix
+    # rb-2280 prescribes after build_arc_adapter hit this first (g-331-02).
+    # Do NOT widen the concrete slot params to match the Protocols (diverges from the
+    # concrete-typed style the design mandates and forces internal narrowing), and do
+    # NOT make base.py's Protocols generic (a shared-contract change with cross-agent
+    # blast radius, out of scope for a single-env goal).
+    return EnvironmentAdapter(
+        name="football",
+        world_builder=cast(WorldBuilder, FootballWorldBuilder()),
+        executor=cast(Executor, FootballExecutor(transport=tx, actions=acts)),
+        proximity_model=cast(ProximityModel, FootballProximityModel()),
+    )
