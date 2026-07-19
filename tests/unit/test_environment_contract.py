@@ -28,6 +28,11 @@ from adapters.base import (
     ProximityModel,
     WorldBuilder,
 )
+from adapters.football import (
+    FootballExecutor,
+    FootballProximityModel,
+    FootballWorldBuilder,
+)
 from adapters.roblox import RobloxExecutor, RobloxProximityModel, RobloxWorldBuilder
 from adapters.vinheim import (
     VinheimExecutor,
@@ -50,6 +55,13 @@ def test_vinheim_slot_classes_conform_to_contract() -> None:
     assert issubclass(VinheimWorldBuilder, WorldBuilder)
     assert issubclass(VinheimExecutor, Executor)
     assert issubclass(VinheimProximityModel, ProximityModel)
+
+
+def test_football_slot_classes_conform_to_contract() -> None:
+    """g-335-146: a fourth env registers with zero edits to base.py or primitives/."""
+    assert issubclass(FootballWorldBuilder, WorldBuilder)
+    assert issubclass(FootballExecutor, Executor)
+    assert issubclass(FootballProximityModel, ProximityModel)
 
 
 # --------------------------------------------------------------------------- #
