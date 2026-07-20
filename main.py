@@ -574,7 +574,7 @@ def main() -> None:
             "ties ALL-NOVEL at a novel node, break the tie with a deterministic "
             "per-(node, action) hash rotation (node-LOCAL variation, zero memory) "
             "instead of the global (move, action) explore_score prior -- the "
-            "~98%-of-ticks seam the g-315-382 forensics identified as the frozen-"
+            "~98%%-of-ticks seam the g-315-382 forensics identified as the frozen-"
             "sweep mechanism. Effective only with --action-value-store (it "
             "conditions the AEVS ranking branch). OFF (default) = byte-identical "
             "run-3 ordering. Env-agnostic, tiny-compute, replayable."
