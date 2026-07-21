@@ -55,10 +55,12 @@ from __future__ import annotations
 
 import heapq
 import math
-from dataclasses import dataclass, field
-from typing import Callable, Mapping, Optional, Protocol, Sequence
+from dataclasses import dataclass
+from typing import Callable, Mapping, Optional, Sequence
 
 from primitives.frontier_coverage import Cell, FrontierCoverage
+
+from adapters.base import Decision, EpisodeReport, Result, Transport
 
 Vec3 = tuple[float, float, float]
 
@@ -99,57 +101,15 @@ class Unit:
         return k in _CHARACTER_KINDS or k in _PLAYER_KINDS
 
 
-@dataclass(frozen=True)
-class Result:
-    """Executor result (Plan 7.2.A Q10). 'unknown' = fail:unconfirmed/retry_safe=False."""
-
-    outcome: str  # "success" | "fail"
-    reason: str
-    retry_safe: bool
-
-
-@dataclass(frozen=True)
-class Decision:
-    """A primitive's chosen move, carrying decided_by so framework routing is preserved."""
-
-    action: int
-    decided_by: str
-    target_unit_id: Optional[str] = None
-
-
-@dataclass
-class EpisodeReport:
-    """What one exploration episode produced (for verification / analysis)."""
-
-    coverage: FrontierCoverage
-    decisions: list[Decision] = field(default_factory=list)
-    results: list[Result] = field(default_factory=list)
-
-    @property
-    def cells_covered(self) -> int:
-        return self.coverage.visited_count
-
-    @property
-    def action_distribution(self) -> dict[int, int]:
-        return self.coverage.action_counts()
-
-
-class MoveTransport(Protocol):
-    """The seam Executor drives to realize a move-toward task in a concrete Roblox runtime.
-
-    Implemented by a simulated grid world (tests) or a live AyoBridge behavior-tree
-    dispatch (Studio). `move` returns (succeeded, reason); `position`/`world_state`
-    report the NPC pose + the instance tree AFTER the move so perception re-reads it.
-    """
-
-    def move(self, action: int) -> tuple[bool, str]:
-        ...
-
-    def position(self) -> Vec3:
-        ...
-
-    def world_state(self) -> Mapping[str, object]:
-        ...
+# Result / Decision / EpisodeReport are the shared concretes hoisted to
+# adapters.base (g-355-05, byte-identical across roblox/vinheim/arc) and
+# imported above. MoveTransport is this env's alias of the generic base
+# Transport seam, pinned to the Roblox 3D Vec3 -- the injected transport
+# (simulated grid world in tests, live AyoBridge behavior-tree dispatch in
+# Studio) conforms structurally. `move` returns (succeeded, reason);
+# `position`/`world_state` report the NPC pose + the instance tree AFTER the
+# move so perception re-reads it.
+MoveTransport = Transport[Vec3]
 
 
 # --------------------------------------------------------------------------- #
