@@ -50,15 +50,19 @@ Design decisions (logged for review per self.md Decision Authority):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable, Mapping, Optional, Protocol, Sequence, runtime_checkable
+from dataclasses import dataclass, field
+from typing import Callable, Mapping, Optional, Protocol, Sequence, TypeVar, runtime_checkable
 
-from primitives.frontier_coverage import Cell
+from primitives.frontier_coverage import Cell, FrontierCoverage
 
 __all__ = [
     "UnitLike",
     "ResultLike",
     "DecisionLike",
+    "Result",
+    "Decision",
+    "EpisodeReport",
+    "Transport",
     "WorldBuilder",
     "Executor",
     "ProximityModel",
@@ -111,6 +115,85 @@ class DecisionLike(Protocol):
     action: int
     decided_by: str
     target_unit_id: Optional[str]
+
+
+# --------------------------------------------------------------------------- #
+# Concrete shared value types (hoisted from the adapters, g-355-05).           #
+#                                                                              #
+# roblox.py / vinheim.py / arc.py each re-declared these three BYTE-IDENTICAL  #
+# dataclasses; they now live here once and the adapters import them. They      #
+# structurally satisfy the ResultLike / DecisionLike Protocols above, so the   #
+# slot signatures keep referring to the Protocols -- an env MAY still supply    #
+# its own conforming value type (the Protocols name the shape; these are the   #
+# shared default concretes).                                                    #
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class Result:
+    """Executor result (Plan 7.2.A Q10). 'unknown' = fail:unconfirmed/retry_safe=False."""
+
+    outcome: str  # "success" | "fail"
+    reason: str
+    retry_safe: bool
+
+
+@dataclass(frozen=True)
+class Decision:
+    """A primitive's chosen move, carrying decided_by so framework routing is preserved."""
+
+    action: int
+    decided_by: str
+    target_unit_id: Optional[str] = None
+
+
+@dataclass
+class EpisodeReport:
+    """What one exploration episode produced (for verification / analysis)."""
+
+    coverage: FrontierCoverage
+    decisions: list[Decision] = field(default_factory=list)
+    results: list[Result] = field(default_factory=list)
+
+    @property
+    def cells_covered(self) -> int:
+        return self.coverage.visited_count
+
+    @property
+    def action_distribution(self) -> dict[int, int]:
+        return self.coverage.action_counts()
+
+
+# --------------------------------------------------------------------------- #
+# Transport -- the generic Executor->runtime seam (hoisted, g-355-05).          #
+#                                                                              #
+# roblox.MoveTransport / vinheim.WorldTransport / arc.ArcTransport shared an   #
+# identical (move, position, world_state) shape; ONLY position's coordinate    #
+# type varies per env (roblox Vec3 / vinheim Coord / arc GridCoord). The       #
+# ``CoordT_co`` type parameter captures exactly that one axis of variance --    #
+# the contract names the SHAPE, not the coord arity. It is COVARIANT: the       #
+# coord appears only in a return position (``position`` output), so a           #
+# ``Transport[Vec3]`` is usable where a ``Transport`` of a coord supertype is   #
+# expected (PEP 484; required by strict mypy for a Protocol return-only var).   #
+# An adapter aliases it with its own coord type, e.g.                           #
+# ``WorldTransport = Transport[Coord]``.                                        #
+# --------------------------------------------------------------------------- #
+CoordT_co = TypeVar("CoordT_co", covariant=True)
+
+
+class Transport(Protocol[CoordT_co]):
+    """The seam an Executor drives to realize a move in a concrete env runtime.
+
+    Implemented per-env by a simulated world (tests) or a live runtime wrapper,
+    injected into the env's Executor. ``move`` returns (succeeded, reason);
+    ``position`` / ``world_state`` report the agent coord + the world entity
+    list AFTER the move so perception re-reads it. ``position``'s coordinate
+    type is env-specific (``CoordT_co``).
+    """
+
+    def move(self, action: int) -> tuple[bool, str]: ...
+
+    def position(self) -> CoordT_co: ...
+
+    def world_state(self) -> Mapping[str, object]: ...
 
 
 # --------------------------------------------------------------------------- #
