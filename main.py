@@ -11,6 +11,7 @@ import os
 import random
 import sys
 import time
+from pathlib import Path
 from typing import Any, Callable
 
 import requests
@@ -26,6 +27,11 @@ from ayoai_streaming_client import (
 from random_streaming_adapter import RandomStreamingAdapter
 from recorder import Recorder
 from solver_v0.streaming_adapter import SolverV0StreamingAdapter
+from solver_v2.refiner import (
+    RefinerSeedProvider,
+    SkillLibrary,
+    default_library_path,
+)
 from solver_v2.seed_provider import BitNetSeedProvider, SeedProvider
 from solver_v2.streaming_adapter import SolverV2StreamingAdapter
 from structs import FrameData, GameAction, GameState, Scorecard
@@ -287,6 +293,36 @@ def build_v2_seed_provider(
         ayoai_session.streaming_url.rsplit("/", 1)[0] + "/ArcEpisodeSeed"
     )
     return BitNetSeedProvider(seed_endpoint, api_key)
+
+
+def build_v3_refiner_seed_provider(
+    inner: SeedProvider | None,
+    *,
+    library_path: str | Path | None = None,
+) -> SeedProvider | None:
+    """Wrap the inner v2 seed provider in the cross-episode v3
+    ``RefinerSeedProvider`` (g-355-13 live-play wiring — the CONSUME side of the
+    Continual-Harness outer loop, arxiv 2605.09998).
+
+    The refiner CONSUMES a persistent ``SkillLibrary`` (JSON-backed, loaded from
+    ``default_library_path()`` or an override): on a TRUSTED learned hit whose
+    confidence exceeds the inner prior's it refines the prior; otherwise it
+    returns the inner prior BYTE-IDENTICAL. So an empty/absent library can never
+    score below the wrapped v2 seed (strict-superset F1 — proven in
+    ``tests/unit/test_solver_v2_refiner.py``). This adds only ONE dict lookup +
+    signature computation per EPISODE (not per tick), so the hot path stays
+    deterministic and LLM-free (self.md constraint gate 1); the library is
+    LEARNED offline by the outer loop (``Refiner.observe``), never in this live
+    consume path.
+
+    Returns ``None`` unchanged when ``inner`` is None (no AyoAI session -> the
+    adapter keeps its in-process oracle; the refiner needs a real inner to wrap).
+    """
+    if inner is None:
+        return None
+    path = library_path if library_path is not None else default_library_path()
+    library = SkillLibrary.load(path)
+    return RefinerSeedProvider(inner, library)
 
 
 def main() -> None:
@@ -625,6 +661,22 @@ def main() -> None:
             "byte-identical. Deterministic, replayable."
         ),
     )
+    parser.add_argument(
+        "--use-refiner",
+        action="store_true",
+        help=(
+            "g-355-13: enable the v3 cross-episode RefinerSeedProvider arm on "
+            "top of the --use-solver-v2 seed. Loads a persistent SkillLibrary "
+            "(SOLVER_V2_SKILL_LIBRARY env, else recordings/skill_library.json) "
+            "and, on a TRUSTED learned signature hit, refines the per-EPISODE "
+            "prior (objective/confidence a historically-winning signature "
+            "earned); otherwise returns the v2 prior byte-identical. Strict-"
+            "superset: an empty/absent library == --use-solver-v2 byte-identical "
+            "(F1, proven in test_solver_v2_refiner.py). No per-tick LLM (self.md "
+            "gate 1); the library is learned OFFLINE by the outer loop. Only "
+            "takes effect under --use-solver-v2. OFF (default) = byte-identical."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -881,10 +933,33 @@ def main() -> None:
                 "Solver-v2 seed source: live BitNetSeedProvider "
                 "(POST /ArcEpisodeSeed)"
             )
+        # g-355-13: optional v3 refiner arm. Wraps the v2 seed in the cross-
+        # episode RefinerSeedProvider (strict-superset: an empty library is
+        # byte-identical to --use-solver-v2). Only wraps a real inner; a None
+        # inner (no session) stays None so the adapter keeps its oracle.
+        seed_provider_for_adapter: SeedProvider | None = v2_seed_provider
+        if args.use_refiner:
+            refined = build_v3_refiner_seed_provider(v2_seed_provider)
+            if refined is not None:
+                lib_path = default_library_path()
+                lib_size = len(SkillLibrary.load(lib_path))
+                logger.info(
+                    "Solver-v3 refiner arm ENABLED: wrapping v2 seed with a "
+                    "SkillLibrary(%d skill(s)) from %s (strict-superset; an "
+                    "empty library is byte-identical to --use-solver-v2)",
+                    lib_size,
+                    lib_path,
+                )
+                seed_provider_for_adapter = refined
+            else:
+                logger.info(
+                    "--use-refiner requested but the inner v2 seed is None (no "
+                    "session); refiner not applied — adapter keeps its oracle."
+                )
         streaming_client = SolverV2StreamingAdapter(
             ayo_server_key=card_id,
             arc_game_id=args.game,
-            seed_provider=v2_seed_provider,
+            seed_provider=seed_provider_for_adapter,
             use_state_graph=args.state_graph,
             config_prior=args.config_prior,
             frontier_nav=args.click_frontier_nav,
