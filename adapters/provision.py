@@ -8,16 +8,21 @@ builder up and returns the constructed adapter -- so ``provision("arc-agi-3")`` 
 the arc-agi-3 session handle (g-331-02's verification outcome).
 
 The registry is the single, explicit place an environment is registered. ARC-AGI-3
-(``adapters/arc.py``, alpha) is registered here. The roblox (delta) and vinheim (alpha)
-adapters predate this provisioner and supply their slots directly; their owners register
-them via the SAME ``_PROVISIONERS`` entry pattern when an envType-keyed lookup is needed
-for them -- this module does not reach across those ownership lanes to register them
-unbidden (implementation-discipline: touch only what g-331-02 requires).
+(``adapters/arc.py``, alpha) and football (``adapters/football.py``, foxtrot -- g-335-147)
+are registered here. The roblox (delta) and vinheim (alpha) adapters predate this
+provisioner and supply their slots directly; their owners register them via the SAME
+``_PROVISIONERS`` entry pattern when an envType-keyed lookup is needed for them -- this
+module does not reach across those ownership lanes to register them unbidden
+(implementation-discipline: touch only what the goal requires).
 
-guard-795: ``provision("arc-agi-3")`` returns an adapter wired to the offline
-``SimulatedArcGrid`` by default (see ``build_arc_adapter``); a live ARC transport must be
-injected via ``provision("arc-agi-3", transport=<live>)`` deliberately (g-331-03,
-guard-795-gated). Provisioning alone never touches a live backend.
+guard-795: EVERY registered builder defaults to an OFFLINE transport, so provisioning
+alone never touches a live backend. ``provision("arc-agi-3")`` wires the offline
+``SimulatedArcGrid``; a live ARC transport must be injected via
+``provision("arc-agi-3", transport=<live>)`` deliberately (g-331-03, guard-795-gated).
+``provision("football")`` wires the offline ``SimulatedPitch``; football has NO live
+transport today -- a decided state rather than an omission, because the only candidate
+runtime (the Java env-server football world) drives its own bodies and exposes no
+per-unit action endpoint. See ``adapters/football.py``'s ``build_football_adapter``.
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ from typing import Any, Callable
 
 from adapters.arc import build_arc_adapter
 from adapters.base import EnvironmentAdapter
+from adapters.football import build_football_adapter
 
 
 class UnknownEnvType(LookupError):
@@ -36,6 +42,7 @@ class UnknownEnvType(LookupError):
 # accepts the env's keyword arguments (e.g. arc-agi-3's optional ``transport`` / ``actions``).
 _PROVISIONERS: dict[str, Callable[..., EnvironmentAdapter]] = {
     "arc-agi-3": build_arc_adapter,
+    "football": build_football_adapter,
 }
 
 

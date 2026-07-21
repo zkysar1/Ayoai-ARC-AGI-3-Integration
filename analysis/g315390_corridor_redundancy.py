@@ -83,11 +83,6 @@ RUNS = {
                  "off": "bd458841-20b4-4d23-b9f2-3d66340b14b3"},
     "run6-389": {"on": "59b02fc5-86cf-4428-a4a8-4a1efaff6282",
                  "off": "01b3b022-67c0-44be-882f-9212fca6eb7c"},
-    # g-315-437 two-arm build-gate (2026-07-21): on = fc + corridor-penalty
-    # (the late-gated tertiary-tie-break coordinator), off = fc-only baseline
-    # generated the same session. Both 12 episodes / 1569 ticks / ls20-9607627b.
-    "run7-437": {"on": "a9c45516-0af5-4608-9525-51681cc987ee",
-                 "off": "93309ee8-b150-478d-b183-2d08918411b2"},
 }
 
 
