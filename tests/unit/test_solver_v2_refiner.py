@@ -239,6 +239,44 @@ def test_heuristic_refiner_adjusts_surviving_confidence_conservatively() -> None
     assert after.confidence > 0.0
 
 
+def test_heuristic_refiner_proposes_better_objective_from_winning_neighbors() -> None:
+    """GENERATIVE edit (g-355-18): a losing signature is RE-AIMED to the objective
+    most frequently WINNING across structurally-similar (same action-class)
+    signatures — not merely retired to UNKNOWN. The proposal is drawn from the
+    observed winning distribution, and when the donor evidence is strong it becomes
+    TRUSTED so the arm can steer on it (the additive Continual-Harness gain)."""
+    lib = SkillLibrary(min_support=3)
+    losing_sig = frame_signature(_SALIENT_FRAME, _AVAIL_MOVE)  # "a=move|..."
+    # The loser: 1 win + 4 losses with reach_cell -> support=5, win_rate=0.2.
+    Refiner(lib).observe(
+        [
+            EpisodeRecord(losing_sig, OBJECTIVE_REACH_CELL, won=(i == 0))
+            for i in range(5)
+        ]
+    )
+    # A DIFFERENT move-class signature that WINS decisively with align_to_cell:
+    # the donor winning objective for the action class (4 wins / 4 support).
+    donor_sig = "a=move|d=4x4|k=2|bg=2|rare=1"
+    assert donor_sig.split("|", 1)[0] == losing_sig.split("|", 1)[0]  # same action class
+    Refiner(lib).observe(
+        [EpisodeRecord(donor_sig, OBJECTIVE_ALIGN_TO_CELL, won=True) for _ in range(4)]
+    )
+    HeuristicRefinementModel().refine([], lib)
+    after = lib.lookup(losing_sig)
+    assert after is not None
+    # Received the PROPOSED better objective from the winning distribution — the
+    # generative edit, NOT a retire-to-UNKNOWN.
+    assert after.objective == OBJECTIVE_ALIGN_TO_CELL
+    assert after.objective != OBJECTIVE_UNKNOWN
+    # Strong donor (4/4 @ support >= min_support) -> confidence 1.0 -> trusted, so
+    # the proposal can actually steer (evidence-backed transfer, not blind override).
+    assert after.confidence >= 0.5
+    assert lib.is_trusted(after)
+    # The donor signature itself keeps its winning objective (untouched by re-aim).
+    donor_entry = lib.lookup(donor_sig)
+    assert donor_entry is not None and donor_entry.objective == OBJECTIVE_ALIGN_TO_CELL
+
+
 # ── measure_aggregate offline harness (g-355-09, design Section 5) ────────────
 
 # A palette relabel of _SALIENT_FRAME (0->7, 5->9): the SAME signature (proven by

@@ -205,9 +205,62 @@ class NoOpRefinementModel:
         return library
 
 
+def _winning_objectives_by_action_class(
+    library: "SkillLibrary",
+) -> dict[str, dict[str, tuple[int, int]]]:
+    """Snapshot the ``(wins, support)`` per WINNING objective, grouped by action
+    class, over the library's CURRENT entries — taken BEFORE any refine edit so a
+    RE-AIM earlier in a pass can never feed ITSELF as donor evidence to a later
+    loser (deterministic, order-independent). Only real winning objectives (an
+    ``OBJECTIVES`` member, not ``UNKNOWN``, with >=1 win) contribute; the action
+    class is the ``a=`` band of the signature key — the coarsest
+    structural-similarity band ``frame_signature`` exposes."""
+    agg: dict[str, dict[str, tuple[int, int]]] = {}
+    for sig, entry in library._entries.items():
+        obj = entry.objective
+        if entry.wins <= 0 or obj == OBJECTIVE_UNKNOWN or obj not in OBJECTIVES:
+            continue
+        per_obj = agg.setdefault(sig.split("|", 1)[0], {})
+        w, s = per_obj.get(obj, (0, 0))
+        per_obj[obj] = (w + entry.wins, s + entry.support)
+    return agg
+
+
+def _propose_from_donor(
+    per_objective: dict[str, tuple[int, int]],
+    *,
+    exclude_objective: str,
+    min_support: int,
+) -> "tuple[str, float] | None":
+    """Pick the ``OBJECTIVES`` member most frequently WINNING in a donor pool (the
+    per-objective ``(wins, support)`` map for ONE action class), excluding the
+    losing signature's own objective. Returns ``(objective, confidence)`` where
+    confidence is the donor's aggregate win-rate discounted by its aggregate
+    support (the SAME calibration ``SkillLibrary.observe`` applies) — so a thin or
+    weak donor yields a sub-``SEED_TRUST_MIN`` confidence and the consult-time
+    strict-superset gate declines the proposal. Returns ``None`` when no other
+    winning objective exists (the caller then retires to ``UNKNOWN``, the
+    g-355-08 path). Ties on aggregate wins break toward the higher win-rate."""
+    candidates = {
+        o: (w, s)
+        for o, (w, s) in per_objective.items()
+        if o != exclude_objective and w > 0
+    }
+    if not candidates:
+        return None
+    best = max(
+        candidates,
+        key=lambda o: (candidates[o][0], candidates[o][0] / candidates[o][1]),
+    )
+    donor_wins, donor_support = candidates[best]
+    win_rate = donor_wins / donor_support if donor_support else 0.0
+    evidence_factor = min(1.0, donor_support / max(1, min_support))
+    return best, round(win_rate * evidence_factor, 4)
+
+
 class HeuristicRefinementModel:
-    """Deterministic fill of the ``RefinementModel`` seam (g-355-08): reads the
-    post-``observe`` library and proposes two inspectable edits from the
+    """Deterministic fill of the ``RefinementModel`` seam (g-355-08, g-355-18):
+    reads the post-``observe`` library and proposes inspectable edits from the
     win/support statistics — no LLM.
 
     Why deterministic (self.md: math-first, LLM as a *labeled* follow-up): the
@@ -217,16 +270,23 @@ class HeuristicRefinementModel:
     SAME ``RefinementModel`` Protocol. Kept OPT-IN (not the ``Refiner`` default)
     so it stays a labeled arm; ``NoOpRefinementModel`` remains the default.
 
-    Both edits can only make a signature LESS trusted, so together with
-    ``RefinerSeedProvider``'s consult-time strict-superset check the v3 arm never
-    drops below the v2 baseline (an empty library is a no-op — the strict-superset
-    identity holds byte-for-byte):
+    The strict-superset guarantee rests on ``RefinerSeedProvider``'s consult-time
+    check (only a TRUSTED, STRONGER-than-base proposal is ever applied) plus the
+    empty-library no-op (no entries -> the edit loop never runs, so the identity
+    holds byte-for-byte). The RE-AIM edit below is GENERATIVE — it can RAISE a
+    signature's trust — so "never worse than v2" is enforced at consult time, NOT
+    by every edit being trust-reducing:
 
-    - RETIRE a losing objective: a skill with enough evidence
+    - RE-AIM or RETIRE a losing objective (g-355-18): a skill with enough evidence
       (``support >= library.min_support``) but ``win_rate < retire_win_rate`` has
-      learned an objective that LOSES here — reset it to ``OBJECTIVE_UNKNOWN``
-      (never trusted) and zero its confidence. ``observe`` re-learns it if the
-      signature starts winning again (self-correcting).
+      learned an objective that LOSES here. PROPOSE the objective most frequently
+      WINNING across structurally-similar (same action-class) signatures and
+      RE-AIM to it, with confidence = that donor's aggregate win-rate discounted
+      by its aggregate support (a thin/weak donor stays below the trust floor, so
+      the consult gate declines it). If NO donor winning objective exists, RETIRE
+      to ``OBJECTIVE_UNKNOWN`` (never trusted -> falls back to v2, the g-355-08
+      behavior). ``observe`` re-learns either way if the signature starts winning
+      again (self-correcting).
     - ADJUST a confidence prior: recompute every SURVIVING entry's confidence as
       an additive-smoothed win-rate ``(wins + a) / (support + a + b)`` scaled by
       the same evidence factor ``observe`` uses. Survivors have
@@ -253,15 +313,35 @@ class HeuristicRefinementModel:
         # before this in Refiner.refine); the folded win/support counts ARE the
         # failure signatures this model reads — no need to re-iterate `records`.
         min_support = max(1, library.min_support)
-        for entry in library._entries.values():
+        # Snapshot the winning-objective distribution per action class BEFORE any
+        # edit, so the generative RE-AIM below is order-independent (a re-aim
+        # earlier in the pass cannot feed itself as donor evidence to a later
+        # loser). Empty library -> empty snapshot -> the loop body never runs, so
+        # the strict-superset identity holds byte-for-byte.
+        donor = _winning_objectives_by_action_class(library)
+        for sig, entry in library._entries.items():
             if (
                 entry.support >= library.min_support
                 and entry.objective != OBJECTIVE_UNKNOWN
                 and entry.win_rate < self.retire_win_rate
             ):
-                # RETIRE a losing objective -> never trusted -> falls back to v2.
-                entry.objective = OBJECTIVE_UNKNOWN
-                entry.confidence = 0.0
+                # A losing objective. GENERATIVE edit (g-355-18): before falling
+                # back to v2, PROPOSE the objective most frequently winning across
+                # structurally-similar (same action-class) signatures and RE-AIM
+                # to it with a conservative, evidence-discounted confidence; the
+                # consult-time strict-superset gate still decides whether it
+                # actually fires (only a trusted-and-stronger proposal is applied).
+                # No donor -> RETIRE to UNKNOWN (never trusted -> falls back to v2).
+                proposal = _propose_from_donor(
+                    donor.get(sig.split("|", 1)[0], {}),
+                    exclude_objective=entry.objective,
+                    min_support=library.min_support,
+                )
+                if proposal is not None:
+                    entry.objective, entry.confidence = proposal
+                else:
+                    entry.objective = OBJECTIVE_UNKNOWN
+                    entry.confidence = 0.0
                 continue
             # ADJUST a confidence prior (additive smoothing toward a low prior).
             smoothed = (entry.wins + self.prior_alpha) / (
