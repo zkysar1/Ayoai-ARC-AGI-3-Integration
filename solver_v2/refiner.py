@@ -205,6 +205,73 @@ class NoOpRefinementModel:
         return library
 
 
+class HeuristicRefinementModel:
+    """Deterministic fill of the ``RefinementModel`` seam (g-355-08): reads the
+    post-``observe`` library and proposes two inspectable edits from the
+    win/support statistics — no LLM.
+
+    Why deterministic (self.md: math-first, LLM as a *labeled* follow-up): the
+    design's named edits are computable from the counts, and a rule-based refiner
+    stays inspectable/diffable. A BitNet/LLM-backed model is a separate labeled
+    experiment (``design/v3-llm-refiner-arm.md`` Section 4) plugging into the
+    SAME ``RefinementModel`` Protocol. Kept OPT-IN (not the ``Refiner`` default)
+    so it stays a labeled arm; ``NoOpRefinementModel`` remains the default.
+
+    Both edits can only make a signature LESS trusted, so together with
+    ``RefinerSeedProvider``'s consult-time strict-superset check the v3 arm never
+    drops below the v2 baseline (an empty library is a no-op — the strict-superset
+    identity holds byte-for-byte):
+
+    - RETIRE a losing objective: a skill with enough evidence
+      (``support >= library.min_support``) but ``win_rate < retire_win_rate`` has
+      learned an objective that LOSES here — reset it to ``OBJECTIVE_UNKNOWN``
+      (never trusted) and zero its confidence. ``observe`` re-learns it if the
+      signature starts winning again (self-correcting).
+    - ADJUST a confidence prior: recompute every SURVIVING entry's confidence as
+      an additive-smoothed win-rate ``(wins + a) / (support + a + b)`` scaled by
+      the same evidence factor ``observe`` uses. Survivors have
+      ``win_rate >= retire_win_rate > a/(a+b)``, so the smoothed rate is <= the
+      raw ``win_rate`` — one lucky streak cannot over-trust a thin-support
+      signature (calibration, never inflation).
+    """
+
+    def __init__(
+        self,
+        *,
+        retire_win_rate: float = 0.34,
+        prior_alpha: float = 1.0,
+        prior_beta: float = 2.0,
+    ) -> None:
+        self.retire_win_rate = retire_win_rate
+        self.prior_alpha = prior_alpha
+        self.prior_beta = prior_beta
+
+    def refine(
+        self, records: "list[EpisodeRecord]", library: "SkillLibrary"
+    ) -> "SkillLibrary":
+        # `records` are already folded into `library` by Refiner.observe (called
+        # before this in Refiner.refine); the folded win/support counts ARE the
+        # failure signatures this model reads — no need to re-iterate `records`.
+        min_support = max(1, library.min_support)
+        for entry in library._entries.values():
+            if (
+                entry.support >= library.min_support
+                and entry.objective != OBJECTIVE_UNKNOWN
+                and entry.win_rate < self.retire_win_rate
+            ):
+                # RETIRE a losing objective -> never trusted -> falls back to v2.
+                entry.objective = OBJECTIVE_UNKNOWN
+                entry.confidence = 0.0
+                continue
+            # ADJUST a confidence prior (additive smoothing toward a low prior).
+            smoothed = (entry.wins + self.prior_alpha) / (
+                entry.support + self.prior_alpha + self.prior_beta
+            )
+            evidence_factor = min(1.0, entry.support / min_support)
+            entry.confidence = round(smoothed * evidence_factor, 4)
+        return library
+
+
 class SkillLibrary:
     """Persistent store of cross-episode ``LearnedPrior`` skills, keyed by
     signature. JSON-backed so it survives across offline refiner passes and can

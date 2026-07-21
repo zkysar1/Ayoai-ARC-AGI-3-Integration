@@ -24,6 +24,7 @@ from solver_v2.episode import (
 )
 from solver_v2.refiner import (
     EpisodeRecord,
+    HeuristicRefinementModel,
     MeasuredEpisode,
     NoOpRefinementModel,
     Refiner,
@@ -168,6 +169,74 @@ def test_load_missing_file_is_empty_degrade_safe() -> None:
     """A missing/unreadable library loads as empty (never raises)."""
     lib = SkillLibrary.load("/nonexistent/path/skill_library.json")
     assert len(lib) == 0
+
+
+# ── HeuristicRefinementModel: the deterministic RefinementModel seam (g-355-08) ─
+
+
+def test_heuristic_refiner_retires_losing_objective() -> None:
+    """The model proposes >=1 library edit from a failure-signature fixture: a
+    well-supported signature with a poor win rate has its learned objective
+    RETIRED to UNKNOWN (a losing objective is un-learned), so the arm falls back
+    to the v2 base for that signature — a strict-superset-safe edit."""
+    lib = SkillLibrary(min_support=3)
+    sig = frame_signature(_SALIENT_FRAME, _AVAIL_MOVE)
+    # 1 win + 4 losses => support=5 (>= min_support), win_rate=0.2 (a clear loser).
+    Refiner(lib).observe(
+        [EpisodeRecord(sig, OBJECTIVE_REACH_CELL, won=(i == 0)) for i in range(5)]
+    )
+    before = lib.lookup(sig)
+    assert before is not None and before.objective == OBJECTIVE_REACH_CELL
+    assert before.support == 5 and before.wins == 1
+    # The model reads the post-observe library and edits it in place.
+    returned = HeuristicRefinementModel().refine([], lib)
+    after = lib.lookup(sig)
+    assert returned is lib  # returns the same library it edited
+    assert after is not None
+    assert after.objective == OBJECTIVE_UNKNOWN  # >=1 edit: losing objective retired
+    assert after.confidence == 0.0
+    assert not lib.is_trusted(after)  # retired -> never trusted -> falls back to v2
+
+
+def test_heuristic_refiner_consulted_by_refiner_preserves_superset() -> None:
+    """Refiner.refine CONSULTS the model (a loser folded in by observe is retired
+    in the SAME refine() call), and an EMPTY library is a no-op — so the
+    strict-superset identity (empty library => unchanged) holds under the model."""
+    # Empty library: refine is a no-op (no entries to edit) -> strict-superset intact.
+    empty = SkillLibrary(min_support=3)
+    HeuristicRefinementModel().refine([], empty)
+    assert len(empty) == 0
+    # Wired through Refiner(lib, model): observe folds the records, then the model
+    # retires the loser — proving the model is consulted by Refiner.refine.
+    lib = SkillLibrary(min_support=3)
+    sig = frame_signature(_SALIENT_FRAME, _AVAIL_MOVE)
+    Refiner(lib, HeuristicRefinementModel()).refine(
+        [EpisodeRecord(sig, OBJECTIVE_REACH_CELL, won=(i == 0)) for i in range(5)]
+    )
+    e = lib.lookup(sig)
+    assert e is not None and e.objective == OBJECTIVE_UNKNOWN  # model ran inside refine
+
+
+def test_heuristic_refiner_adjusts_surviving_confidence_conservatively() -> None:
+    """The second edit — ADJUST a confidence prior — recalibrates a SURVIVING
+    entry (win_rate above the retire floor) DOWNWARD via additive smoothing, so a
+    thin-support winner is never over-trusted (calibration, never inflation)."""
+    lib = SkillLibrary(min_support=3)
+    sig = frame_signature(_SALIENT_FRAME, _AVAIL_MOVE)
+    # 3 wins + 1 loss => support=4, win_rate=0.75 (a survivor, > retire floor 0.34).
+    Refiner(lib).observe(
+        [EpisodeRecord(sig, OBJECTIVE_REACH_CELL, won=(i < 3)) for i in range(4)]
+    )
+    before = lib.lookup(sig)
+    assert before is not None and before.objective == OBJECTIVE_REACH_CELL
+    observe_conf = before.confidence  # 0.75 * evidence_factor(1.0) = 0.75
+    HeuristicRefinementModel().refine([], lib)
+    after = lib.lookup(sig)
+    assert after is not None
+    assert after.objective == OBJECTIVE_REACH_CELL  # NOT retired (a winner survives)
+    # Additive smoothing (wins+1)/(support+3) = 4/7 < 0.75 -> confidence lowered.
+    assert after.confidence < observe_conf
+    assert after.confidence > 0.0
 
 
 # ── measure_aggregate offline harness (g-355-09, design Section 5) ────────────
