@@ -17,17 +17,21 @@ guard-660: these prove the WIRE offline; a live score is a later goal.
 from __future__ import annotations
 
 from solver_v2.episode import (
+    OBJECTIVE_ALIGN_TO_CELL,
     OBJECTIVE_REACH_CELL,
     OBJECTIVE_UNKNOWN,
     EpisodeContext,
 )
 from solver_v2.refiner import (
     EpisodeRecord,
+    MeasuredEpisode,
     NoOpRefinementModel,
     Refiner,
     RefinerSeedProvider,
     SkillLibrary,
+    assert_f1_strict_superset,
     frame_signature,
+    measure_aggregate,
 )
 from solver_v2.seed_provider import DeterministicOracleSeedProvider
 from structs import FrameData, GameState
@@ -40,9 +44,11 @@ _SALIENT_FRAME = [[[0, 0, 0], [0, 0, 0], [0, 5, 0]]]
 _AVAIL_MOVE = (1, 2, 3, 4)
 
 
-def _context(frame: list, available: tuple[int, ...] = _AVAIL_MOVE) -> EpisodeContext:
+def _context(
+    frame: list, available: tuple[int, ...] = _AVAIL_MOVE, *, episode_id: int = 1
+) -> EpisodeContext:
     return EpisodeContext(
-        episode_id=1,
+        episode_id=episode_id,
         game_class="ls20",
         available_actions=available,
         boundary_reason="initial-episode",
@@ -162,3 +168,108 @@ def test_load_missing_file_is_empty_degrade_safe() -> None:
     """A missing/unreadable library loads as empty (never raises)."""
     lib = SkillLibrary.load("/nonexistent/path/skill_library.json")
     assert len(lib) == 0
+
+
+# ── measure_aggregate offline harness (g-355-09, design Section 5) ────────────
+
+# A palette relabel of _SALIENT_FRAME (0->7, 5->9): the SAME signature (proven by
+# test_signature_is_palette_relabel_invariant) but a DIFFERENT board — the F3
+# "learned on 0/5 boards, transfers to a never-seen 7/9 board" fixture.
+_RELABELED_FRAME = [[[7, 7, 7], [7, 7, 7], [7, 9, 7]]]
+# A uniform frame: no salient cell -> the oracle leaves the seed UNTRUSTED.
+_UNIFORM_FRAME = [[[0, 0, 0], [0, 0, 0], [0, 0, 0]]]
+
+
+def _measured(
+    frame: list,
+    *,
+    winning: str | None = None,
+    won: bool | None = None,
+    objective_used: str = OBJECTIVE_UNKNOWN,
+    board_id: str | None = None,
+    episode_id: int = 1,
+) -> MeasuredEpisode:
+    return MeasuredEpisode(
+        context=_context(frame, episode_id=episode_id),
+        winning_objective=winning,
+        won=won,
+        objective_used=objective_used,
+        board_id=board_id,
+    )
+
+
+def test_measure_aggregate_empty_library_gain_zero() -> None:
+    """F1 (the load-bearing guarantee): an EMPTY library => treatment == baseline,
+    gain == 0.0 exactly, and the assert_f1 helper's per-episode byte check passes."""
+    inner = DeterministicOracleSeedProvider()
+    held_out = [
+        _measured(_SALIENT_FRAME, winning=OBJECTIVE_REACH_CELL, board_id="b1", episode_id=1),
+        _measured(_RELABELED_FRAME, winning=OBJECTIVE_REACH_CELL, board_id="b2", episode_id=2),
+    ]
+    result = measure_aggregate(held_out, inner, SkillLibrary())
+    assert result.gain == 0.0
+    assert result.baseline == result.treatment
+    assert result.refiner_fired == 0
+    # The in-harness F1 assertion agrees and returns the gain==0 result.
+    f1 = assert_f1_strict_superset(held_out, inner)
+    assert f1.gain == 0.0
+
+
+def test_measure_aggregate_trained_library_positive_gain() -> None:
+    """F2: a train-populated library CORRECTS the oracle's frame-class objective
+    (reach_cell) to the winning objective (align_to_cell) on a held-out board,
+    raising its score from 0 -> 1.0, so gain > 0 (the harness detects a real gain)."""
+    inner = DeterministicOracleSeedProvider()
+    sig = frame_signature(_SALIENT_FRAME, _AVAIL_MOVE)
+    # Train: 4 winning episodes for this signature, won with objective align_to_cell.
+    train = [
+        _measured(_SALIENT_FRAME, won=True, objective_used=OBJECTIVE_ALIGN_TO_CELL,
+                  board_id=f"train-{i}")
+        for i in range(4)
+    ]
+    # Held-out board scored against the align_to_cell ground truth. The oracle alone
+    # labels reach_cell (frame-class heuristic) -> baseline 0; the refiner corrects
+    # to align_to_cell @ conf 1.0 -> treatment 1.0.
+    held_out = [_measured(_SALIENT_FRAME, winning=OBJECTIVE_ALIGN_TO_CELL, board_id="held")]
+    result = measure_aggregate(held_out, inner, SkillLibrary(min_support=3), train=train)
+    assert result.baseline == 0.0  # oracle picks reach_cell != align_to_cell
+    assert result.treatment == 1.0  # refiner corrects to align_to_cell @ conf 1.0
+    assert result.gain == 1.0
+    assert result.refiner_fired == 1
+    assert sig in result.signatures_fired
+
+
+def test_measure_aggregate_transfer_not_memorization() -> None:
+    """F3: the held-out board (palette 7/9) NEVER appeared in train (palette 0/5)
+    but shares the signature (relabel-invariant), so the learned skill TRANSFERS —
+    gain > 0 on a board proven disjoint from train. Transfer, not memorization."""
+    inner = DeterministicOracleSeedProvider()
+    assert frame_signature(_SALIENT_FRAME, _AVAIL_MOVE) == frame_signature(
+        _RELABELED_FRAME, _AVAIL_MOVE
+    )
+    train = [
+        _measured(_SALIENT_FRAME, won=True, objective_used=OBJECTIVE_ALIGN_TO_CELL,
+                  board_id="train-05")
+        for _ in range(4)
+    ]
+    train_boards = {e.board_id for e in train}
+    held_out = [_measured(_RELABELED_FRAME, winning=OBJECTIVE_ALIGN_TO_CELL, board_id="held-79")]
+    assert all(e.board_id not in train_boards for e in held_out)  # provably unseen board
+    result = measure_aggregate(held_out, inner, SkillLibrary(min_support=3), train=train)
+    assert result.gain > 0.0
+    assert result.treatment == 1.0
+    assert result.refiner_fired == 1
+
+
+def test_measure_aggregate_unlabeled_is_machinery_proxy() -> None:
+    """Unlabeled episodes (real zero-score case): the score is the machinery proxy
+    — trusted seeds count 1.0, untrusted 0.0 — and an empty library still yields
+    gain 0 (nothing learned from zero-score data)."""
+    inner = DeterministicOracleSeedProvider()
+    held_out = [
+        _measured(_SALIENT_FRAME, board_id="trusted"),  # salient cell -> trusted
+        _measured(_UNIFORM_FRAME, board_id="untrusted"),  # no salient cell -> untrusted
+    ]
+    result = measure_aggregate(held_out, inner, SkillLibrary())
+    assert result.baseline == 0.5  # exactly one of two seeds trusted
+    assert result.gain == 0.0

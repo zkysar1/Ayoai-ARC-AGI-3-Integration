@@ -37,7 +37,7 @@ import os
 from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Optional, Protocol, runtime_checkable
+from typing import Any, Optional, Protocol, runtime_checkable
 
 from solver_v0.perception import extract
 from solver_v2.episode import (
@@ -405,3 +405,202 @@ def default_library_path() -> Path:
             str(Path(__file__).resolve().parent.parent / "recordings" / "skill_library.json"),
         )
     )
+
+
+# ── Offline measurement harness (design/v3-llm-refiner-arm.md Section 5) ──────
+#
+# Fills the labeled ``measure_aggregate`` seam. Computes BOTH the baseline (the
+# inner v2 seed alone) and the treatment (``RefinerSeedProvider(inner, library)``)
+# score on the SAME held-out episode set — so the comparison never depends on a
+# remembered baseline number — and reports ``gain = treatment - baseline``.
+#
+# F1 (the strict-superset guarantee) holds BY CONSTRUCTION here because
+# ``_episode_score`` is a PURE function of the ``EpisodePrior`` a seed produced
+# (plus fixed per-episode ground truth that is identical across BOTH arms): an
+# empty library makes the refined prior byte-identical to the base prior (the
+# frozen-dataclass identity proven by ``test_empty_library_is_strict_superset``),
+# so the two scores are identical on EVERY episode and gain == 0.0 bit-for-bit.
+# ``assert_f1_strict_superset`` checks exactly that in-harness.
+#
+# guard-660 honesty: the recorded ls20 runs are ZERO-SCORE, so on real recordings
+# the honest offline score is a MACHINERY PROXY (does the seed produce a trusted,
+# steering-capable prior — the same positive signal the g-315-134-c offline
+# validation uses), NOT a live game reward; and the library learns nothing from
+# zero-score outcomes, so the honest real-data gain is 0. The LABELED regime
+# (``winning_objective`` set) lets a CONTROLLED set demonstrate that the harness
+# DETECTS a real gain when one exists (the refiner correcting an objective the
+# oracle's frame-class heuristic gets wrong), so a real-data 0 is a genuine
+# measurement, not a broken always-0 harness. A positive LIVE gain is F2/F4 (a
+# live goal), never claimed offline.
+
+
+@dataclass
+class MeasuredEpisode:
+    """One episode for offline measurement.
+
+    Carries the seed INPUT (an ``EpisodeContext``: opening frame + available
+    actions) plus optional OUTCOME fields used only offline:
+
+      - ``winning_objective``: ground-truth objective for scoring. When set, the
+        score rewards a TRUSTED seed whose objective matches it (scaled by
+        confidence) — the regime in which the refiner can demonstrate a gain by
+        correcting the objective the oracle's frame-class heuristic gets wrong.
+        When None (real zero-score recordings) the score is the machinery proxy
+        ``1.0 if is_trusted() else 0.0``.
+      - ``won`` / ``objective_used`` / ``score_delta``: the recorded outcome the
+        library learns from when this episode is in the TRAIN split.
+      - ``board_id``: exact-board identity, used to build a held-out split whose
+        boards never appeared in train (F3 transfer-not-memorization).
+    """
+
+    context: EpisodeContext
+    winning_objective: Optional[str] = None
+    won: Optional[bool] = None
+    objective_used: str = OBJECTIVE_UNKNOWN
+    score_delta: float = 0.0
+    board_id: Optional[str] = None
+
+
+@dataclass
+class AggregateResult:
+    """Result of one baseline-vs-treatment measurement over a held-out set.
+
+    ``gain`` is computed from the UNROUNDED per-arm means, so identical per-arm
+    scores (an empty library) make ``baseline == treatment`` exactly and ``gain``
+    exactly 0.0 (F1 bit-for-bit). ``signatures_fired`` localizes the gain to the
+    signatures on which the refiner actually fired.
+    """
+
+    n: int
+    baseline: float
+    treatment: float
+    gain: float
+    refiner_fired: int
+    signatures_fired: dict[str, int]
+    per_episode: list[dict[str, Any]]
+
+
+def _episode_signature(episode: MeasuredEpisode) -> str:
+    """The library key for an episode — from its opening frame + actions."""
+    frame_grid = (
+        episode.context.frame.frame if episode.context.frame is not None else None
+    )
+    return frame_signature(frame_grid, episode.context.available_actions)
+
+
+def _episode_score(prior: EpisodePrior, episode: MeasuredEpisode) -> float:
+    """Pure, deterministic per-episode offline score — a function of the SEED
+    PROVIDER's output ONLY (plus fixed ground truth identical across both arms).
+    This PURITY is what guarantees F1: an empty library makes the refined prior
+    byte-identical to the base, so this returns the same value for both arms and
+    gain == 0.0 bit-for-bit.
+
+    Labeled regime (``winning_objective`` set): reward a trusted seed whose
+    objective matches the winning objective, scaled by its confidence. Unlabeled
+    regime (real zero-score recordings): the machinery proxy — a trusted seed
+    activates directed steering; an untrusted one degrades to v1 coverage.
+    """
+    if episode.winning_objective is not None:
+        if not prior.is_trusted():
+            return 0.0
+        return (
+            prior.confidence
+            if prior.objective == episode.winning_objective
+            else 0.0
+        )
+    return 1.0 if prior.is_trusted() else 0.0
+
+
+def _record_from_episode(episode: MeasuredEpisode) -> EpisodeRecord:
+    """Derive the library-training record from a TRAIN-split episode."""
+    return EpisodeRecord(
+        signature=_episode_signature(episode),
+        objective_used=episode.objective_used,
+        won=bool(episode.won),
+        score_delta=episode.score_delta,
+    )
+
+
+def measure_aggregate(
+    held_out: list[MeasuredEpisode],
+    inner: SeedProvider,
+    library: SkillLibrary,
+    *,
+    train: Optional[list[MeasuredEpisode]] = None,
+) -> AggregateResult:
+    """Compute baseline (``inner`` alone) vs treatment
+    (``RefinerSeedProvider(inner, library)``) aggregate score over ``held_out``,
+    and ``gain = treatment - baseline`` (design Section 5).
+
+    When ``train`` is given, ``library`` is populated from it FIRST (in place, via
+    ``Refiner.observe``) — so a caller can pass a fresh empty library + a train
+    split and get the populated-library measurement in one call. When ``train`` is
+    None the library is used as-is (the caller populated it, or it is empty for
+    the F1 check). Baseline never touches the library (it calls ``inner``
+    directly), so populate-then-measure-both is order-independent.
+    """
+    if train:
+        Refiner(library).observe([_record_from_episode(e) for e in train])
+    refiner = RefinerSeedProvider(inner, library)
+    baseline_total = 0.0
+    treatment_total = 0.0
+    refiner_fired = 0
+    signatures_fired: dict[str, int] = {}
+    per_episode: list[dict[str, Any]] = []
+    for ep in held_out:
+        base_prior = inner.seed(ep.context)
+        treat_prior = refiner.seed(ep.context)
+        b = _episode_score(base_prior, ep)
+        t = _episode_score(treat_prior, ep)
+        baseline_total += b
+        treatment_total += t
+        fired = treat_prior.seed_source == RefinerSeedProvider.SEED_SOURCE
+        if fired:
+            refiner_fired += 1
+            sig = _episode_signature(ep)
+            signatures_fired[sig] = signatures_fired.get(sig, 0) + 1
+        per_episode.append(
+            {
+                "episode_id": ep.context.episode_id,
+                "board_id": ep.board_id,
+                "baseline": b,
+                "treatment": t,
+                "refiner_fired": fired,
+            }
+        )
+    n = len(held_out)
+    baseline = baseline_total / n if n else 0.0
+    treatment = treatment_total / n if n else 0.0
+    return AggregateResult(
+        n=n,
+        baseline=baseline,
+        treatment=treatment,
+        gain=treatment - baseline,
+        refiner_fired=refiner_fired,
+        signatures_fired=signatures_fired,
+        per_episode=per_episode,
+    )
+
+
+def assert_f1_strict_superset(
+    held_out: list[MeasuredEpisode], inner: SeedProvider
+) -> AggregateResult:
+    """F1 IN-HARNESS: with an EMPTY library, treatment == baseline bit-for-bit on
+    every held-out episode. Raises ``AssertionError`` on ANY divergence; returns
+    the (gain == 0) ``AggregateResult`` on success so the caller can report it.
+    """
+    empty = SkillLibrary()
+    result = measure_aggregate(held_out, inner, empty)
+    if result.gain != 0.0:
+        raise AssertionError(
+            f"F1 violated: empty-library gain={result.gain!r}, expected exactly 0.0"
+        )
+    # Stronger than the aggregate: prove per-episode byte-identity of the priors.
+    refiner = RefinerSeedProvider(inner, SkillLibrary())
+    for ep in held_out:
+        if inner.seed(ep.context) != refiner.seed(ep.context):
+            raise AssertionError(
+                "F1 violated: refined prior diverged from base with an empty "
+                f"library on episode {ep.context.episode_id}"
+            )
+    return result
