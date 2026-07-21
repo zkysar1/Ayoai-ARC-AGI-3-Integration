@@ -609,6 +609,22 @@ def main() -> None:
             "Deterministic, replayable, same _BFS_MAX_NODES cap."
         ),
     )
+    parser.add_argument(
+        "--corridor-penalty",
+        action="store_true",
+        help=(
+            "g-315-437: corridor-aware route coordinator in the movement "
+            "StateGraphExplorer. g-315-436 found the ON solver's 2nd-half "
+            "en-route re-crossing concentrates ~70% in one emergent region "
+            "band; when ON, _route_to_frontier adds a late-gated, bounded "
+            "CorridorPenalty as a SECONDARY tie-break (key = (episodes_seen, "
+            "depth, region_occupancy, action)) that prefers, among "
+            "equally-fresh AND equally-close frontiers, the first step whose "
+            "landing region is least re-crossed. NEVER overrides the primary "
+            "coverage/frontier objective (rb-3240). OFF (default) = "
+            "byte-identical. Deterministic, replayable."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -878,6 +894,7 @@ def main() -> None:
             novel_tie_conditioning=args.novel_tie_conditioning,
             novel_tie_episode_varying=args.novel_tie_episode_varying,
             frontier_coordination=args.frontier_coordination,
+            corridor_penalty=args.corridor_penalty,
         )
     else:
         # streaming_url is resolved by this point (live: ayoai_session.streaming_url;
@@ -1065,6 +1082,7 @@ def main() -> None:
                 "novel_tie": bool(getattr(args, "novel_tie_conditioning", False)),
                 "novel_tie_ep": bool(getattr(args, "novel_tie_episode_varying", False)),
                 "frontier_coord": bool(getattr(args, "frontier_coordination", False)),
+                "corridor_penalty": bool(getattr(args, "corridor_penalty", False)),
                 "episodes": _episodes,
                 "ticks": action_counter,
                 "elapsed_s": round(elapsed, 2),

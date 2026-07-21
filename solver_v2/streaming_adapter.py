@@ -141,6 +141,7 @@ class SolverV2StreamingAdapter:
         novel_tie_conditioning: bool = False,
         novel_tie_episode_varying: bool = False,
         frontier_coordination: bool = False,
+        corridor_penalty: bool = False,
         click_prior: bool = False,
         coverage_seeds: bool = False,
         fcx_cache: bool = False,
@@ -197,6 +198,13 @@ class SolverV2StreamingAdapter:
         # late-run sink g-315-388 sized (cross-episode redundancy, 2.6–3.9× the
         # pause pool). Threaded to the movement StateGraphExplorer.
         self._frontier_coordination: bool = frontier_coordination
+        # g-315-437: corridor-penalty toggle (DEFAULT OFF -> byte-identical).
+        # ON threads a CorridorPenalty into the movement StateGraphExplorer so
+        # _route_to_frontier applies a late-gated, bounded, SECONDARY tie-break
+        # that biases equally-ranked routes away from perennially re-crossed
+        # regions (attacks the g-315-436 ON 2nd-half en-route re-crossing
+        # concentration without touching the primary coverage objective, rb-3240).
+        self._corridor_penalty: bool = corridor_penalty
         # g-315-370 coverage-seeds toggle (DEFAULT OFF -> byte-identical). ON
         # (constructor kwarg OR env SOLVER_V2_COVERAGE_SEEDS): the DEFAULT oracle
         # provider emits UNTRUSTED priors so per-episode routing selects the
@@ -1163,6 +1171,7 @@ class SolverV2StreamingAdapter:
                         novel_tie_conditioning=self._novel_tie_conditioning,
                         novel_tie_episode_varying=self._novel_tie_episode_varying,
                         frontier_coordination=self._frontier_coordination,
+                        corridor_penalty=self._corridor_penalty,
                     )
                     self._state_graph_cache[sg_key] = new_sg
                     self._explorer = new_sg

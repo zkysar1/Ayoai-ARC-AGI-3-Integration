@@ -53,6 +53,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from primitives.action_effect_value_store import ActionEffectValueStore
+from primitives.corridor_penalty import CorridorPenalty
 from solver_v0.perception import FrameFeatures
 from solver_v0.policy import detect_cursor_and_targets
 from solver_v2.action6_explore import explore_action6_coord
@@ -62,7 +63,7 @@ from solver_v2.calibration import (
     move_actions_from,
 )
 from solver_v2.executor import ExecutorDecision
-from solver_v2.frontier_explorer import FrontierCoverageExplorer
+from solver_v2.frontier_explorer import FrontierCoverageExplorer, _EFFECT_REGION_SIZE
 
 # ---------------------------------------------------------------------------
 # Tunable constants (all deterministic; no per-game values)
@@ -608,6 +609,7 @@ class StateGraphExplorer:
         novel_tie_conditioning: bool = False,
         novel_tie_episode_varying: bool = False,
         frontier_coordination: bool = False,
+        corridor_penalty: bool = False,
     ) -> None:
         self._moves: list[int] = move_actions_from(move_actions) or sorted(
             {int(a) for a in move_actions}
@@ -666,6 +668,30 @@ class StateGraphExplorer:
         self._frontier_coord = bool(frontier_coordination)
         self._node_episode_seen: dict[str, int] = {}
         self._episode_seen_nodes: set[str] = set()
+        # -- Corridor penalty (g-315-437): the EN-ROUTE re-crossing lane.
+        # g-315-389 run-6 proved destination-selection coordination does NOT
+        # close the redundancy pool -- the driver is en-route re-crossing, not
+        # destination choice. g-315-390 localized it: ON 2nd-half re-crossing
+        # CONCENTRATES ~70% in one region band, a DIFFERENT locus than OFF
+        # (hence the ON coordinator's OWN behavior, controllable -- rb-4442
+        # locus test). When ON, _route_to_frontier re-ranks the frontier-coord
+        # hit list by a bounded, LATE-GATED penalty on first-steps that LAND in
+        # a heavily re-crossed region -- a strict TIE-BREAK after (episodes_seen,
+        # depth), so it never overrides the freshness objective nor trades route
+        # length for corridor-avoidance (a competing PRIMARY term regresses the
+        # coverage sweep to a floor, rb-3240). Env-agnostic primitive (opaque
+        # cells + region_size matched to the metric's _EFFECT_REGION_SIZE); OFF
+        # (default) = byte-identical: _corridor_penalty is None, no observe, no
+        # re-rank. _node_cell maps state_hash -> the cursor cell recorded at that
+        # node so the BFS first-step's landing region is known with no
+        # action->cell projection. Persists across reset_episode (cells are
+        # stable per hash), like _visited_cells / _walk_counts.
+        self._corridor_penalty: Optional[CorridorPenalty] = (
+            CorridorPenalty(region_size=_EFFECT_REGION_SIZE)
+            if corridor_penalty
+            else None
+        )
+        self._node_cell: dict[str, tuple[int, int]] = {}
         # Deterministic PRNG -- Algorithm 1's "pick uniformly at random" must be
         # replayable / offline-testable (design section 3.4).
         self._rng = random.Random(seed)
@@ -964,6 +990,45 @@ class StateGraphExplorer:
             # prefer the nearest, then the smallest action (deterministic,
             # replayable). Varies the episode-level TARGET as prior episodes
             # accumulate episodes_seen on worked regions.
+            if self._corridor_penalty is not None:
+                # ⚠ FINDING (g-315-437 live two-arm gate, 2026-07-21): this
+                # tertiary tie-break is INERT — it changed 0 of 1569 actions and
+                # the 2nd-half cross-redundant metric was IDENTICAL ON vs OFF
+                # (207==207, cursor_coverage 0.8696 both). Root cause: _corridor_pen
+                # resolves the landing region via the successor node's RECORDED
+                # cell, which is unrecorded during forward frontier exploration, so
+                # the penalty is 0 for every candidate and the final h[2]
+                # (first_action) tiebreak decides identically to min(coord_hits).
+                # A corrected v2 must resolve against the frontier-TARGET region
+                # (the destination), not the immediate successor, and/or promote
+                # the penalty above depth — carefully, per rb-3240 (coverage is
+                # load-bearing). Kept default-OFF (byte-identical) as the v2
+                # scaffold; the primitive itself is sound + tested.
+                # g-315-437: bounded, late-gated corridor penalty as a strict
+                # TIE-BREAK after (episodes_seen, depth). It NEVER changes the
+                # targeted frontier when either of those differs -- it only
+                # prefers, among equally-fresh AND equally-close frontiers, the
+                # first-step whose landing region is LEAST re-crossed. So it
+                # cannot trade route length for corridor-avoidance (the rb-3240
+                # floor risk); early-phase penalty is 0. Landing region = the
+                # cursor cell recorded at the first-step successor node (no
+                # action->cell projection needed).
+                phase = self._actions_used / max(1, self._action_budget)
+                start_node = self._graph.get(start_hash)
+
+                def _corridor_pen(first_action: int) -> int:
+                    if start_node is None:
+                        return 0
+                    succ = start_node.outgoing.get(first_action)
+                    land = self._node_cell.get(succ) if succ else None
+                    if land is None:
+                        return 0
+                    return self._corridor_penalty.penalty(land, phase=phase)
+
+                return min(
+                    coord_hits,
+                    key=lambda h: (h[0], h[1], _corridor_pen(h[2]), h[2]),
+                )[2]
             return min(coord_hits)[2]
         if self._aevs is not None and len(candidates) > 1:
             return min(
@@ -1051,6 +1116,14 @@ class StateGraphExplorer:
             # Cross-episode visited-cell memory (g-315-380) — feeds the AEVS
             # destination-novelty rank; bounded by grid size.
             self._visited_cells.add(cur_cell)
+            # Corridor penalty (g-315-437): record this node's cursor cell (for
+            # the _route_to_frontier first-step landing lookup) and accumulate
+            # per-region occupancy. Flag-gated so OFF stays byte-identical and
+            # zero-overhead: _corridor_penalty is None -> no _node_cell growth,
+            # no observe. _node_cell is bounded by |graph| (already capped).
+            if self._corridor_penalty is not None:
+                self._node_cell[cur_hash] = cur_cell
+                self._corridor_penalty.observe(cur_cell)
 
         # 1. Deferred-observe: learn displacement + record the edge from prev.
         self._learn_displacement(cursor)
