@@ -453,11 +453,25 @@ class BitNetSeedProvider(SeedProvider):
         *,
         timeout_s: float = _DEFAULT_SEED_TIMEOUT_S,
         session: Any = None,
+        oracle_fallback: Optional[SeedProvider] = None,
     ) -> None:
         self._endpoint_url = endpoint_url
         self._api_key = api_key
         self._timeout_s = timeout_s
         self._session = session if session is not None else requests.Session()
+        # g-355-15: oracle-fallback for the DEGRADE path. OFF by default (None) —
+        # the degrade path then stays byte-identical to the strict-superset
+        # unknown/0.0 prior (guard-660 wire-only). When an oracle SeedProvider is
+        # injected, a DEGRADED seed request (the live ls20 case: BitNet returns
+        # objective=unknown/confidence=0.0 at 168/168 episode starts, g-355-14 /
+        # rb-4488) falls back to the oracle's FULL prior — its trusted
+        # reach_cell/toggle_at_cell label — instead of the untrusted prior. This
+        # engages the goal_cell navigation path that attacks the ls20
+        # never-trusted-seed barrier (guard-1269). The oracle labels all 168 ls20
+        # opening frames reach_cell@0.5=trusted (verified). Downside is bounded:
+        # the baseline is 0/168 solved, so a trusted-but-wrong guess cannot score
+        # worse than the untrusted floor.
+        self._oracle_fallback = oracle_fallback
 
     def _build_headers(self) -> dict[str, str]:
         # Mirrors AyoaiStreamingClient._build_headers (same auth + content
@@ -516,7 +530,19 @@ class BitNetSeedProvider(SeedProvider):
         """A valid EpisodePrior that carries the mechanical plan but is NOT
         trusted (objective unknown, confidence 0.0, no goal_cell) → v1 fallback.
         seed_source stays "bitnet" so provenance records that the BitNet provider
-        was used even when it degraded (accurate for live diagnosis)."""
+        was used even when it degraded (accurate for live diagnosis).
+
+        g-355-15: when an oracle-fallback SeedProvider is injected (OFF by default),
+        a degraded request instead returns the oracle's FULL prior (its trusted
+        semantic label), so the executor takes the goal_cell steering path rather
+        than v1 candidate-cycling. The oracle's seed_source ("deterministic-oracle")
+        is preserved, so live decision_provenance shows the fallback fired — a
+        deterministic-oracle seed inside a BitNet-configured run means exactly
+        that. The mechanical plan is identical either way (both providers derive
+        it from _derive_action_plan), so the passed-in plan/action6_target are
+        simply not re-used on this branch."""
+        if self._oracle_fallback is not None:
+            return self._oracle_fallback.seed(context)
         return EpisodePrior(
             episode_id=context.episode_id,
             seed_source=self.SEED_SOURCE,

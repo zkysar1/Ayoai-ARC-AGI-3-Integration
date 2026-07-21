@@ -32,7 +32,11 @@ from solver_v2.refiner import (
     SkillLibrary,
     default_library_path,
 )
-from solver_v2.seed_provider import BitNetSeedProvider, SeedProvider
+from solver_v2.seed_provider import (
+    BitNetSeedProvider,
+    DeterministicOracleSeedProvider,
+    SeedProvider,
+)
 from solver_v2.streaming_adapter import SolverV2StreamingAdapter
 from structs import FrameData, GameAction, GameState, Scorecard
 
@@ -272,7 +276,10 @@ def run_game_loop(
 
 
 def build_v2_seed_provider(
-    ayoai_session: AyoaiSessionInfo | None, api_key: str = ""
+    ayoai_session: AyoaiSessionInfo | None,
+    api_key: str = "",
+    *,
+    oracle_fallback: bool = False,
 ) -> SeedProvider | None:
     """Build the live BitNet seed provider for solver-v2 from an OPEN AyoAI
     session (g-315-154 wiring; extracted for testability — g-315-158).
@@ -292,7 +299,22 @@ def build_v2_seed_provider(
     seed_endpoint = (
         ayoai_session.streaming_url.rsplit("/", 1)[0] + "/ArcEpisodeSeed"
     )
-    return BitNetSeedProvider(seed_endpoint, api_key)
+    # g-355-15: when oracle_fallback is ON, a DEGRADED BitNet seed falls back to
+    # the DeterministicOracle's FULL trusted prior (reach_cell/toggle_at_cell)
+    # instead of the untrusted unknown/0.0 prior — attacking the ls20 never-
+    # trusted-seed barrier (g-355-14 / rb-4488 / guard-1269). OFF (default) =
+    # None, so the degrade path stays byte-identical to the strict-superset floor.
+    # coverage_seeds=False pins the fallback oracle to its TRUSTED labelling path
+    # regardless of the SOLVER_V2_COVERAGE_SEEDS env toggle (g-315-370, a separate
+    # experiment that makes the oracle emit UNTRUSTED coverage priors). The whole
+    # point of this fallback is a trusted seed, so it must not silently invert
+    # under that env — no hidden coupling (communication-clarity rule 5).
+    fallback = (
+        DeterministicOracleSeedProvider(coverage_seeds=False)
+        if oracle_fallback
+        else None
+    )
+    return BitNetSeedProvider(seed_endpoint, api_key, oracle_fallback=fallback)
 
 
 def build_v3_refiner_seed_provider(
@@ -677,6 +699,21 @@ def main() -> None:
             "takes effect under --use-solver-v2. OFF (default) = byte-identical."
         ),
     )
+    parser.add_argument(
+        "--seed-oracle-fallback",
+        action="store_true",
+        help=(
+            "g-355-15: on a DEGRADED live BitNet seed (connection/timeout/non-2xx/"
+            "malformed/invalid-fields), fall back to the DeterministicOracle's FULL "
+            "trusted prior (reach_cell/toggle_at_cell label) instead of the "
+            "untrusted unknown/0.0 prior. Attacks the ls20 never-trusted-seed "
+            "barrier (g-355-14/rb-4488/guard-1269): the live BitNet degrades to "
+            "unknown/0.0 at 168/168 ls20 episode starts; the oracle labels all 168 "
+            "reach_cell@0.5=trusted, engaging the goal_cell navigation path. Only "
+            "takes effect under --use-solver-v2. OFF (default) = the degrade path "
+            "stays byte-identical to the strict-superset unknown/0.0 prior."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -924,14 +961,22 @@ def main() -> None:
         # None-guard keeps the adapter on its default oracle as a defensive
         # fallback rather than crashing on an unexpected None.
         v2_seed_provider: SeedProvider | None = build_v2_seed_provider(
-            ayoai_session, os.getenv("AYOAI_API_KEY", "")
+            ayoai_session,
+            os.getenv("AYOAI_API_KEY", ""),
+            oracle_fallback=args.seed_oracle_fallback,
         )
         if v2_seed_provider is not None:
             # Endpoint host:port is in the session-open log line above; this
             # confirms the live seed source replaced the in-process oracle.
             logger.info(
                 "Solver-v2 seed source: live BitNetSeedProvider "
-                "(POST /ArcEpisodeSeed)"
+                "(POST /ArcEpisodeSeed)%s",
+                (
+                    " + oracle-fallback ON (g-355-15: a degraded seed returns the "
+                    "oracle's trusted prior, not unknown/0.0)"
+                    if args.seed_oracle_fallback
+                    else ""
+                ),
             )
         # g-355-13: optional v3 refiner arm. Wraps the v2 seed in the cross-
         # episode RefinerSeedProvider (strict-superset: an empty library is

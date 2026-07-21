@@ -664,3 +664,131 @@ def test_untrusted_pure_action6_seed_reaches_coverage_sweep_live_chain() -> None
     feats = extract([[[1, 2], [3, 4]]], available_actions=[6])
     coords = {(d.x, d.y) for t in range(4) for d in [ex.execute(prior, feats, t)]}
     assert len(coords) > 1, f"expected coverage exploration, got degenerate {coords}"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# g-355-15: BitNet degrade-path oracle-fallback. On a DEGRADED live seed (the
+# ls20 168/168 case — g-355-14 / rb-4488: the live BitNet degrades to
+# objective=unknown / confidence=0.0 at 168/168 episode starts, and the oracle
+# would label all 168 reach_cell@0.5=trusted), an injected oracle SeedProvider
+# makes the degrade return the oracle's FULL trusted prior instead of the
+# untrusted unknown/0.0 floor — attacking the never-trusted-seed barrier
+# (guard-1269). OFF (default None) = byte-identical to the strict-superset
+# degrade. guard-660: the fallback is HONEST — it returns whatever the oracle
+# labels, trusted ONLY when the oracle can label the frame.
+# ════════════════════════════════════════════════════════════════════════════
+
+# A movement-class salient opening frame the oracle labels reach_cell@(1,1):
+# directional actions (1,2,3) available -> movement class; one rare cell (9).
+_MOVEMENT_SALIENT_FRAME = [[[0, 0, 0], [0, 9, 0], [0, 0, 0]]]
+_MOVEMENT_AVAIL = (6, 1, 2, 3)
+
+
+def test_oracle_fallback_off_by_default_degrade_stays_untrusted() -> None:
+    # OFF (default: no oracle_fallback kwarg) — the degrade path is byte-identical
+    # to the pre-g-355-15 strict-superset floor: untrusted unknown/0.0, seed_source
+    # "bitnet". Pins that omitting the new kwarg changes NOTHING.
+    sess = _FakeSession(raise_exc=requests.exceptions.ConnectionError("boom"))
+    provider = BitNetSeedProvider(_ENDPOINT, session=sess)
+    prior = provider.seed(
+        _bitnet_context(_MOVEMENT_AVAIL, frame=_MOVEMENT_SALIENT_FRAME)
+    )
+    assert prior.objective == OBJECTIVE_UNKNOWN
+    assert prior.goal_cell is None
+    assert prior.confidence == 0.0
+    assert prior.is_trusted() is False
+    assert prior.seed_source == "bitnet"
+
+
+def test_oracle_fallback_on_degrade_yields_trusted_reach_prior() -> None:
+    # ON — a degraded request on a movement-class salient frame returns the
+    # oracle's FULL trusted prior (reach_cell@(1,1), confidence >= SEED_TRUST_MIN,
+    # is_trusted True). THE ls20 168/168 barrier fix (g-355-14 / rb-4488).
+    sess = _FakeSession(raise_exc=requests.exceptions.ConnectionError("boom"))
+    provider = BitNetSeedProvider(
+        _ENDPOINT,
+        session=sess,
+        oracle_fallback=DeterministicOracleSeedProvider(coverage_seeds=False),
+    )
+    prior = provider.seed(
+        _bitnet_context(_MOVEMENT_AVAIL, frame=_MOVEMENT_SALIENT_FRAME)
+    )
+    assert prior.objective == OBJECTIVE_REACH_CELL
+    assert prior.goal_cell == (1, 1)
+    assert prior.confidence >= 0.5
+    assert prior.is_trusted() is True
+    # Provenance: the oracle produced this seed (a deterministic-oracle seed_source
+    # inside a BitNet-configured run == the fallback fired). Mechanical plan is
+    # identical to the non-fallback degrade (both derive it from _derive_action_plan).
+    assert prior.seed_source == "deterministic-oracle"
+    assert prior.action_plan == (1, 2, 3, 6)
+
+
+def test_oracle_fallback_fires_on_every_degrade_mode() -> None:
+    # The fallback engages for EACH degrade cause, not just connection errors:
+    # non-2xx, malformed JSON, non-dict body, and timeout all route through
+    # _degraded_prior, so all four must yield the oracle's trusted prior.
+    oracle = DeterministicOracleSeedProvider(coverage_seeds=False)
+    sessions = [
+        _FakeSession(_FakeResponse(_FULL_SEED, status_ok=False)),     # non-2xx
+        _FakeSession(_FakeResponse(raise_on_json=True)),              # malformed JSON
+        _FakeSession(_FakeResponse(["not", "a", "dict"])),            # non-dict body
+        _FakeSession(raise_exc=requests.exceptions.Timeout("slow")),  # timeout
+    ]
+    for sess in sessions:
+        provider = BitNetSeedProvider(_ENDPOINT, session=sess, oracle_fallback=oracle)
+        prior = provider.seed(
+            _bitnet_context(_MOVEMENT_AVAIL, frame=_MOVEMENT_SALIENT_FRAME)
+        )
+        assert prior.is_trusted() is True
+        assert prior.objective == OBJECTIVE_REACH_CELL
+
+
+def test_oracle_fallback_only_fires_on_degrade_not_on_valid_response() -> None:
+    # A VALID server response is used verbatim EVEN with the fallback ON — the
+    # fallback is degrade-only; it never hijacks a live seed. The server's seed
+    # (goal_cell (3,4), seed_source "bitnet") wins, NOT the oracle's (1,1).
+    sess = _FakeSession(_FakeResponse(_FULL_SEED))
+    provider = BitNetSeedProvider(
+        _ENDPOINT,
+        session=sess,
+        oracle_fallback=DeterministicOracleSeedProvider(coverage_seeds=False),
+    )
+    prior = provider.seed(
+        _bitnet_context(_MOVEMENT_AVAIL, frame=_MOVEMENT_SALIENT_FRAME)
+    )
+    assert prior.seed_source == "bitnet"
+    assert prior.goal_cell == (3, 4)  # the SERVER's cell, not the oracle's (1,1)
+    assert prior.is_trusted() is True
+
+
+def test_valid_response_byte_identical_off_vs_on() -> None:
+    # Strict-superset on the SUCCESS path: for a valid response, the OFF and ON
+    # providers return IDENTICAL priors (the flag only changes the degrade path).
+    off = BitNetSeedProvider(
+        _ENDPOINT, session=_FakeSession(_FakeResponse(_FULL_SEED))
+    )
+    on = BitNetSeedProvider(
+        _ENDPOINT,
+        session=_FakeSession(_FakeResponse(_FULL_SEED)),
+        oracle_fallback=DeterministicOracleSeedProvider(coverage_seeds=False),
+    )
+    ctx = _bitnet_context(_MOVEMENT_AVAIL, frame=_MOVEMENT_SALIENT_FRAME)
+    assert off.seed(ctx) == on.seed(ctx)  # frozen dataclass equality
+
+
+def test_oracle_fallback_honest_on_unlabelable_frame() -> None:
+    # guard-660 honesty: the fallback returns WHATEVER the oracle labels — it does
+    # NOT fabricate trust. On a uniform grid (no salient cell) the oracle degrades
+    # to untrusted, so the fallback prior is untrusted too. The fix cannot invent
+    # a trusted seed where the oracle itself has no signal.
+    sess = _FakeSession(raise_exc=requests.exceptions.ConnectionError("boom"))
+    provider = BitNetSeedProvider(
+        _ENDPOINT,
+        session=sess,
+        oracle_fallback=DeterministicOracleSeedProvider(coverage_seeds=False),
+    )
+    prior = provider.seed(_bitnet_context((1, 2, 3), frame=[[[5, 5], [5, 5]]]))
+    assert prior.goal_cell is None
+    assert prior.objective == OBJECTIVE_UNKNOWN
+    assert prior.is_trusted() is False
