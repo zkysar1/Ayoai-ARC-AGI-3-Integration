@@ -1,6 +1,6 @@
 ---
 title: "Solver v3 -- Cross-episode LLM-Refiner Arm (a persistent skill library that RAISES trust in historically-winning priors, strict-superset over v2)"
-status: "v0.1 SKELETON SHIPPED (g-355-04, 2026-07-21). solver_v2/refiner.py + tests/unit/test_solver_v2_refiner.py green offline (9/9). The LLM refine step (RefinementModel) and the offline measurement harness are LABELED SEAMS filled by follow-up build goals. No live score claimed (guard-660)."
+status: "v0.2 SKELETON + MEASUREMENT SHIPPED (g-355-04 skeleton, g-355-09 measure_aggregate; 2026-07-21). solver_v2/refiner.py + tests/unit/test_solver_v2_refiner.py green offline (13/13); analysis/v3_refiner_offline_measure.py driver runs end-to-end on real recordings. The offline measure_aggregate harness seam is FILLED (F1 asserted in-harness bit-for-bit; honest real-data gain 0 on zero-score recordings; a controlled labeled demo proves a real gain is detectable). Only the LLM RefinementModel seam remains (g-355-08). No live score claimed (guard-660)."
 authored_by: "echo"
 authored_at: "2026-07-21"
 authoring_goal: "g-355-04"
@@ -92,7 +92,13 @@ offline tests prove the wire, never a live score):
   model that reads failure signatures across the observed episodes and proposes
   library edits (merge signatures, retire a losing objective, adjust a
   confidence prior) on the OUTER-LOOP budget. Until then, `refine == observe`.
-- **`measure_aggregate` (the offline harness).** Section 5.
+- **`measure_aggregate` (the offline harness).** SHIPPED (g-355-09): see
+  Section 5. Computes baseline (inner v2 seed) vs treatment
+  (`RefinerSeedProvider`) aggregate on a held-out split and reports
+  `gain = treatment - baseline`; `assert_f1_strict_superset` asserts F1
+  bit-for-bit in-harness. Driver `analysis/v3_refiner_offline_measure.py`
+  runs it end-to-end on the real ls20 recordings (honest gain 0 — zero-score
+  data teaches nothing) plus a controlled labeled demo (gain > 0 detectable).
 
 ## 5. Offline measurement plan (self-contained, no remembered constant)
 
