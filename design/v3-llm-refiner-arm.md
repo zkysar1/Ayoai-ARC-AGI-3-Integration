@@ -1,6 +1,6 @@
 ---
 title: "Solver v3 -- Cross-episode LLM-Refiner Arm (a persistent skill library that RAISES trust in historically-winning priors, strict-superset over v2)"
-status: "v0.2 SKELETON + MEASUREMENT SHIPPED (g-355-04 skeleton, g-355-09 measure_aggregate; 2026-07-21). solver_v2/refiner.py + tests/unit/test_solver_v2_refiner.py green offline (13/13); analysis/v3_refiner_offline_measure.py driver runs end-to-end on real recordings. The offline measure_aggregate harness seam is FILLED (F1 asserted in-harness bit-for-bit; honest real-data gain 0 on zero-score recordings; a controlled labeled demo proves a real gain is detectable). Only the LLM RefinementModel seam remains (g-355-08). No live score claimed (guard-660)."
+status: "v0.2 SKELETON + BENCHMARK RUN (g-355-04 skeleton, g-355-09 measure_aggregate, g-355-10 benchmark+verdict; 2026-07-21). solver_v2/refiner.py + tests/unit/test_solver_v2_refiner.py green offline (13/13); analysis/v3_refiner_offline_measure.py driver runs end-to-end on real recordings. The offline measure_aggregate harness seam is FILLED and RUN (g-355-10): F1 PASS bit-for-bit on both the real (6 held-out) and controlled (1 held-out) splits; honest real-data gain +0.0000 on zero-score recordings (0/6 refiner fired, ZERO trusted signatures could form); controlled labeled demo gain +1.0000 with 1 trusted signature = transfer, not memorization. See Section 5c for the measured F1/F2/F3 verdict. Only the LLM RefinementModel seam remains (g-355-08 — NOT falsified as worthless; the falsifier's 'trusted signature fired' precondition is unmet on real data). No live score claimed (guard-660)."
 authored_by: "echo"
 authored_at: "2026-07-21"
 authoring_goal: "g-355-04"
@@ -135,6 +135,52 @@ The mechanism is worth keeping ONLY if it clears these bars — each is falsifia
 
 F2/F3 gate whether the LLM `RefinementModel` seam is worth filling; F1/F4 gate
 whether the wrapper is safe to run live at all.
+
+## 5c. Measured verdict (g-355-10, 2026-07-21)
+
+`analysis/v3_refiner_offline_measure.py` run end-to-end on this box. Both
+splits score BOTH providers on the SAME held-out episodes, so no remembered
+baseline is trusted:
+
+| Split | n(held-out) | baseline (v2 seed) | treatment (refiner) | gain | refiner fired | signatures fired |
+|---|---|---|---|---|---|---|
+| **real ls20** | 6 | 1.0000 | 1.0000 | **+0.0000** | 0/6 | `{}` (none) |
+| **controlled labeled** | 1 | 0.0000 | 1.0000 | **+1.0000** | 1/1 | `a=move|d=0x0|k=1|bg=3|rare=0` ×1 |
+
+- **F1 (strict superset) — PASS, bit-for-bit.** Empty-library gain is exactly
+  `+0.0000` on BOTH the real and controlled held-out splits (`assert_f1_strict_superset`
+  also confirms per-episode `inner.seed(ctx) == refiner.seed(ctx)`). v3 ≥ v2 by
+  construction, measured, not just unit-asserted.
+- **F2 (gain is real) — CONFIRMED on controlled, UNRESOLVED on real.** On the
+  controlled labeled set one trusted signature fired and corrected the oracle's
+  `reach_cell` label to the historically-winning `align_to_cell`, lifting the
+  held-out score 0→1.0 (`gain +1.0000`). On the real ls20 recordings the refiner
+  fired on **0/6** and **zero** trusted signatures ever formed — the recordings
+  are ZERO-SCORE (guard-660), so no win-rate ⇒ no confidence ⇒ nothing crosses
+  `SEED_TRUST_MIN`. **The F2 falsifier ("gain==0 AFTER ≥1 trusted signature
+  fired") is therefore NEVER triggered on real data — its precondition is unmet.**
+  Observe-only refinement value is NOT falsified; it is proven on controlled data
+  and simply untestable on a zero-score corpus.
+- **F3 (transfer, not memorization) — CONFIRMED on controlled, UNRESOLVED on
+  real.** The controlled `+1.0` landed on a `7/9`-palette board that (a) never
+  appeared in the `0/5`-palette train set and (b) is `board_id`-disjoint from it,
+  yet shares the SAME relabel-invariant signature. A geometry oracle cannot
+  memorize a palette-disjoint board, so the gain is transfer over the signature
+  CLASS, not board memorization. Unresolved on real ls20 (no signatures fired).
+- **F4 (no live regression) — still a live goal.** Offline cannot measure it
+  (guard-660); F1's bit-for-bit superset makes a live regression structurally
+  impossible barring a live-only code path.
+
+**Verdict for the g-355-08 gate.** g-355-10's description proposed that a real
+`gain==0` would falsify observe-only refinement value and gate whether the LLM
+`RefinementModel` seam is worth filling. The measurement REFUTES that inference:
+the real `gain==0` is a zero-score-corpus artifact (0 signatures fired), not a
+learned-nothing-transferable result, while the controlled demo shows observe-only
+refinement DOES change outcomes when a trusted signature exists. So g-355-08 is
+neither proven worthless nor yet proven necessary — the honest gate is DATA, not
+the seam: F2/F3 need a **non-zero-score / live** corpus (a live ls20 play with
+the wrapper, or a labeled/varied offline corpus) before the LLM seam's value can
+be judged. That is F4's territory, a live goal.
 
 ## 6. Constraint-gate proof (self.md 4-gate Integration Constraint)
 
