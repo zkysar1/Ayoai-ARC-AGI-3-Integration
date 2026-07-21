@@ -59,10 +59,19 @@ injected deliberately.
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, field
-from typing import Callable, Mapping, Optional, Protocol, Sequence, cast
+from dataclasses import dataclass
+from typing import Callable, Mapping, Optional, Sequence, cast
 
-from adapters.base import EnvironmentAdapter, Executor, ProximityModel, WorldBuilder
+from adapters.base import (
+    Decision,
+    EnvironmentAdapter,
+    EpisodeReport,
+    Executor,
+    ProximityModel,
+    Result,
+    Transport,
+    WorldBuilder,
+)
 from primitives.frontier_coverage import Cell, FrontierCoverage
 
 # A point on the ARC grid: (col, row) integer coordinate. Unlike roblox's Vec3 (a 3-D
@@ -113,56 +122,16 @@ class Unit:
         return self.kind.lower() in _CHARACTER_KINDS
 
 
-@dataclass(frozen=True)
-class Result:
-    """Executor result (Plan 7.2.A Q10). 'unknown' = fail:unconfirmed/retry_safe=False."""
-
-    outcome: str  # "success" | "fail"
-    reason: str
-    retry_safe: bool
-
-
-@dataclass(frozen=True)
-class Decision:
-    """A primitive's chosen move, carrying decided_by so framework routing is preserved."""
-
-    action: int
-    decided_by: str
-    target_unit_id: Optional[str] = None
-
-
-@dataclass
-class EpisodeReport:
-    """What one exploration episode produced (for verification / analysis)."""
-
-    coverage: FrontierCoverage
-    decisions: list[Decision] = field(default_factory=list)
-    results: list[Result] = field(default_factory=list)
-
-    @property
-    def cells_covered(self) -> int:
-        return self.coverage.visited_count
-
-    @property
-    def action_distribution(self) -> dict[int, int]:
-        return self.coverage.action_counts()
-
-
-class ArcTransport(Protocol):
-    """The seam Executor drives to realize an ARC action in a concrete runtime.
-
-    Implemented by the offline ``SimulatedArcGrid`` below (tests + the guard-795-safe
-    default) or a live wrapper over the ARC backend (a separate, guard-795-gated
-    follow-on). ``move`` returns (cursor_moved, reason); ``position`` / ``world_state``
-    report the click cursor + the current FrameData-shaped grid AFTER the action so
-    perception re-reads it.
-    """
-
-    def move(self, action: int) -> tuple[bool, str]: ...
-
-    def position(self) -> GridCoord: ...
-
-    def world_state(self) -> Mapping[str, object]: ...
+# Result / Decision / EpisodeReport are the shared concretes hoisted to
+# adapters.base (g-355-05, byte-identical across roblox/vinheim/arc) and
+# imported above. ArcTransport is this env's alias of the generic base
+# Transport seam, pinned to the ARC integer GridCoord -- the injected transport
+# (offline SimulatedArcGrid below, the guard-795-safe default, or a live
+# ARC-backend wrapper in the guard-795-gated follow-on) conforms structurally.
+# `move` returns (cursor_moved, reason); `position`/`world_state` report the
+# click cursor + the FrameData-shaped grid AFTER the action so perception
+# re-reads it.
+ArcTransport = Transport[GridCoord]
 
 
 # --------------------------------------------------------------------------- #
