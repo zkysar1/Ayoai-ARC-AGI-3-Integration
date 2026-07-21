@@ -285,6 +285,11 @@ def test_heuristic_refiner_proposes_better_objective_from_winning_neighbors() ->
 _RELABELED_FRAME = [[[7, 7, 7], [7, 7, 7], [7, 9, 7]]]
 # A uniform frame: no salient cell -> the oracle leaves the seed UNTRUSTED.
 _UNIFORM_FRAME = [[[0, 0, 0], [0, 0, 0], [0, 0, 0]]]
+# A DIFFERENT move-class frame (2 distinct non-bg colours -> k=2, vs the target's
+# k=1): the SAME action class as _SALIENT_FRAME but a DISTINCT signature — the
+# same-action-class "sibling" whose winning objective the generative RE-AIM
+# transfers to a losing target (g-355-19).
+_SIBLING_FRAME = [[[0, 0, 0], [0, 7, 8], [0, 0, 0]]]
 
 
 def _measured(
@@ -380,3 +385,56 @@ def test_measure_aggregate_unlabeled_is_machinery_proxy() -> None:
     result = measure_aggregate(held_out, inner, SkillLibrary())
     assert result.baseline == 0.5  # exactly one of two seeds trusted
     assert result.gain == 0.0
+
+
+def test_measure_aggregate_generative_arm_distinct_gain() -> None:
+    """g-355-19 — the generative arm's DISTINCT gain: a held-out signature that
+    only ever LOST (it adopted reach_cell on one win, then lost) is RE-AIMED to a
+    same-action-class sibling's WINNING objective (align_to_cell) by
+    HeuristicRefinementModel, so treatment>baseline. The SAME fixture on the
+    observe-only path (model=None) yields gain 0 — the loser keeps reach_cell at a
+    sub-trust confidence — so the gain is UNIQUE to the generative edit and cannot
+    be produced by observe alone (which learns an objective only from a
+    signature's OWN winning records)."""
+    inner = DeterministicOracleSeedProvider()
+    target_sig = frame_signature(_SALIENT_FRAME, _AVAIL_MOVE)
+    sibling_sig = frame_signature(_SIBLING_FRAME, _AVAIL_MOVE)
+    assert target_sig != sibling_sig  # distinct signatures...
+    assert target_sig.split("|", 1)[0] == sibling_sig.split("|", 1)[0]  # ...same class
+
+    # Train: the target won ONCE with reach_cell then lost 4x (a loser that ADOPTED
+    # reach_cell); the sibling won 4x with align_to_cell (a strong same-class donor).
+    train = (
+        [_measured(_SALIENT_FRAME, won=True, objective_used=OBJECTIVE_REACH_CELL,
+                   board_id="t-win")]
+        + [_measured(_SALIENT_FRAME, won=False, objective_used=OBJECTIVE_REACH_CELL,
+                     board_id=f"t-loss-{i}") for i in range(4)]
+        + [_measured(_SIBLING_FRAME, won=True, objective_used=OBJECTIVE_ALIGN_TO_CELL,
+                     board_id=f"s-win-{i}") for i in range(4)]
+    )
+    # Held-out target board whose TRUE winning objective is align_to_cell (what the
+    # sibling won with). The oracle's frame-class heuristic labels reach_cell -> baseline 0.
+    held_out = [_measured(_SALIENT_FRAME, winning=OBJECTIVE_ALIGN_TO_CELL, board_id="held")]
+
+    # Observe-only arm (model=None): the loser keeps reach_cell at low confidence
+    # (untrusted), so treatment==baseline, gain 0 — observe CANNOT correct a
+    # signature from another signature's evidence.
+    observe_only = measure_aggregate(
+        held_out, inner, SkillLibrary(min_support=3), train=train
+    )
+    assert observe_only.gain == 0.0
+    assert observe_only.refiner_fired == 0
+
+    # Generative arm (HeuristicRefinementModel): the RE-AIM lifts the target to
+    # align_to_cell from the sibling donor -> trusted -> treatment 1.0, gain > 0.
+    generative = measure_aggregate(
+        held_out, inner, SkillLibrary(min_support=3), train=train,
+        model=HeuristicRefinementModel(),
+    )
+    assert generative.baseline == 0.0  # oracle picks reach_cell != align_to_cell
+    assert generative.treatment == 1.0  # refiner RE-AIMs to align_to_cell @ conf 1.0
+    assert generative.gain > 0.0
+    assert generative.refiner_fired == 1
+    assert target_sig in generative.signatures_fired
+    # DISTINCT: the generative arm produced a gain the observe-only arm did not.
+    assert generative.gain > observe_only.gain

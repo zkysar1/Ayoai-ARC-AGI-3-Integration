@@ -674,20 +674,39 @@ def measure_aggregate(
     library: SkillLibrary,
     *,
     train: Optional[list[MeasuredEpisode]] = None,
+    model: Optional[RefinementModel] = None,
 ) -> AggregateResult:
     """Compute baseline (``inner`` alone) vs treatment
     (``RefinerSeedProvider(inner, library)``) aggregate score over ``held_out``,
     and ``gain = treatment - baseline`` (design Section 5).
 
-    When ``train`` is given, ``library`` is populated from it FIRST (in place, via
-    ``Refiner.observe``) — so a caller can pass a fresh empty library + a train
-    split and get the populated-library measurement in one call. When ``train`` is
-    None the library is used as-is (the caller populated it, or it is empty for
-    the F1 check). Baseline never touches the library (it calls ``inner``
-    directly), so populate-then-measure-both is order-independent.
+    When ``train`` is given, ``library`` is populated from it FIRST (in place) — so
+    a caller can pass a fresh empty library + a train split and get the
+    populated-library measurement in one call. ``model`` selects HOW the train
+    split populates the library:
+
+      - ``model is None`` (default): observe-only — ``Refiner.observe`` folds the
+        deterministic win/support counts. Byte-identical to the pre-g-355-19 path,
+        so F1 and every prior measurement test are unchanged.
+      - ``model`` set (e.g. ``HeuristicRefinementModel``): the FULL outer-loop pass
+        — ``Refiner.refine`` runs observe THEN ``model.refine``, so the model's
+        generative edits (the g-355-18 RE-AIM) are ON the measured library. This
+        is what lets the harness detect a gain the observe-only path CANNOT
+        produce: a losing signature corrected from a same-action-class sibling's
+        winning objective (g-355-19), which observe alone never learns (observe
+        adopts an objective only from a signature's OWN winning records).
+
+    When ``train`` is None the library is used as-is (the caller populated it, or
+    it is empty for the F1 check) and ``model`` is ignored. Baseline never touches
+    the library (it calls ``inner`` directly), so populate-then-measure-both is
+    order-independent.
     """
     if train:
-        Refiner(library).observe([_record_from_episode(e) for e in train])
+        train_records = [_record_from_episode(e) for e in train]
+        if model is not None:
+            Refiner(library, model).refine(train_records)
+        else:
+            Refiner(library).observe(train_records)
     refiner = RefinerSeedProvider(inner, library)
     baseline_total = 0.0
     treatment_total = 0.0
