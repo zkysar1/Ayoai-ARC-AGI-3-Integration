@@ -944,8 +944,11 @@ class StateGraphExplorer:
         hit_depth: Optional[int] = None
         # Frontier coordination (g-315-389): full-scan hit list — every frontier
         # reached within the SAME BFS bound, as (episodes_seen, depth,
-        # first_action). Empty unless _frontier_coord.
-        coord_hits: list[tuple[int, int, int]] = []
+        # first_action, frontier_cell). frontier_cell (g-315-438 v2) is the
+        # recorded cursor cell of the frontier NODE itself — the destination the
+        # route targets — used ONLY by the corridor penalty; None when unrecorded.
+        # Empty unless _frontier_coord.
+        coord_hits: list[tuple[int, int, int, Optional[tuple[int, int]]]] = []
         while queue and expanded < _BFS_MAX_NODES:
             node_hash, first_action, depth = queue.popleft()
             if (
@@ -968,6 +971,13 @@ class StateGraphExplorer:
                             self._node_episode_seen.get(node_hash, 0),
                             depth,
                             first_action,
+                            # v2 (g-315-438): the frontier NODE's recorded cell —
+                            # the actual destination region this route targets.
+                            # _node_cell records it when the cursor visited the
+                            # frontier node to discover its untested action, so it
+                            # is populated far more often than v1's immediate-
+                            # successor cell (rb-4449). None only when unrecorded.
+                            self._node_cell.get(node_hash),
                         )
                     )
                 hit_depth = depth if hit_depth is None else hit_depth
@@ -991,45 +1001,52 @@ class StateGraphExplorer:
             # replayable). Varies the episode-level TARGET as prior episodes
             # accumulate episodes_seen on worked regions.
             if self._corridor_penalty is not None:
-                # ⚠ FINDING (g-315-437 live two-arm gate, 2026-07-21): this
-                # tertiary tie-break is INERT — it changed 0 of 1569 actions and
-                # the 2nd-half cross-redundant metric was IDENTICAL ON vs OFF
-                # (207==207, cursor_coverage 0.8696 both). Root cause: _corridor_pen
-                # resolves the landing region via the successor node's RECORDED
-                # cell, which is unrecorded during forward frontier exploration, so
-                # the penalty is 0 for every candidate and the final h[2]
-                # (first_action) tiebreak decides identically to min(coord_hits).
-                # A corrected v2 must resolve against the frontier-TARGET region
-                # (the destination), not the immediate successor, and/or promote
-                # the penalty above depth — carefully, per rb-3240 (coverage is
-                # load-bearing). Kept default-OFF (byte-identical) as the v2
-                # scaffold; the primitive itself is sound + tested.
-                # g-315-437: bounded, late-gated corridor penalty as a strict
+                # g-315-438 v2: bounded, late-gated corridor penalty as a strict
                 # TIE-BREAK after (episodes_seen, depth). It NEVER changes the
-                # targeted frontier when either of those differs -- it only
+                # targeted frontier when either of those differs — it only
                 # prefers, among equally-fresh AND equally-close frontiers, the
-                # first-step whose landing region is LEAST re-crossed. So it
+                # route whose DESTINATION region is LEAST re-crossed. So it
                 # cannot trade route length for corridor-avoidance (the rb-3240
-                # floor risk); early-phase penalty is 0. Landing region = the
-                # cursor cell recorded at the first-step successor node (no
-                # action->cell projection needed).
+                # coverage-is-load-bearing floor risk); early-phase penalty is 0.
+                #
+                # v1 (g-315-437) was doubly-INERT (live two-arm gate: 0/1569
+                # actions changed, cursor_coverage 0.8696 both, rb-4449): it
+                # resolved the penalty against the immediate SUCCESSOR node's
+                # cell (start_node.outgoing[first_action]), which is unrecorded
+                # during forward frontier exploration, so the penalty was a
+                # constant 0 and the final first_action tiebreak decided
+                # identically to min(coord_hits).
+                #
+                # v2 resolves against the frontier-TARGET region — coord_hits
+                # now carries the frontier NODE's recorded cell (h[3]); the
+                # cursor visited that node to discover its untested action, so
+                # _node_cell records it. This is the destination each route
+                # actually reaches, the region whose re-crossing the penalty is
+                # meant to dampen. Kept AT the tie-break position (not promoted
+                # above depth) per rb-3240; above-depth promotion is a separate,
+                # riskier experiment gated on the offline fire measurement.
                 phase = self._actions_used / max(1, self._action_budget)
-                start_node = self._graph.get(start_hash)
+                # Bind to a local so mypy narrows away the Optional inside the
+                # closure — self-attribute narrowing does not cross the nested-
+                # function boundary, though the enclosing `is not None` guard
+                # already holds. Behaviourally identical to self._corridor_penalty.
+                penalty_obj = self._corridor_penalty
 
-                def _corridor_pen(first_action: int) -> int:
-                    if start_node is None:
+                def _corridor_pen(
+                    frontier_cell: Optional[tuple[int, int]],
+                ) -> int:
+                    if frontier_cell is None:
                         return 0
-                    succ = start_node.outgoing.get(first_action)
-                    land = self._node_cell.get(succ) if succ else None
-                    if land is None:
-                        return 0
-                    return self._corridor_penalty.penalty(land, phase=phase)
+                    return penalty_obj.penalty(frontier_cell, phase=phase)
 
                 return min(
                     coord_hits,
-                    key=lambda h: (h[0], h[1], _corridor_pen(h[2]), h[2]),
+                    key=lambda h: (h[0], h[1], _corridor_pen(h[3]), h[2]),
                 )[2]
-            return min(coord_hits)[2]
+            # OFF-corridor (frontier_coord still on): byte-identical to the
+            # pre-v2 min(coord_hits)[2] — key explicitly on the first 3 fields so
+            # the new h[3] frontier_cell never affects the un-penalised ranking.
+            return min(coord_hits, key=lambda h: (h[0], h[1], h[2]))[2]
         if self._aevs is not None and len(candidates) > 1:
             return min(
                 candidates,
