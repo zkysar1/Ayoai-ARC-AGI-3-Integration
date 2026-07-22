@@ -599,6 +599,7 @@ class SolverV2StreamingAdapter:
         v4_arm: "Optional[V4Arm]",
         *,
         goal_predicate: "Optional[Callable[[Any], bool]]" = None,
+        history_k: int = 0,
     ) -> None:
         """Opt-in wire (default OFF): compose the env-agnostic V4Arm around the
         v2 per-tick decision (g-355-51). Pass a constructed V4Arm (offline:
@@ -609,25 +610,60 @@ class SolverV2StreamingAdapter:
         on every frame (strict-superset, guard-660). A real predicate + the
         LLM-backed synthesizer (a follow-up) turn that degrade into planning
         power without touching choose_action.
+
+        ``history_k`` (g-355-67) sets the depth of the ``_v4_state`` history
+        encoding: 0 = bare current grid (byte-identical to the pre-g-355-67
+        encoding — the strict-superset floor); k>=1 = (current, prev_1..prev_k)
+        frozen grids, None-padded per-episode. g-355-55 measured that k=3 cuts
+        residual transition-table aliasing ~63% deterministically on the hot
+        path (no LLM). Set history_k=3 for the machinery->score A/B.
         """
         self._v4_arm = v4_arm
+        self._v4_history_k = max(0, history_k)
         self._v4_goal_predicate: "Callable[[Any], bool]" = (
             goal_predicate if goal_predicate is not None else (lambda _s: False)
         )
 
-    @staticmethod
-    def _v4_state(frame: FrameData) -> Any:
+    def _v4_state(self, frame: FrameData) -> Any:
         """Hashable encoding of the layered ARC grid for V4Arm's transition
         buffer + planner (states MUST be hashable). Nested lists -> nested
         tuples. Only feeds buffer.observe + plan; with a NoOp/cold model it
-        never changes the returned action (always the v3 fallback)."""
+        never changes the returned action (always the v3 fallback).
+
+        Depth-k history (g-355-67, matches analysis/v4_offline_measure.py
+        ``_make_history_encoder``): ``self._v4_history_k`` == 0 -> bare current
+        grid (grid_only baseline, byte-identical to the pre-g-355-67 staticmethod
+        encoding — preserves the strict-superset floor); k>=1 -> a tuple
+        (current, prev_1, ..., prev_k) of frozen grids. Prev_d is None-padded
+        PER-EPISODE: ``_frame_history`` is a rolling cross-episode deque, so we
+        mask any prev that lies before this episode's start via ``d <
+        _tick_in_episode`` (the runtime analogue of the offline encoder's
+        ``i - d >= 0`` within-episode guard) — history never crosses an episode
+        boundary. g-355-55: k=3 cuts residual transition aliasing ~63% on the
+        hot path, no LLM."""
 
         def _freeze(x: Any) -> Any:
             if isinstance(x, list):
                 return tuple(_freeze(e) for e in x)
             return x
 
-        return _freeze(frame.frame)
+        k = getattr(self, "_v4_history_k", 0)
+        if k <= 0:
+            return _freeze(frame.frame)
+
+        # d=0 is the current frame; d=1..k are prev frames within THIS episode.
+        # At the step call _frame_history already holds the current frame (appended
+        # earlier in choose_action) and _tick_in_episode counts frames seen this
+        # episode (incl current), so d < _tick_in_episode is the within-episode test.
+        hist = self._frame_history
+        tie = self._tick_in_episode
+        out: list[Any] = [_freeze(frame.frame)]
+        for d in range(1, k + 1):
+            if d < tie and len(hist) >= d + 1:
+                out.append(_freeze(hist[-(d + 1)]))
+            else:
+                out.append(None)
+        return tuple(out)
 
     def choose_action(self, frame: FrameData) -> AyoaiDecision:
         """Decide the next action for `frame` via the v2 episode-seeded pipeline.

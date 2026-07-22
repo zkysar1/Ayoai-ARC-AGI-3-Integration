@@ -81,3 +81,52 @@ def test_v4_wire_survives_multi_episode_and_score_bump() -> None:
 
 def _run(adapter: SolverV2StreamingAdapter, frames: list[FrameData]) -> list:
     return [adapter.choose_action(f).action for f in frames]
+
+
+def test_v4_state_depth_k_history_encoding() -> None:
+    """g-355-67: ``_v4_state`` history-k encoding matches
+    ``analysis/v4_offline_measure._make_history_encoder``.
+
+    k=0 (default) stays the bare current grid (strict-superset floor); k>=1
+    builds (current, prev_1..prev_k) frozen grids, None-padded PER-EPISODE via
+    ``_tick_in_episode`` (so history never crosses an episode boundary even
+    though ``_frame_history`` is a rolling cross-episode deque)."""
+    from collections import deque
+
+    def g(t):  # a distinct 1x1x2 layered grid per tag
+        return [[[t, t]]]
+
+    def froz(t):  # == _freeze(g(t))
+        return (((t, t),),)
+
+    def fr(t):
+        return FrameData(
+            game_id="ls20-test", frame=g(t), state=GameState.NOT_FINISHED,
+            score=0, guid="play-1", available_actions=LS20_AVAILABLE,
+        )
+
+    # k=0 default: bare current grid, NOT a 1-tuple (byte-identical to the
+    # pre-g-355-67 staticmethod encoding — the strict-superset floor).
+    a0 = SolverV2StreamingAdapter(ayo_server_key="card", arc_game_id="ls20-test")
+    a0.set_v4_arm(V4Arm(NoOpSynthesizer(), horizon=4))  # history_k defaults 0
+    a0._frame_history = deque([g(9)], maxlen=8)
+    a0._tick_in_episode = 1
+    assert a0._v4_state(fr(9)) == froz(9)
+
+    a = SolverV2StreamingAdapter(ayo_server_key="card", arc_game_id="ls20-test")
+    a.set_v4_arm(V4Arm(NoOpSynthesizer(), horizon=4), history_k=3)
+
+    # Mid-episode: full history present. deque oldest->newest, hist[-1]==current.
+    a._frame_history = deque([g(1), g(2), g(3), g(4)], maxlen=8)
+    a._tick_in_episode = 4  # 4 frames seen this episode incl current (g4)
+    assert a._v4_state(fr(4)) == (froz(4), froz(3), froz(2), froz(1))
+
+    # Episode start (tick_in_episode=1): every prev is BEFORE this episode ->
+    # None-padded, even though the rolling deque still holds prior-episode grids.
+    a._frame_history = deque([g(1), g(2), g(3), g(4)], maxlen=8)
+    a._tick_in_episode = 1
+    assert a._v4_state(fr(4)) == (froz(4), None, None, None)
+
+    # Second frame of the episode: exactly one prev is within-episode.
+    a._tick_in_episode = 2
+    assert a._v4_state(fr(4)) == (froz(4), froz(3), None, None)
