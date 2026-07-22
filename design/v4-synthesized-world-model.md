@@ -230,10 +230,25 @@ object ontology and transition shape v4 would synthesize:
    last-synthesized model within a play. This preserves the tiny-compute split
    but means within-play adaptation is limited to what the current model already
    predicts — acceptable for a first arm.
-4. **Object-typing dependency on `WorldBuilder` perception quality.** v4 is only
-   as good as the objects the adapter emits. ls20's block is a 2-cell composite
-   (color-12+color-9); the WorldBuilder must emit it as ONE object with attrs, not
-   two cells. This is an `adapters/arc.py` perception requirement v4 surfaces.
+4. **Object-typing dependency on `WorldBuilder` perception — VERIFIED GAP, and it
+   ARGUES FOR v4 (g-355-35, empirically confirmed).** The current `ArcWorldBuilder`
+   is same-colour 4-connectivity CC segmentation (`kind=unit:{colour}`). Run against
+   a REAL mid-game ls20 frame (`recordings/ls20-9607627b….recording.jsonl`) it emits
+   20 units across 8 colours — including **ONE color-12 segment (size 10) and FIVE
+   color-9 segments**, with the color-12 and nearest color-9 NOT adjacency-linked.
+   So "the block" is **NOT statically identifiable**: color-9 is shared by the
+   block's body AND four other elements (targets/etc.), and no colour+adjacency rule
+   picks out the player. Static perception cannot even LOCATE the player object.
+   This is not a WorldBuilder bug — it is the fundamental limit of static colour
+   segmentation, and it is the **strongest argument for v4**: the player block is
+   identifiable **DYNAMICALLY** — it is the segment that TRANSLATES in response to a
+   move action (0–3). v4's transition buffer + synthesis discovers this
+   automatically (the object whose position changes under a move action IS the
+   player), where v0/v2/v3's static perception cannot. So v4's object-typing
+   requirement is met NOT by a WorldBuilder rewrite but by the synthesized model's
+   dynamic identification — precisely the capability v4 adds. Do NOT build a static
+   composite-reconstruction step: it would still fail on the 5-way color-9
+   ambiguity. The dynamic path is correct AND validate-gated on live play.
 5. **Cold-start exploration.** Before any model is synthesized, v4 needs an
    explorer that maximizes ontology-error coverage (component 4). This overlaps
    `frontier_coverage` — reuse, don't rebuild.
