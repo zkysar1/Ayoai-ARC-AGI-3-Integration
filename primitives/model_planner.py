@@ -12,13 +12,12 @@ ls20, or any environment. It operates on:
   - an OPAQUE, HASHABLE state (any hashable value -- a tuple of object tuples, a
     frozenset, an int; the caller's synthesized world-model chooses the encoding)
   - OPAQUE action ids (any hashable; iteration order is the deterministic
-    tie-break, exactly like frontier_coverage and directed_move)
+    tie-break, exactly like frontier_coverage)
   - an INJECTED transition seam ``predict(state, action) -> next_state`` -- the
     synthesized model's one-step prediction. The planner NEVER computes dynamics;
     v4's ``synthesized_world_model`` supplies ``predict``, a different environment
-    supplies its own. This mirrors frontier_coverage's ``project`` seam and
-    directed_move's caller-supplied deltas: the geometry/dynamics live in the
-    caller, the search rule lives here.
+    supplies its own. This mirrors frontier_coverage's ``project`` seam: the
+    geometry/dynamics live in the caller, the search rule lives here.
   - an INJECTED goal predicate ``is_goal(state) -> bool`` -- caller-defined
     (for ls20: "the block has been delivered to every target with matching
     attributes"; for a grid world: "agent is on the target cell").

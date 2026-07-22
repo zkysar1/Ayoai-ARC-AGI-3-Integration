@@ -123,7 +123,7 @@ objective axis, v4 in the transition-dynamics axis.
 ## 5. The two new env-agnostic primitives (and the outer-loop seam)
 
 Concrete `primitives/` additions, in the opaque-object / opaque-action style of
-`frontier_coverage` and `directed_move` (no env literals in executable code):
+`frontier_coverage` (no env literals in executable code):
 
 - **`primitives/synthesized_world_model.py`** — `WorldModel` holds the current
   synthesized program (a serialized transition rule set) + `predict(objects,
