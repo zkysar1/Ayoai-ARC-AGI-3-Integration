@@ -75,6 +75,11 @@ from solver_v2.state_graph import ClickStateGraphExplorer, StateGraphExplorer
 from solver_v2.toggle_probe import ToggleProbe, cell_under_cursor, toggle_candidates
 from structs import FrameData, GameAction, GameState
 
+# g-355-51: the env-agnostic v4 control-loop primitive (OPINE-World port). The
+# solver DEPENDS ON primitives (correct direction); imported for the opt-in wire
+# in choose_action. Composing it is a strict-superset no-op under a NoOp model.
+from primitives.v4_arm import V4Arm
+
 logger = logging.getLogger(__name__)
 
 DECIDED_BY_SOLVER_V2 = "solver-v2"
@@ -116,6 +121,13 @@ class SolverV2StreamingAdapter:
         _tick: increments on each non-game-control decision (parity with
             AyoaiStreamingClient._tick semantics)
     """
+
+    # g-355-51: opt-in env-agnostic V4Arm wire (default OFF). set_v4_arm turns it
+    # on; choose_action then composes V4Arm around the v2 per-tick decision. With
+    # a NoOp/cold model this is a strict-superset no-op (guard-660: offline tests
+    # prove the wire, never a live score); once the LLM synthesizer + a real goal
+    # predicate land, v4 ADDS planning power with no re-wire.
+    _v4_arm: "Optional[V4Arm]" = None
 
     def __init__(
         self,
@@ -582,6 +594,41 @@ class SolverV2StreamingAdapter:
 
     # ---------- Public API ---------- #
 
+    def set_v4_arm(
+        self,
+        v4_arm: "Optional[V4Arm]",
+        *,
+        goal_predicate: "Optional[Callable[[Any], bool]]" = None,
+    ) -> None:
+        """Opt-in wire (default OFF): compose the env-agnostic V4Arm around the
+        v2 per-tick decision (g-355-51). Pass a constructed V4Arm (offline:
+        ``V4Arm(NoOpSynthesizer(), horizon=N)``); pass ``None`` to disable.
+
+        ``goal_predicate(state) -> bool`` is the caller's objective seam; the
+        default never-goal keeps a NoOp/cold model degrading to the v3 fallback
+        on every frame (strict-superset, guard-660). A real predicate + the
+        LLM-backed synthesizer (a follow-up) turn that degrade into planning
+        power without touching choose_action.
+        """
+        self._v4_arm = v4_arm
+        self._v4_goal_predicate: "Callable[[Any], bool]" = (
+            goal_predicate if goal_predicate is not None else (lambda _s: False)
+        )
+
+    @staticmethod
+    def _v4_state(frame: FrameData) -> Any:
+        """Hashable encoding of the layered ARC grid for V4Arm's transition
+        buffer + planner (states MUST be hashable). Nested lists -> nested
+        tuples. Only feeds buffer.observe + plan; with a NoOp/cold model it
+        never changes the returned action (always the v3 fallback)."""
+
+        def _freeze(x: Any) -> Any:
+            if isinstance(x, list):
+                return tuple(_freeze(e) for e in x)
+            return x
+
+        return _freeze(frame.frame)
+
     def choose_action(self, frame: FrameData) -> AyoaiDecision:
         """Decide the next action for `frame` via the v2 episode-seeded pipeline.
 
@@ -821,13 +868,28 @@ class SolverV2StreamingAdapter:
             executor_name = "DeterministicExecutor"
         self._tick_in_episode += 1
 
+        # 3.5 (g-355-51): opt-in env-agnostic V4Arm wire. With the default
+        # NoOp/cold model, plan() never reaches a goal, so step() returns the v3
+        # `decision.action` UNCHANGED (strict-superset degrade, guard-660). The
+        # (state, actions, goal) seams are exercised for real so the wire is
+        # proven end-to-end; only the LLM-backed synthesizer + a real goal
+        # predicate (a follow-up) turn the degrade into added planning power.
+        action_id = decision.action
+        if self._v4_arm is not None:
+            action_id = self._v4_arm.step(
+                self._v4_state(frame),
+                self._v4_goal_predicate,
+                available_action_ids,
+                fallback_action=decision.action,
+            )
+
         # 4. Convert action id back to GameAction enum for AyoaiDecision.
         try:
-            ga = GameAction.from_id(decision.action)
+            ga = GameAction.from_id(action_id)
         except ValueError as e:
             raise AyoaiStreamingError(
                 f"solver-v2 {executor_name} returned unknown action id "
-                f"{decision.action} (tick {self._tick})"
+                f"{action_id} (tick {self._tick})"
             ) from e
 
         provenance: dict[str, Any] = {
@@ -838,6 +900,13 @@ class SolverV2StreamingAdapter:
             "seed_source": self._episode_prior.seed_source,
             "executor": executor_name,
         }
+        if self._v4_arm is not None:
+            # g-355-51: prove the wire fired + record whether v4 overrode v3
+            # (always False under a NoOp/cold model — the strict-superset floor).
+            provenance["v4_arm"] = {
+                "consulted": True,
+                "changed": action_id != decision.action,
+            }
         if boundary_reason is not None:
             provenance["episode_boundary"] = boundary_reason
             # Observability (rb-1668, g-315-154 post-deploy litmus): stamp the
