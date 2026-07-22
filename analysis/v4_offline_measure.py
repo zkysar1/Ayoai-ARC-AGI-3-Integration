@@ -76,16 +76,26 @@ def _enc_grid_plus_available(recs: list[dict], i: int) -> Any:
     return (_grid(recs[i].get("frame")), avail)
 
 
-def _enc_grid_plus_history1(recs: list[dict], i: int) -> Any:
-    cur = _grid(recs[i].get("frame"))
-    prev = _grid(recs[i - 1].get("frame")) if i > 0 else None  # None = episode start
-    return (cur, prev)
+def _make_history_encoder(k: int) -> Callable[[list[dict], int], Any]:
+    """grid+history-k (g-355-55): state = (current_grid, prev_1, ..., prev_k) within
+    the episode, None-padded before the episode start. k=1 reproduces the g-355-54
+    grid+history1 arm; k in {2,3} extend the temporal window to answer the fork
+    g-355-54 opened — is the residual aliasing SHORT-memory (deeper history resolves
+    it -> a deterministic tiny-compute hot-path win) or GENUINE hidden state (aliasing
+    plateaus while recurrence collapses -> only the LLM synthesizer's generalization,
+    rb-4560/OPINE, resolves it)?"""
+    def _enc(recs: list[dict], i: int) -> Any:
+        return tuple(_grid(recs[i - d].get("frame")) if i - d >= 0 else None
+                     for d in range(k + 1))
+    return _enc
 
 
 ENCODERS: dict[str, Callable[[list[dict], int], Any]] = {
-    "grid_only": _enc_grid_only,
-    "grid+available_actions": _enc_grid_plus_available,
-    "grid+history1": _enc_grid_plus_history1,
+    "grid_only": _enc_grid_only,                         # k=0 baseline (bare grid)
+    "grid+available_actions": _enc_grid_plus_available,  # known-degenerate on ls20 (g-355-54)
+    "grid+history1": _make_history_encoder(1),
+    "grid+history2": _make_history_encoder(2),
+    "grid+history3": _make_history_encoder(3),
 }
 
 
@@ -139,19 +149,34 @@ def _measure(enc: list[tuple[list, list]]) -> dict:
 
 def _held_out_plan_viability(enc: list[tuple[list, list]]) -> float:
     """Leave-one-out: fraction of a held-out episode's frames whose encoded state has
-    a learned outgoing transition in the OTHER-episodes model."""
+    a learned outgoing transition in the OTHER-episodes model.
+
+    O(E*T): build a per-state {action -> episode-membership} map ONCE (episode index
+    if the (state, action) key appears in exactly ONE episode, else a MULTI sentinel
+    for >=2 episodes), then a held-out frame's state is covered iff some non-None
+    action's key appears in an episode != i. Replaces the prior O(E^2*T)
+    rebuild-seen-per-held-out loop, which with large history-k keys (3-4 frozen grids)
+    ran >13min before being killed (g-355-55) — same O(E^2) inefficiency class as the
+    g-355-53 re-encode fix. Result is identical to the rebuild form (grid_only /
+    history1 held-out reproduce g-355-54's 0.973 / 0.925)."""
+    MULTI = -1
+    state_actions: dict = {}  # state -> {action -> ep_idx (single-ep) | MULTI (>=2 eps)}
+    for i, (_states, trans) in enumerate(enc):
+        for s, a, _n in trans:
+            if a is None:
+                continue
+            am = state_actions.setdefault(s, {})
+            cur = am.get(a)
+            if cur is None:
+                am[a] = i
+            elif cur != i and cur != MULTI:
+                am[a] = MULTI  # observed in a second distinct episode
     total, covered = 0, 0
     for i, (held_states, _t) in enumerate(enc):
-        seen: dict = {}
-        for j, (_s, trans) in enumerate(enc):
-            if j == i:
-                continue
-            for s, a, n in trans:
-                seen[(s, a)] = n
-        action_ids = sorted({a for (_s, a) in seen if a is not None})
         for s in held_states:
             total += 1
-            if any((s, a) in seen for a in action_ids):
+            am = state_actions.get(s)
+            if am and any(ep == MULTI or ep != i for ep in am.values()):
                 covered += 1
     return round(covered / total, 4) if total else 0.0
 
@@ -215,6 +240,46 @@ def main() -> None:
             f"  {name:24s} contradicting={ct:6d} (cut {cut:+.1f}% vs grid_only) | "
             f"recurrence={m['state_recurrence_rate']:.3f} held_out_plan_viability={m['held_out_plan_viability_rate']:.3f}{flag}"
         )
+
+    # Depth-trajectory verdict (g-355-55): does deterministic depth-k history CLOSE
+    # the ls20 aliasing gap, or plateau while recurrence collapses (=> genuine hidden
+    # state; the LLM synthesizer's generalization is the lever, rb-4560/OPINE)?
+    depth_arms = [("grid_only", 0), ("grid+history1", 1), ("grid+history2", 2), ("grid+history3", 3)]
+    base_ct = per_encoding["grid_only"]["contradicting_transitions"]
+    base_rec = per_encoding["grid_only"]["state_recurrence_rate"]
+    traj = []
+    print("\nHistory-depth trajectory (k = frames of history in the state key):")
+    for name, k in depth_arms:
+        m = per_encoding.get(name)
+        if not m:
+            continue
+        ct = m["contradicting_transitions"]
+        cut = round(100 * (base_ct - ct) / base_ct, 1) if base_ct else 0.0
+        traj.append((k, ct, cut, m["state_recurrence_rate"], m["held_out_plan_viability_rate"]))
+        print(f"  k={k}  contradicting={ct:6d}  aliasing_cut={cut:+5.1f}%  "
+              f"recurrence={m['state_recurrence_rate']:.3f}  held_out_plan_viability={m['held_out_plan_viability_rate']:.3f}")
+    if len(traj) >= 2:
+        print("  marginal per added depth step (Δaliasing_cut vs Δrecurrence_loss):")
+        for prev, cur in zip(traj, traj[1:]):
+            d_cut = cur[2] - prev[2]
+            d_rec_loss = (prev[3] - cur[3]) * 100
+            ratio = (d_cut / d_rec_loss) if abs(d_rec_loss) > 1e-9 else float("inf")
+            print(f"    k={prev[0]}→{cur[0]}: Δaliasing_cut={d_cut:+5.1f}pp  "
+                  f"Δrecurrence_loss={d_rec_loss:+5.1f}pp  ratio={ratio:+.2f}")
+        last = traj[-1]
+        residual_pct = round(100 * last[1] / base_ct, 1) if base_ct else 0.0
+        rec_drop_pp = (base_rec - last[3]) * 100
+        if residual_pct > 50 and rec_drop_pp > 10:
+            verdict = (f"PLATEAU → GENUINE HIDDEN STATE. At k={last[0]} residual aliasing is still "
+                       f"{residual_pct:.0f}% of the depth-0 baseline while recurrence fell {rec_drop_pp:.0f}pp — "
+                       f"deeper deterministic history does NOT close the gap; the lever is the LLM synthesizer's "
+                       f"generalization (rb-4560/OPINE), not a richer deterministic encoding.")
+        else:
+            verdict = (f"DETERMINISTIC DEPTH VIABLE. At k={last[0]} residual aliasing dropped to {residual_pct:.0f}% of "
+                       f"baseline with recurrence {last[3]:.2f} — a depth-k history encoding resolves most aliasing on "
+                       f"the deterministic hot path (no LLM needed for this).")
+        print(f"  VERDICT (guard-660: machinery, not score): {verdict}")
+
     if not control["passes"]:
         print("\nHARNESS BROKEN: positive control failed — measurement NOT trustworthy.")
     else:
