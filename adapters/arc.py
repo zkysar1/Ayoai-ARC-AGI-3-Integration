@@ -70,8 +70,10 @@ from adapters.base import (
     ProximityModel,
     Result,
     Transport,
+    UnitLike,
     WorldBuilder,
 )
+from adapters.episode import run_exploration_episode
 from primitives.frontier_coverage import Cell, FrontierCoverage
 
 # A point on the ARC grid: (col, row) integer coordinate. Unlike roblox's Vec3 (a 3-D
@@ -449,10 +451,17 @@ class SimulatedArcGrid:
 # --------------------------------------------------------------------------- #
 # Driver -- FrontierCoverage drives an ARC grid exploration episode.            #
 # --------------------------------------------------------------------------- #
-def _find_cursor_unit(units: Sequence[Unit]) -> Optional[Unit]:
+def _find_cursor_unit(units: Sequence[UnitLike]) -> Optional[Unit]:
+    """Locate the ARC click-cursor unit (the sole is_character segment).
+
+    The shared driver (adapters/episode) hands us base.UnitLike-typed units --
+    its build_units Protocol erases the concrete type -- but at runtime they are
+    ArcUnits, so the returned unit carries the GridCoord centroid the driver
+    quantizes. The cast recovers the concrete type the Protocol erased.
+    """
     for u in units:
         if u.is_character:
-            return u
+            return cast(Unit, u)
     return None
 
 
@@ -464,54 +473,27 @@ def run_arc_episode(
     max_ticks: int = 64,
     calibrate: bool = True,
 ) -> EpisodeReport:
-    """Run the perception -> decide -> act -> learn loop with FrontierCoverage at the wheel.
+    """Run the ARC grid exploration episode via the shared env-agnostic driver
+    (adapters/episode.run_exploration_episode), supplying arc's cursor-locating
+    seam ``_find_cursor_unit``.
 
-    The env-agnostic ``FrontierCoverage`` core is COMPOSED (constructed here, untouched).
-    Each tick: WorldBuilder segments the grid -> quantize the click cursor cell ->
-    FrontierCoverage.select picks the least-used / least-visited action through the
-    ProximityModel projection seam -> the Decision (decided_by='frontier-coverage') exits
-    through Executor -> the observed cursor displacement is learned. A calibration pass
-    first observes each action's effect so projection has a learned model to work from
-    (LEARNED, not hardcoded) -- identical in shape to the roblox / vinheim drivers.
+    The drive loop itself is now the SHARED one (g-355-72 extraction of the loop
+    that was byte-identical across arc / roblox / vinheim / football); arc's only
+    per-env contribution is the seam. Signature + behavior are unchanged from the
+    former inline body -- a thin delegation, zero behavior change (the
+    ``test_arc_adapter`` / ``test_live_arc_transport`` suites are the regression
+    gate). The concrete-slot casts are the same bridge ``build_arc_adapter`` uses:
+    the concrete Arc slots' value types (Decision / Unit / GridCoord) do not
+    structurally satisfy the DecisionLike-typed base Protocols under strict mypy.
     """
-    coverage = FrontierCoverage()
-    report = EpisodeReport(coverage=coverage)
-    actions = executor.declare_actions()
-
-    if calibrate:
-        for a in actions:
-            before = proximity.quantize(executor.position())
-            res = executor.execute(Decision(action=a, decided_by="calibration"))
-            after = proximity.quantize(executor.position())
-            if res.outcome == "success":
-                proximity.record_effect(a, before, after)
-
-    for _ in range(max_ticks):
-        units = world_builder.build_units(executor.world_state())
-        proximity.set_units(units)
-        cursor_unit = _find_cursor_unit(units)
-        cur = (
-            proximity.quantize(cursor_unit.centroid)
-            if cursor_unit is not None
-            else proximity.quantize(executor.position())
-        )
-        coverage.record_visit(cur)
-
-        action = coverage.select(actions, project=proximity.project_from(cur))
-        if action is None:
-            break  # no projectable move -> episode is exhausted
-
-        decision = Decision(action=action, decided_by="frontier-coverage")
-        result = executor.execute(decision)  # framework-routed (gate 2)
-        coverage.record_action(action)
-
-        new_cell = proximity.quantize(executor.position())
-        proximity.record_effect(action, cur, new_cell)  # learn from the outcome
-
-        report.decisions.append(decision)
-        report.results.append(result)
-
-    return report
+    return run_exploration_episode(
+        cast(WorldBuilder, world_builder),
+        cast(ProximityModel, proximity),
+        executor,  # ArcExecutor satisfies EpisodeExecutor structurally (concrete Decision/Result)
+        _find_cursor_unit,
+        max_ticks=max_ticks,
+        calibrate=calibrate,
+    )
 
 
 # --------------------------------------------------------------------------- #
