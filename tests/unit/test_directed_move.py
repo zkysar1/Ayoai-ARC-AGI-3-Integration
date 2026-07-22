@@ -11,12 +11,21 @@ from __future__ import annotations
 
 from primitives.directed_move import Move, manhattan, select_move
 
-# ---------- the wedge scenario (mirrors ls20-9607627b frame 542, g-355-23) ---- #
+# ---------- SYNTHETIC one-direction-open wedge (select_move distance logic) --- #
+# NB (g-355-27): this is a SYNTHETIC wedge with one direction open — it pins
+# select_move's distance-reducing choice, NOT real ls20 frame 542. The g-355-23
+# "frame 542 has right=OPEN, a uniquely-forced move" claim was CORRECTED against
+# the raw 64x64 raster: the agent (colour-1 @ (32,20)/(33,21)) is SEALED — 5 of 6
+# orthogonal neighbours are walls, the 6th a wall-sealed colour-0 pocket, ZERO
+# floor neighbours, and it never moves across all 1627 frames despite all four
+# move-actions being tried. The REAL frame-542 mirror is test_boxed_in_returns_none
+# below (no open move -> None -> RESET), not this synthetic open-wedge.
 
 
 def test_wedge_selects_the_only_open_direction() -> None:
     """Agent walled up/down/left, right OPEN, goal to the right -> pick right.
-    This is the frame-542 geometry the solver ping-ponged on for 1626 frames."""
+    Synthetic geometry pinning select_move's distance-reducing choice when ONE
+    direction is open (NOT real ls20 frame 542 — that is boxed-in, g-355-27)."""
     agent = (5, 5)
     goal = (5, 9)  # 4 cells to the right, same row
     moves = [
@@ -44,7 +53,13 @@ def test_never_steps_into_a_wall_even_if_it_points_at_goal() -> None:
 
 def test_boxed_in_returns_none() -> None:
     """No open move -> None (caller falls back to explore/RESET), distinct from
-    'made progress'."""
+    'made progress'. THIS is the verified real ls20-9607627b frame-542 geometry
+    (g-355-27): the agent is SEALED (5/6 neighbours wall, 6th a wall-sealed
+    colour-0 pocket, 0 floor neighbours) and never moves across 1627 frames
+    despite all four move-actions tried. select_move -> None is the correct read:
+    directed_move's REAL value on this frame is boxed-in DETECTION (-> RESET),
+    which would have stopped the solver's 1539 futile move-actions — not the
+    distance-reduction the synthetic open-wedge above tests."""
     agent = (5, 5)
     goal = (0, 0)
     moves = [Move(a, d, is_open=False) for a, d in [(1, (-1, 0)), (2, (1, 0)), (3, (0, -1)), (4, (0, 1))]]
