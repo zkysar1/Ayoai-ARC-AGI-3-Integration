@@ -73,6 +73,43 @@ class NoOpSynthesizer:
         return model
 
 
+class TableSynthesizer:
+    """Deterministic (non-LLM) table-learning synthesizer -- the tiny-compute v0 of
+    the ``WorldModelSynthesizer`` seam (this module's docstring: "a symbolic
+    synthesizer is another" implementation). It MEMORIZES the whole buffer in ONE
+    call: ``(state, action) -> observed next_state``, with unobserved pairs honestly
+    falling back to IDENTITY (no invented dynamics). One synthesize() makes the model
+    ``explains_all`` a self-consistent buffer, so ``synthesize_until_consistent``
+    converges in a single round -- this is what gives ``V4Arm`` real, offline-provable
+    planning power (the wire was strict-superset-degrade-only under ``NoOpSynthesizer``).
+
+    Env-AGNOSTIC (opaque hashable states/actions -- carries no env constant, no
+    game-model assumption, rb-4569) and DETERMINISTIC (no LLM, no ``Math.random`` ->
+    fits the tiny-compute HOT PATH and the offline-verify-then-execute contract v4 §2
+    requires; self.md "math first for the hot path"). guard-660: it proves the
+    wire/planning OFFLINE, never a live score.
+
+    Contrast the LLM-backed CEGIS synthesizer (infra-gated, rb-4557): a table-learner
+    only reproduces OBSERVED transitions -- it never GENERALIZES to unseen
+    ``(state, action)`` pairs. That is the honest v0 floor: v4 plans through territory
+    it has actually explored, and degrades to the caller's fallback everywhere else
+    (the strict-superset guarantee, design §4). A self-CONTRADICTORY buffer (the same
+    ``(state, action)`` observed with two different ``next_state`` -- a stochastic
+    environment) is NOT table-learnable: the last write wins, one transition stays
+    mispredicted, and the CEGIS stall-guard stops the loop honestly rather than
+    looping. Stateless: the buffer is the sole ground truth, rebuilt each call, so the
+    current ``model`` argument is intentionally ignored (the Protocol permits it).
+    """
+
+    def synthesize(self, buffer: TransitionBuffer, model: WorldModel) -> WorldModel:
+        table: dict = {}
+        for t in buffer:
+            # De-dup keeps the last observation for a repeated (state, action); a
+            # deterministic environment never contradicts, so last-write-wins is exact.
+            table[(t.state, t.action)] = t.next_state
+        return WorldModel(lambda s, a: table.get((s, a), s))
+
+
 def synthesize_until_consistent(
     buffer: TransitionBuffer,
     model: WorldModel,

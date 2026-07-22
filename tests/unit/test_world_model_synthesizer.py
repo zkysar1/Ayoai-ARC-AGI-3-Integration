@@ -47,7 +47,7 @@ class CountingSynthesizer:
         return WorldModel(self.program)
 
 
-class TableSynthesizer:
+class GradualTableSynthesizer:
     """Gradual synthesizer: each call LEARNS the current counterexample's
     (state, action)->next into a growing lookup table (unknown pairs fall back to
     identity). Explains exactly one more transition per call -- lets the tests
@@ -81,7 +81,7 @@ def test_noop_and_stubs_conform_to_protocol() -> None:
     structurally valid synthesizers."""
     assert isinstance(NoOpSynthesizer(), WorldModelSynthesizer)
     assert isinstance(CountingSynthesizer(_correct_line), WorldModelSynthesizer)
-    assert isinstance(TableSynthesizer(), WorldModelSynthesizer)
+    assert isinstance(GradualTableSynthesizer(), WorldModelSynthesizer)
 
 
 # --------------------------------------------------------------------------- #
@@ -146,7 +146,7 @@ def test_gradual_synthesizer_converges_within_budget() -> None:
     """A one-transition-per-call synthesizer converges once every buffered
     transition has been learned (3 transitions -> 3 calls)."""
     b = _line_buffer()
-    synth = TableSynthesizer()
+    synth = GradualTableSynthesizer()
     out = synthesize_until_consistent(b, WorldModel(), synth, max_rounds=8)
     assert out.explains_all(b)
     assert synth.calls == 3
@@ -156,7 +156,7 @@ def test_max_rounds_caps_a_gradual_synthesizer() -> None:
     """The round budget bounds compute: a gradual synthesizer that would need 3
     rounds is stopped at 2, leaving the model inconsistent (bounded, not looping)."""
     b = _line_buffer()
-    synth = TableSynthesizer()
+    synth = GradualTableSynthesizer()
     out = synthesize_until_consistent(b, WorldModel(), synth, max_rounds=2)
     assert synth.calls == 2
     assert not out.explains_all(b)
