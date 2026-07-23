@@ -74,9 +74,11 @@ from adapters.base import (
     Executor,
     ProximityModel,
     Result,
+    UnitLike,
     WorldBuilder,
 )
-from primitives.frontier_coverage import Cell, FrontierCoverage
+from adapters.episode import run_exploration_episode as _run_shared_episode
+from primitives.frontier_coverage import Cell
 
 # A pitch is a 2D plane: (length axis, width axis). Same Unit fields as the
 # siblings; only the meaning of the coordinate differs.
@@ -479,22 +481,27 @@ class FootballExecutor:
 # --------------------------------------------------------------------------- #
 # Driver -- FrontierCoverage drives one contested-pitch exploration episode.    #
 # --------------------------------------------------------------------------- #
-def _find_agent(units: Sequence[Unit], agent_id: Optional[str]) -> Optional[Unit]:
+def _find_agent(units: Sequence[UnitLike], agent_id: Optional[str]) -> Optional[Unit]:
     """Locate the controlled player.
 
     Unlike the single-body siblings, a pitch holds MANY characters, so "the first
     character" is not a safe identification -- ``agent_id`` names which one this
     episode drives. Without it we fall back to the first character, matching the
     sibling behaviour for a one-player world.
+
+    The shared driver (adapters/episode) hands us base.UnitLike-typed units -- its
+    build_units Protocol erases the concrete type -- but at runtime they are football
+    Units, so the returned unit carries the Coord centroid the driver quantizes. The
+    casts recover the concrete type the Protocol erased.
     """
     if agent_id is not None:
         for u in units:
             if u.id == agent_id:
-                return u
+                return cast(Unit, u)
         return None
     for u in units:
         if u.is_character:
-            return u
+            return cast(Unit, u)
     return None
 
 
@@ -507,54 +514,32 @@ def run_exploration_episode(
     max_ticks: int = 64,
     calibrate: bool = True,
 ) -> EpisodeReport:
-    """Run the perceive -> decide -> act -> learn loop with FrontierCoverage at the wheel.
+    """Run the football contested-pitch exploration episode via the shared
+    env-agnostic driver (adapters/episode.run_exploration_episode), supplying
+    football's player-locating seam ``_find_agent`` bound to this episode's
+    ``agent_id``.
 
-    The env-agnostic ``FrontierCoverage`` core is COMPOSED (constructed here,
-    untouched). Each tick: WorldBuilder re-derives the passing-lane graph from
-    where the opponents now are -> the agent cell is quantized ->
-    FrontierCoverage.select picks the least-used / least-visited move through the
-    projection seam -> the Decision (decided_by='frontier-coverage') exits through
-    Executor -> the observed displacement is learned. A calibration pass first
-    observes each action's effect so projection has a learned model to work from.
+    The drive loop itself is now the SHARED one (g-355-72 extraction of the loop
+    that was byte-identical across arc / roblox / vinheim / football); football's
+    only per-env contributions are the seam AND the ``agent_id`` kwarg, which is
+    bound into the seam here so it stays OUT of the env-agnostic core (the shared
+    driver never sees agent_id). Signature + behavior are unchanged from the former
+    inline body -- a thin delegation, zero behavior change (the
+    ``test_football_adapter`` suite is the regression gate). The concrete-slot casts
+    bridge the concrete Football slots (whose Decision / Unit / Coord value types do
+    not structurally satisfy the DecisionLike-typed base Protocols under strict
+    mypy) to the shared driver's Protocol-typed parameters -- the same bridge the
+    module's own construction sites use (executor satisfies EpisodeExecutor
+    structurally, so it needs no cast).
     """
-    coverage = FrontierCoverage()
-    report = EpisodeReport(coverage=coverage)
-    actions = executor.declare_actions()
-
-    if calibrate:
-        for a in actions:
-            before = proximity.quantize(executor.position())
-            res = executor.execute(Decision(action=a, decided_by="calibration"))
-            after = proximity.quantize(executor.position())
-            if res.outcome == "success":
-                proximity.record_effect(a, before, after)
-
-    for _ in range(max_ticks):
-        units = world_builder.build_units(executor.world_state())
-        proximity.set_units(units)
-        agent = _find_agent(units, agent_id)
-        cur = (
-            proximity.quantize(agent.centroid)
-            if agent is not None
-            else proximity.quantize(executor.position())
-        )
-        coverage.record_visit(cur)
-
-        action = coverage.select(actions, project=proximity.project_from(cur))
-        if action is None:
-            break  # no projectable move -> episode is exhausted
-
-        decision = Decision(action=action, decided_by="frontier-coverage")
-        result = executor.execute(decision)  # framework-routed (gate 2)
-        coverage.record_action(action)
-
-        new_cell = proximity.quantize(executor.position())
-        proximity.record_effect(action, cur, new_cell)  # learn from the outcome
-
-        report.decisions.append(decision)
-        report.results.append(result)
-
-    return report
+    return _run_shared_episode(
+        cast(WorldBuilder, world_builder),
+        cast(ProximityModel, proximity),
+        executor,  # FootballExecutor satisfies EpisodeExecutor structurally (concrete Decision/Result)
+        lambda units: _find_agent(units, agent_id),
+        max_ticks=max_ticks,
+        calibrate=calibrate,
+    )
 
 
 # --------------------------------------------------------------------------- #

@@ -72,11 +72,19 @@ from __future__ import annotations
 import math
 from collections import deque
 from dataclasses import dataclass
-from typing import Callable, Mapping, Optional, Sequence
+from typing import Callable, Mapping, Optional, Sequence, cast
 
-from primitives.frontier_coverage import Cell, FrontierCoverage
-
-from adapters.base import Decision, EpisodeReport, Result, Transport
+from adapters.base import (
+    Decision,
+    EpisodeReport,
+    ProximityModel,
+    Result,
+    Transport,
+    UnitLike,
+    WorldBuilder,
+)
+from adapters.episode import run_exploration_episode as _run_shared_episode
+from primitives.frontier_coverage import Cell
 
 # A vinheim entity lives on a 2D SEMANTIC plane (an embedding coordinate / a
 # file-declared position), not a 3D world. The Unit shape is identical to roblox's;
@@ -340,10 +348,17 @@ class VinheimExecutor:
 # --------------------------------------------------------------------------- #
 # Driver -- FrontierCoverage drives a vinheim entity-world exploration episode. #
 # --------------------------------------------------------------------------- #
-def _find_agent(units: Sequence[Unit]) -> Optional[Unit]:
+def _find_agent(units: Sequence[UnitLike]) -> Optional[Unit]:
+    """Locate the vinheim controlled entity (the sole is_character segment).
+
+    The shared driver (adapters/episode) hands us base.UnitLike-typed units --
+    its build_units Protocol erases the concrete type -- but at runtime they are
+    vinheim Units, so the returned unit carries the Coord centroid the driver
+    quantizes. The cast recovers the concrete type the Protocol erased.
+    """
     for u in units:
         if u.is_character:
-            return u
+            return cast(Unit, u)
     return None
 
 
@@ -355,51 +370,26 @@ def run_exploration_episode(
     max_ticks: int = 64,
     calibrate: bool = True,
 ) -> EpisodeReport:
-    """Run the perception -> decide -> act -> learn loop with FrontierCoverage at the wheel.
+    """Run the vinheim entity-world exploration episode via the shared env-agnostic
+    driver (adapters/episode.run_exploration_episode), supplying vinheim's
+    entity-locating seam ``_find_agent``.
 
-    The env-agnostic `FrontierCoverage` core is COMPOSED (constructed here,
-    untouched). Each tick: WorldBuilder perceives the entity list -> quantize the
-    agent cell -> FrontierCoverage.select picks the least-used / least-visited move
-    through the ProximityModel projection seam -> the Decision (decided_by=
-    'frontier-coverage') exits through Executor -> the observed displacement is
-    learned. A calibration pass first observes each action's effect so projection
-    has a learned model to work from (LEARNED, not hardcoded).
+    The drive loop itself is now the SHARED one (g-355-72 extraction of the loop
+    that was byte-identical across arc / roblox / vinheim / football); vinheim's
+    only per-env contribution is the seam. Signature + behavior are unchanged from
+    the former inline body -- a thin delegation, zero behavior change (the
+    ``test_vinheim_adapter`` suite is the regression gate). The concrete-slot casts
+    bridge the concrete Vinheim slots (whose Decision / Unit / Coord value types do
+    not structurally satisfy the DecisionLike-typed base Protocols under strict
+    mypy) to the shared driver's Protocol-typed parameters -- the same bridge arc's
+    ``run_arc_episode`` uses (executor satisfies EpisodeExecutor structurally, so it
+    needs no cast).
     """
-    coverage = FrontierCoverage()
-    report = EpisodeReport(coverage=coverage)
-    actions = executor.declare_actions()
-
-    if calibrate:
-        for a in actions:
-            before = proximity.quantize(executor.position())
-            res = executor.execute(Decision(action=a, decided_by="calibration"))
-            after = proximity.quantize(executor.position())
-            if res.outcome == "success":
-                proximity.record_effect(a, before, after)
-
-    for _ in range(max_ticks):
-        units = world_builder.build_units(executor.world_state())
-        proximity.set_units(units)
-        agent = _find_agent(units)
-        cur = (
-            proximity.quantize(agent.centroid)
-            if agent is not None
-            else proximity.quantize(executor.position())
-        )
-        coverage.record_visit(cur)
-
-        action = coverage.select(actions, project=proximity.project_from(cur))
-        if action is None:
-            break  # no projectable move -> episode is exhausted
-
-        decision = Decision(action=action, decided_by="frontier-coverage")
-        result = executor.execute(decision)  # framework-routed (gate 2)
-        coverage.record_action(action)
-
-        new_cell = proximity.quantize(executor.position())
-        proximity.record_effect(action, cur, new_cell)  # learn from the outcome
-
-        report.decisions.append(decision)
-        report.results.append(result)
-
-    return report
+    return _run_shared_episode(
+        cast(WorldBuilder, world_builder),
+        cast(ProximityModel, proximity),
+        executor,  # VinheimExecutor satisfies EpisodeExecutor structurally (concrete Decision/Result)
+        _find_agent,
+        max_ticks=max_ticks,
+        calibrate=calibrate,
+    )
