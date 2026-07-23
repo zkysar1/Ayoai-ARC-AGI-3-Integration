@@ -84,6 +84,7 @@ from adapters.base import (
     WorldBuilder,
 )
 from adapters.episode import run_exploration_episode as _run_shared_episode
+from adapters.transport_executor import TransportExecutor
 from primitives.frontier_coverage import Cell
 from primitives.learned_displacement import LearnedDisplacementModel
 
@@ -284,7 +285,7 @@ class VinheimProximityModel(LearnedDisplacementModel):
 # --------------------------------------------------------------------------- #
 # Slot 3 -- Executor (action adapter + Vocabulary).                             #
 # --------------------------------------------------------------------------- #
-class VinheimExecutor:
+class VinheimExecutor(TransportExecutor[Coord]):
     """Move action space + execute (Plan 7.2.A Executor slot).
 
     declare_actions() is the Vocabulary of move tasks (a discrete action set).
@@ -293,38 +294,12 @@ class VinheimExecutor:
     exit here -- that is what keeps decided_by routing intact (gate 2). The transport
     is injected so the SAME Executor drives a simulated world (tests) or a live
     vinheim world API.
+
+    __init__ / declare_actions / execute / position / world_state are INHERITED from
+    TransportExecutor[Coord] (g-315-452, hoisted per rb-4884). Vinheim's reason
+    vocabulary ("action space" / "moved" / "blocked") matches the base defaults
+    exactly, so this subclass overrides NOTHING -- it only pins the Coord type.
     """
-
-    def __init__(self, *, transport: WorldTransport, actions: Sequence[int]) -> None:
-        if not actions:
-            raise ValueError("Executor needs a non-empty action space")
-        self._transport = transport
-        self._actions = list(actions)
-
-    def declare_actions(self) -> list[int]:
-        return list(self._actions)
-
-    def execute(self, decision: Decision) -> Result:
-        if decision.action not in self._actions:
-            return Result(
-                outcome="fail",
-                reason=f"action {decision.action} not in declared action space",
-                retry_safe=False,
-            )
-        try:
-            ok, reason = self._transport.move(decision.action)
-        except Exception as exc:  # transport failure -> unknown (Q10: fail:unconfirmed)
-            return Result(outcome="fail", reason=f"transport error: {exc}", retry_safe=False)
-        if ok:
-            return Result(outcome="success", reason=reason or "moved", retry_safe=True)
-        # A refused move (blocked) is safe to retry from a new pose.
-        return Result(outcome="fail", reason=reason or "blocked", retry_safe=True)
-
-    def position(self) -> Coord:
-        return self._transport.position()
-
-    def world_state(self) -> Mapping[str, object]:
-        return self._transport.world_state()
 
 
 # --------------------------------------------------------------------------- #
