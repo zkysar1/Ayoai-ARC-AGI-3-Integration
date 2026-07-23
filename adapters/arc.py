@@ -60,7 +60,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import Callable, Mapping, Optional, Sequence, cast
+from typing import Mapping, Optional, Sequence, cast
 
 from adapters.base import (
     Decision,
@@ -75,6 +75,7 @@ from adapters.base import (
 )
 from adapters.episode import run_exploration_episode
 from primitives.frontier_coverage import Cell, FrontierCoverage
+from primitives.learned_displacement import LearnedDisplacementModel
 
 # A point on the ARC grid: (col, row) integer coordinate. Unlike roblox's Vec3 (a 3-D
 # world pose) or vinheim's Coord (a semantic-plane float pair), ARC coordinates are
@@ -262,7 +263,7 @@ class ArcWorldBuilder:
 # --------------------------------------------------------------------------- #
 # Slot 2 -- ProximityModel (variance-absorbing action adapter).                 #
 # --------------------------------------------------------------------------- #
-class ArcProximityModel:
+class ArcProximityModel(LearnedDisplacementModel):
     """GRID-MANHATTAN distance + the learned-displacement projection seam (ProximityModel).
 
     distance(a, b) is the L1 / Manhattan distance between two segment centroids on the
@@ -281,36 +282,17 @@ class ArcProximityModel:
     def __init__(self, *, cell_size: int = 1) -> None:
         if cell_size <= 0:
             raise ValueError("cell_size must be positive")
+        super().__init__()  # seeds self._displacement (the shared learned-displacement seam)
         self._cell_size = cell_size
-        self._displacement: dict[int, Cell] = {}
         self._units_by_id: dict[str, Unit] = {}
 
     # ---- cell quantization (grid coord -> integer Cell, matching FrontierCoverage.Cell) ----
     def quantize(self, position: GridCoord) -> Cell:
         return (position[0] // self._cell_size, position[1] // self._cell_size)
 
-    # ---- learned displacement model (primitive-side memory) ----
-    def record_effect(self, action: int, from_cell: Cell, to_cell: Cell) -> None:
-        """Observe that `action` moved the cursor from_cell -> to_cell (learn its delta)."""
-        delta = (to_cell[0] - from_cell[0], to_cell[1] - from_cell[1])
-        # Only record a real displacement; a no-op move teaches nothing about the action's
-        # effect (and would poison projection with a (0, 0) delta).
-        if delta != (0, 0) or action not in self._displacement:
-            self._displacement[action] = delta
-
-    def learned_actions(self) -> set[int]:
-        return set(self._displacement)
-
-    def project_from(self, cell: Cell) -> Callable[[int], Optional[Cell]]:
-        """Return the projection seam project(action) -> Cell|None anchored at `cell`."""
-
-        def project(action: int) -> Optional[Cell]:
-            delta = self._displacement.get(action)
-            if delta is None:
-                return None  # never observed -> skipped (bootstraps via calibration)
-            return (cell[0] + delta[0], cell[1] + delta[1])
-
-        return project
+    # ---- learned-displacement seam (record_effect / learned_actions / project_from) is
+    #      inherited from primitives.learned_displacement.LearnedDisplacementModel
+    #      (g-315-449; byte-identical across all 4 adapters, hoisted per g-315-448/rb-4880) ----
 
     # ---- grid-Manhattan distance (Plan 7.2.A signature: distance(unitA, unitB)) ----
     def set_units(self, units: Sequence[Unit]) -> None:
