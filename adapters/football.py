@@ -64,10 +64,18 @@ and the existing primitive suite is its regression gate.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Mapping, Optional, Protocol, Sequence, cast
 
-from adapters.base import EnvironmentAdapter, Executor, ProximityModel, WorldBuilder
+from adapters.base import (
+    Decision,
+    EnvironmentAdapter,
+    EpisodeReport,
+    Executor,
+    ProximityModel,
+    Result,
+    WorldBuilder,
+)
 from primitives.frontier_coverage import Cell, FrontierCoverage
 
 # A pitch is a 2D plane: (length axis, width axis). Same Unit fields as the
@@ -117,41 +125,6 @@ class Unit:
     @property
     def is_character(self) -> bool:
         return self.kind.lower() in _CHARACTER_KINDS
-
-
-@dataclass(frozen=True)
-class Result:
-    """Executor result (Plan 7.2.A Q10). 'fail' + retry_safe=False = unconfirmed."""
-
-    outcome: str  # "success" | "fail"
-    reason: str
-    retry_safe: bool
-
-
-@dataclass(frozen=True)
-class Decision:
-    """A primitive's chosen move, carrying decided_by so framework routing is preserved."""
-
-    action: int
-    decided_by: str
-    target_unit_id: Optional[str] = None
-
-
-@dataclass
-class EpisodeReport:
-    """What one exploration episode produced (for verification / analysis)."""
-
-    coverage: FrontierCoverage
-    decisions: list[Decision] = field(default_factory=list)
-    results: list[Result] = field(default_factory=list)
-
-    @property
-    def cells_covered(self) -> int:
-        return self.coverage.visited_count
-
-    @property
-    def action_distribution(self) -> dict[int, int]:
-        return self.coverage.action_counts()
 
 
 class PitchTransport(Protocol):
@@ -247,20 +220,26 @@ class FootballWorldBuilder:
     the other agents are standing, so the graph is different on every tick.
     """
 
-    def __init__(self, *, default_size: float = 1.0, intercept_radius: float = 3.0) -> None:
+    def __init__(
+        self, *, default_size: float = 1.0, intercept_radius: float = 3.0
+    ) -> None:
         if intercept_radius < 0.0:
             raise ValueError("intercept_radius must be non-negative")
         self._default_size = default_size
         self._intercept_radius = intercept_radius
 
     @staticmethod
-    def _listing(world_state: Mapping[str, object], key: str) -> list[Mapping[str, object]]:
+    def _listing(
+        world_state: Mapping[str, object], key: str
+    ) -> list[Mapping[str, object]]:
         raw = world_state.get(key)
         if not isinstance(raw, (list, tuple)):
             return []
         return [e for e in raw if isinstance(e, Mapping)]
 
-    def _to_unit(self, entity: Mapping[str, object], default_kind: str) -> Optional[Unit]:
+    def _to_unit(
+        self, entity: Mapping[str, object], default_kind: str
+    ) -> Optional[Unit]:
         ident = entity.get("id")
         centroid = _as_coord(entity.get("pos") or entity.get("centroid"))
         if not isinstance(ident, str) or centroid is None:
@@ -268,7 +247,11 @@ class FootballWorldBuilder:
         kind = entity.get("kind") or entity.get("ayoType") or default_kind
         kind_str = kind if isinstance(kind, str) and kind else default_kind
         size_val = entity.get("size")
-        size = float(size_val) if isinstance(size_val, (int, float)) else self._default_size
+        size = (
+            float(size_val)
+            if isinstance(size_val, (int, float))
+            else self._default_size
+        )
         team_val = entity.get("team")
         team = team_val if isinstance(team_val, str) else ""
         half = size / 2.0
@@ -314,7 +297,9 @@ class FootballWorldBuilder:
         for u in units:
             if not u.is_character:
                 # Ball and goal frames are targets/scenery, not passing nodes.
-                linked.append(Unit(u.id, u.size, u.centroid, u.bbox, (), u.kind, u.team))
+                linked.append(
+                    Unit(u.id, u.size, u.centroid, u.bbox, (), u.kind, u.team)
+                )
                 continue
             opponents = [p for p in players if p.team != u.team and p.id != u.id]
             lanes = tuple(
@@ -475,7 +460,9 @@ class FootballExecutor:
         try:
             ok, reason = self._transport.move(decision.action)
         except Exception as exc:  # transport failure -> unconfirmed (Q10)
-            return Result(outcome="fail", reason=f"transport error: {exc}", retry_safe=False)
+            return Result(
+                outcome="fail", reason=f"transport error: {exc}", retry_safe=False
+            )
         if ok:
             return Result(outcome="success", reason=reason or "moved", retry_safe=True)
         # A move refused by an opponent's body is safe to retry from a new pose --
@@ -614,7 +601,12 @@ class SimulatedPitch:
     def world_state(self) -> Mapping[str, object]:
         return {
             "players": [
-                {"id": "H1", "team": TEAM_HOME, "pos": [self._pos[0], self._pos[1]], "size": 2.0},
+                {
+                    "id": "H1",
+                    "team": TEAM_HOME,
+                    "pos": [self._pos[0], self._pos[1]],
+                    "size": 2.0,
+                },
                 {"id": "A1", "team": TEAM_AWAY, "pos": [30.0, 30.0], "size": 2.0},
             ]
         }
