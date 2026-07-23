@@ -79,6 +79,7 @@ from structs import FrameData, GameAction, GameState
 # solver DEPENDS ON primitives (correct direction); imported for the opt-in wire
 # in choose_action. Composing it is a strict-superset no-op under a NoOp model.
 from primitives.v4_arm import V4Arm
+from primitives.reward_state_recognizer import RewardStateMemory
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,11 @@ class SolverV2StreamingAdapter:
     # prove the wire, never a live score); once the LLM synthesizer + a real goal
     # predicate land, v4 ADDS planning power with no re-wire.
     _v4_arm: "Optional[V4Arm]" = None
+
+    # g-315-445: opt-in reward-state recognizer that backs set_v4_arm's
+    # goal_predicate (design/v4-goal-predicate-win-bridge.md). Only instantiated +
+    # fed when the v4 arm is on, so the v2/v3 path stays byte-identical.
+    _reward_memory: "Optional[RewardStateMemory]" = None
 
     def __init__(
         self,
@@ -620,8 +626,22 @@ class SolverV2StreamingAdapter:
         """
         self._v4_arm = v4_arm
         self._v4_history_k = max(0, history_k)
+        # g-315-445: the reward-state recognizer IS the win-recognizer bridge
+        # (design/v4-goal-predicate-win-bridge.md §4). It remembers states seen at
+        # score INCREASES; its goal_predicate is exact-set membership. An EMPTY
+        # recognizer's predicate matches nothing == the never-goal default == the
+        # v3 fallback (strict-superset floor), so enabling the arm can only ADD
+        # planning power, never regress below v2. An explicit goal_predicate arg
+        # still overrides (kept for tests / alternate objectives).
+        self._reward_memory = RewardStateMemory() if v4_arm is not None else None
         self._v4_goal_predicate: "Callable[[Any], bool]" = (
-            goal_predicate if goal_predicate is not None else (lambda _s: False)
+            goal_predicate
+            if goal_predicate is not None
+            else (
+                self._reward_memory.goal_predicate
+                if self._reward_memory is not None
+                else (lambda _s: False)
+            )
         )
 
     def _v4_state(self, frame: FrameData) -> Any:
@@ -720,6 +740,12 @@ class SolverV2StreamingAdapter:
             self._episode_id += 1
             self._tick_in_episode = 0
             boundary_reason = boundary.reason
+            # g-315-445: clear the reward recognizer's per-episode delta tracker so
+            # a new episode's first frame (score reset by RESET) is not read as a
+            # decrease/increase against the prior episode's final score. The
+            # remembered reward-state SET persists across episodes (the point).
+            if self._reward_memory is not None:
+                self._reward_memory.reset_episode()
             context = EpisodeContext(
                 episode_id=self._episode_id,
                 game_class=self._game_class,
@@ -912,8 +938,18 @@ class SolverV2StreamingAdapter:
         # predicate (a follow-up) turn the degrade into added planning power.
         action_id = decision.action
         if self._v4_arm is not None:
+            v4_state = self._v4_state(frame)
+            # g-315-445: feed the reward recognizer BEFORE planning so its
+            # goal_predicate (the set_v4_arm default) learns states seen at score
+            # INCREASES. Same _v4_state encoding the arm plans over, so predicted
+            # states are membership-comparable. Empty memory -> never-goal -> v3.
+            if self._reward_memory is not None:
+                self._reward_memory.observe(
+                    v4_state,
+                    float(frame.score) if frame.score is not None else 0.0,
+                )
             action_id = self._v4_arm.step(
-                self._v4_state(frame),
+                v4_state,
                 self._v4_goal_predicate,
                 available_action_ids,
                 fallback_action=decision.action,

@@ -1016,6 +1016,28 @@ def main() -> None:
             frontier_coordination=args.frontier_coordination,
             corridor_penalty=args.corridor_penalty,
         )
+        # g-315-445: opt-in v4 synthesized-model arm + reward-state win-recognizer.
+        # OFF by default (strict-superset floor: an empty recognizer -> never-goal
+        # -> v3, byte-identical to plain --use-solver-v2). Enable for the live
+        # v2-vs-v4 A/B (design/v4-goal-predicate-win-bridge.md §5/§6). The adapter
+        # defaults the goal_predicate to its internal reward recognizer, so no
+        # predicate needs threading here -- just enable the arm.
+        if os.environ.get("SOLVER_V2_V4_ARM", "").strip().lower() in (
+            "1",
+            "true",
+            "on",
+            "yes",
+        ):
+            from primitives.v4_arm import V4Arm
+            from primitives.world_model_synthesizer import TableSynthesizer
+
+            streaming_client.set_v4_arm(
+                V4Arm(
+                    TableSynthesizer(),
+                    horizon=int(os.environ.get("SOLVER_V2_V4_HORIZON", "4")),
+                ),
+                history_k=int(os.environ.get("SOLVER_V2_V4_HISTORY_K", "3")),
+            )
     else:
         # streaming_url is resolved by this point (live: ayoai_session.streaming_url;
         # mock: args.mock_url). The assert makes that invariant explicit and
