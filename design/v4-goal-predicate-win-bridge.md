@@ -100,6 +100,27 @@ consumer first).
 arc-agi-3-api.md). Metric: score + action-efficiency on ≥1 game where a reward
 state is observed. Keys never printed.
 
+### §6.1 — Live result 2026-07-23 (g-315-445)
+
+Integration smoke: `SOLVER_V2_V4_ARM=1 ... main.py --game lp85-305b61c3
+--use-solver-v2 --state-graph --max-actions 20` against three.arcprize.org.
+The v4-armed solver **booted + played end-to-end live, clean exit** (real AyoAI
+solver-v2 session, live BitNetSeedProvider seed, 21 ticks, 14.7s, no crash).
+**Score stayed 0** the whole game (all 20 actions were ACTION6, `decided_by=solver-v2`).
+
+Consequence for the A/B: under the score-0 wall NO reward state is observed →
+the recognizer stays empty → never-goal → the arm returns its v3 fallback on
+every frame. So **v4 ≡ v2 live** — the strict-superset floor, confirmed live.
+The comparative *scored* A/B (does the arm improve efficiency) is **not runnable
+until a game scores at least once**: with no score increase there is nothing for
+exact-match recognition to fire on. This is the honest empirical answer to the
+first open question below (recognition did NOT fire on lp85 — the score-0 wall
+is the gate, not the recognizer). The floor itself is already proven
+deterministically offline (arm-boundary invariant: `returned == fallback` under
+NoOp, `tests/unit/test_v4_reward_recognizer_wire.py`), so the live run adds
+integration confidence, not floor evidence. Follow-up: re-run the comparative
+scored A/B once the score-0 wall breaks (win-condition DISCOVERY).
+
 ## Open questions
 
 - Does exact-match reward-state recognition ever fire on the M1 game set, or is
