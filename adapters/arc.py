@@ -76,6 +76,7 @@ from adapters.base import (
 from adapters.episode import run_exploration_episode
 from primitives.frontier_coverage import Cell, FrontierCoverage
 from primitives.learned_displacement import LearnedDisplacementModel
+from adapters.transport_executor import TransportExecutor
 
 # A point on the ARC grid: (col, row) integer coordinate. Unlike roblox's Vec3 (a 3-D
 # world pose) or vinheim's Coord (a semantic-plane float pair), ARC coordinates are
@@ -312,7 +313,7 @@ class ArcProximityModel(LearnedDisplacementModel):
 # --------------------------------------------------------------------------- #
 # Slot 3 -- Executor (action adapter + Vocabulary).                             #
 # --------------------------------------------------------------------------- #
-class ArcExecutor:
+class ArcExecutor(TransportExecutor[GridCoord]):
     """ARC action space + execute (Plan 7.2.A Executor slot).
 
     declare_actions() is the Vocabulary of ARC actions (a discrete id set). execute
@@ -322,42 +323,22 @@ class ArcExecutor:
     the SAME Executor drives the offline SimulatedArcGrid (tests / guard-795-safe default)
     or a live ARC wrapper.
 
+    The Executor skeleton -- __init__ / declare_actions / execute / position /
+    world_state -- is INHERITED from adapters.transport_executor.TransportExecutor
+    (g-315-452; byte-near-identical across all 4 adapters, hoisted per rb-4884). ARC
+    supplies only its reason vocabulary via the three class attributes below, so the
+    inherited execute() emits the identical strings it always has ("... not in declared
+    ARC action space" / "acted" / "no-op").
+
     Outcome mapping (the ARC echo taxonomy, integration-design.md §3): a cursor-moving /
     grid-changing action is ``success``; an action issued legally but producing no cursor
     effect (the "no-op" echo) is ``fail`` + ``retry_safe`` (legal, just ineffective from
     this pose); an unknown action id is ``fail`` + NOT retry_safe.
     """
 
-    def __init__(self, *, transport: ArcTransport, actions: Sequence[int]) -> None:
-        if not actions:
-            raise ValueError("Executor needs a non-empty action space")
-        self._transport = transport
-        self._actions = list(actions)
-
-    def declare_actions(self) -> list[int]:
-        return list(self._actions)
-
-    def execute(self, decision: Decision) -> Result:
-        if decision.action not in self._actions:
-            return Result(
-                outcome="fail",
-                reason=f"action {decision.action} not in declared ARC action space",
-                retry_safe=False,
-            )
-        try:
-            ok, reason = self._transport.move(decision.action)
-        except Exception as exc:  # transport failure -> unknown (Q10: fail:unconfirmed)
-            return Result(outcome="fail", reason=f"transport error: {exc}", retry_safe=False)
-        if ok:
-            return Result(outcome="success", reason=reason or "acted", retry_safe=True)
-        # A legal-but-ineffective action (no-op echo) is safe to retry from a new state.
-        return Result(outcome="fail", reason=reason or "no-op", retry_safe=True)
-
-    def position(self) -> GridCoord:
-        return self._transport.position()
-
-    def world_state(self) -> Mapping[str, object]:
-        return self._transport.world_state()
+    _label_action_space = "ARC action space"
+    _reason_effective = "acted"
+    _reason_ineffective = "no-op"
 
 
 # --------------------------------------------------------------------------- #
