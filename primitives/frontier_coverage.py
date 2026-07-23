@@ -28,9 +28,12 @@ or learned displacement models. It operates on:
 The ARC-specific perception (cursor detection, displacement learning, the
 position-dependent wall/maze model, dock/CC routing) STAYS in
 solver_v2/frontier_explorer.py, which COMPOSES this core and feeds it
-observations. External behavior is byte-identical to the previously-inlined form:
-the selection key (action usage, visited[projection], action id) is preserved
-exactly, so the existing explorer test-suite is the regression gate.
+observations. At extraction (g-315-236-c) external behavior was byte-identical
+to the previously-inlined form. g-355-87 then added DIRECTIONAL PERSISTENCE to
+select() (a heading commit of up to `persist_k` ticks) to break the net-zero
+orbit ceiling (g-355-86 / rb-4821: E_cov saturated at a 3x3 = 9-cell orbit
+invariant to grid size); the re-balance key is otherwise preserved exactly. The
+existing explorer test-suite remains the regression gate for the re-balance key.
 """
 
 from __future__ import annotations
@@ -51,9 +54,16 @@ class FrontierCoverage:
     would land on.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, persist_k: int = 6) -> None:
         self._visited: dict[Cell, int] = {}
         self._action_counts: dict[int, int] = {}
+        # Directional persistence (g-355-87): commit to the current heading for
+        # up to `persist_k` consecutive ticks WHILE it keeps reaching new cells,
+        # before re-balancing. `persist_k <= 1` disables it (pure g-315-236-c
+        # least-USED-primary behavior). See select() for why this is needed.
+        self._persist_k: int = persist_k
+        self._last_action: Optional[int] = None
+        self._heading_run: int = 0
 
     # ---------- observation ---------- #
 
@@ -93,19 +103,60 @@ class FrontierCoverage:
         project: Callable[[int], Optional[Cell]],
         exclude: Optional[int] = None,
     ) -> Optional[int]:
-        """Pick the least-USED candidate whose projection is least-VISITED.
+        """Pick the next action: hold the current heading, else re-balance.
 
-        Ranking key per candidate `a` (lexicographic minimum):
-            (action usage count, visit count of project(a), a)
-        Usage is PRIMARY so no single action dominates the distribution;
-        visit count steers WITHIN the least-used moves toward fresh ground;
-        action id breaks ties for determinism.
+        Two-stage rule:
+        1. DIRECTIONAL PERSISTENCE (g-355-87): if a heading is active and has
+           run < `persist_k` ticks AND still projects onto UNVISITED ground,
+           re-issue it. This lets a heading achieve NET displacement instead of
+           being immediately cancelled by its opposite.
+        2. RE-BALANCE (the g-315-236-c least-USED-primary key): otherwise pick
+           the lexicographic minimum of
+               (action usage count, visit count of project(a), a)
+           Usage is PRIMARY so no single action dominates the distribution;
+           visit count steers WITHIN the least-used moves toward fresh ground;
+           action id breaks ties for determinism. The chosen action becomes the
+           new heading.
+
+        Why persistence: the re-balance key ALONE round-robins the opposing
+        +/-col & +/-row moves into perfectly-balanced net-zero drift, so the
+        cursor orbits the start corner and coverage ceilings at a 3x3 = 9-cell
+        orbit INVARIANT to grid size (g-355-86 / rb-4821). Persistence breaks the
+        orbit while the `persist_k` cap + re-balance keep the action distribution
+        balanced (no g-315-215 single-axis collapse). Env-agnostic: "same action
+        id" IS "same heading" -- the core never reasons about geometry.
 
         `project(a)` returns the cell action `a` would land on, or None if `a`
         has no known effect (it is skipped). `exclude` is an action to skip
         entirely (e.g. a just-cleared axis -- the g-315-215 anti-lock turn-off).
         Returns the chosen action, or None if no candidate is selectable.
         """
+        # Directional persistence (g-355-87): before the usage-balanced key,
+        # try to commit to the current heading. The usage-PRIMARY key (correctly
+        # avoiding the g-315-215 single-axis collapse) round-robins the opposing
+        # +/-col & +/-row moves into perfectly-balanced net-zero drift, so the
+        # cursor orbits the start corner and coverage ceilings at a 3x3 = 9-cell
+        # orbit INVARIANT to grid size (g-355-86 / rb-4821). Re-issuing the last
+        # action for up to `_persist_k` consecutive ticks lets a heading achieve
+        # NET displacement before re-balancing. Env-agnostic: it never reasons
+        # about geometry -- "same action id" IS "same heading", whatever that
+        # action does; the injected projection seam is the only spatial signal.
+        if (
+            self._persist_k > 1
+            and self._last_action is not None
+            and self._heading_run < self._persist_k
+            and self._last_action in candidates
+            and self._last_action != exclude
+        ):
+            held_proj = project(self._last_action)
+            # Persist ONLY while the heading still lands on UNVISITED ground: a
+            # heading projecting onto an already-seen cell (or a wall -> None)
+            # has stopped making net progress, so re-balance instead of walking
+            # in place. This makes persistence self-limiting -- it cannot loop.
+            if held_proj is not None and self._visited.get(held_proj, 0) == 0:
+                self._heading_run += 1
+                return self._last_action
+
         best_action: Optional[int] = None
         best_key: Optional[tuple[int, int, int]] = None
         for a in candidates:
@@ -122,4 +173,12 @@ class FrontierCoverage:
             if best_key is None or key < best_key:
                 best_key = key
                 best_action = a
+        # Update the heading for the next call: a re-balance starts a fresh
+        # heading run on whatever it picked (the persist branch then commits to
+        # it on subsequent ticks). Leave the heading untouched when nothing is
+        # selectable (best_action is None) so a transient dead-end doesn't wipe
+        # an otherwise-live heading.
+        if best_action is not None:
+            self._last_action = best_action
+            self._heading_run = 1
         return best_action

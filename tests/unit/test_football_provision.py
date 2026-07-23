@@ -151,7 +151,20 @@ def test_provisioned_adapter_moves_the_player_through_a_real_episode() -> None:
         "the controlled player never occupied a second position -- a loop that "
         "reports decisions while the world stays fixed is the failure this catches"
     )
-    assert report.cells_covered == len(set(visited)), (
-        "cells_covered must equal the distinct positions actually occupied; a "
-        "divergence means the coverage bookkeeping and the world disagree"
+    # Coverage-bookkeeping integrity (g-355-87): every cell the primitive counts
+    # as covered was ACTUALLY occupied -- the primitive never invents a cell.
+    # Asserted as a SUBSET, not strict equality: coverage records only main-loop
+    # pre-move cells, so the calibration-phase positions (calibrate=True observes
+    # each action once BEFORE coverage tracking starts) and the final post-move
+    # position legitimately appear in `visited` but not in coverage. Strict
+    # equality held only under the pre-g-355-87 net-zero orbit -- which re-covered
+    # every calibration cell and returned to an already-visited final cell;
+    # directional persistence explores wider, so a few warmup/final cells in
+    # `visited` stay uncovered. The sound invariant is: no phantom coverage.
+    assert set(report.coverage.visited_cells) <= set(visited), (
+        "coverage recorded a cell the world never occupied -- the coverage "
+        "bookkeeping and the world disagree"
+    )
+    assert report.cells_covered > 1, (
+        "coverage must track the multi-cell traversal, not a single fixed cell"
     )
