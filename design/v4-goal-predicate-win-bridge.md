@@ -127,6 +127,15 @@ scored A/B once the score-0 wall breaks (win-condition DISCOVERY).
   every win a novel config (→ needs the similarity relaxation from step 3, or the
   full state-graph win-DISCOVERY)? This is the empirical question the first live
   A/B answers.
-- Should the recognizer live in the env-agnostic `primitives/` (reward-state
-  memory is domain-general) with only the score-extraction in the ARC adapter?
-  (Keeps the cognitive-load-budget honest — see self.md PRIMARY.)
+- **RESOLVED (2026-07-24, echo code audit).** The recognizer already lives in
+  env-agnostic `primitives/reward_state_recognizer.py`: states are opaque
+  `Hashable`, reward is any comparable scalar, imports are `typing`-only, and the
+  module docstring states "NO environment constants, NO grid/score semantics, NO
+  game-model assumption." The ARC-specific part — the reward signal IS
+  `FrameData.score` — stays in the `SolverV2StreamingAdapter`, which feeds
+  `observe(state, score)` per frame (`tests/unit/test_v4_reward_recognizer_wire.py`
+  pins the seam). This IS the OQ2-preferred split; the open-question framing was
+  stale relative to the g-315-445 build. Cognitive-load-budget win (echo PRIMARY):
+  the next environment with any reward signal reuses `RewardStateMemory` at ZERO
+  marginal shared-core cost — direct evidence toward hypothesis
+  `2026-07-24_fifth-env-zero-core-growth` (g-315-457).
