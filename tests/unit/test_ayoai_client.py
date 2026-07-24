@@ -172,8 +172,13 @@ def test_open_session_rejects_empty_env_key(monkeypatch):
 
 
 def test_open_session_rejects_missing_api_key(monkeypatch):
+    # Both must be unset — AYO_OPERATOR_KEY is present in the live fleet env, so
+    # deleting only AYOAI_API_KEY would fall back and skip the raise (g-315-471).
     monkeypatch.delenv("AYOAI_API_KEY", raising=False)
-    with pytest.raises(AyoaiSessionError, match="AYOAI_API_KEY not set"):
+    monkeypatch.delenv("AYO_OPERATOR_KEY", raising=False)
+    with pytest.raises(
+        AyoaiSessionError, match="Neither AYOAI_API_KEY nor AYO_OPERATOR_KEY set"
+    ):
         open_ayoai_session("card-123")
 
 
@@ -256,6 +261,29 @@ def test_open_session_picks_up_env_var_api_key(monkeypatch):
     open_ayoai_session("card-A", session=session)
     _, kwargs = session.post.call_args
     assert kwargs["headers"]["AYOAI-API-KEY"] == "env-key-789"
+
+
+def test_open_session_falls_back_to_operator_key(monkeypatch):
+    """AYOAI_API_KEY is a phantom var fleet-wide (g-115-2670); the real value is
+    AYO_OPERATOR_KEY. When AYOAI_API_KEY is absent, open_ayoai_session must fall
+    back to AYO_OPERATOR_KEY so live play needs no manual alias (g-315-471)."""
+    monkeypatch.delenv("AYOAI_API_KEY", raising=False)
+    monkeypatch.setenv("AYO_OPERATOR_KEY", "operator-secret-xyz")
+    session = _make_session_mock([_mock_response(200, _success_body())])
+    open_ayoai_session("card-fallback", session=session)
+    _, kwargs = session.post.call_args
+    assert kwargs["headers"]["AYOAI-API-KEY"] == "operator-secret-xyz"
+
+
+def test_open_session_prefers_ayoai_key_over_operator_key(monkeypatch):
+    """When both are set, AYOAI_API_KEY wins — the fallback fires only when the
+    primary var is absent/empty (g-315-471)."""
+    monkeypatch.setenv("AYOAI_API_KEY", "primary-key")
+    monkeypatch.setenv("AYO_OPERATOR_KEY", "fallback-key")
+    session = _make_session_mock([_mock_response(200, _success_body())])
+    open_ayoai_session("card-both", session=session)
+    _, kwargs = session.post.call_args
+    assert kwargs["headers"]["AYOAI-API-KEY"] == "primary-key"
 
 
 # ---------- open_ayoai_session: error paths ---------- #

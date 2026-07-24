@@ -18,7 +18,8 @@ ARC-specific bindings:
 - ayoServerKey  = ARC scorecard card_id (per-session, from /api/scorecard/open)
 - ayoEnvironmentKey = "arc-agi-3" (registered by g-315-02; see
   Ayoai-ARC-AGI-3-Integration/design/integration-design.md Part 9)
-- AYOAI-API-KEY = AYOAI_API_KEY env var (separate from ARC_API_KEY)
+- AYOAI-API-KEY = AYOAI_API_KEY env var, falling back to AYO_OPERATOR_KEY
+  (the fleet's actual value; both separate from ARC_API_KEY)
 
 Scope owner: g-315-03 (game-server analog — session open + readiness poll +
 evidence capture). The downstream streaming client (state encoding,
@@ -243,7 +244,8 @@ def open_ayoai_session(
         card_id: The ARC scorecard card_id, used as the AyoAI ayoServerKey.
             Same per-game scope as Roblox's per-place server key.
         env_key: The AyoAI environment key. Default "arc-agi-3" (g-315-02).
-        api_key: The AYOAI-API-KEY value. Defaults to env var AYOAI_API_KEY.
+        api_key: The AYOAI-API-KEY value. Defaults to env var AYOAI_API_KEY,
+            falling back to AYO_OPERATOR_KEY (the fleet's actual value).
         max_attempts: Cap on poll attempts (default 90, Roblox parity).
         retry_delay_s: Seconds between poll attempts (default 1.0, Roblox parity).
         http_timeout_s: Per-request timeout in seconds.
@@ -263,11 +265,15 @@ def open_ayoai_session(
         raise AyoaiSessionError("card_id is required (use ARC scorecard card_id)")
     if not env_key:
         raise AyoaiSessionError("env_key is required (default 'arc-agi-3')")
-    resolved_api_key = api_key if api_key is not None else os.getenv("AYOAI_API_KEY", "")
+    # AYOAI_API_KEY is a phantom var fleet-wide (g-115-2670); the real value is
+    # AYO_OPERATOR_KEY. Fall back so live play needs no manual alias (g-315-471).
+    resolved_api_key = api_key if api_key is not None else (
+        os.getenv("AYOAI_API_KEY") or os.getenv("AYO_OPERATOR_KEY", "")
+    )
     if not resolved_api_key:
         raise AyoaiSessionError(
-            "AYOAI_API_KEY not set — pass api_key= or set the env var "
-            "(see .env.example)"
+            "Neither AYOAI_API_KEY nor AYO_OPERATOR_KEY set — pass api_key= "
+            "or set one of the env vars (see .env.example)"
         )
 
     payload = {"ayoServerKey": card_id, "ayoEnvironmentKey": env_key}
