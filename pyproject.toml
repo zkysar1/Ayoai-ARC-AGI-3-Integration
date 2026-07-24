@@ -14,8 +14,11 @@ dependencies = [
 # LLM semantic-prior arm (analysis/win_condition_llm.py, Increment IV). OPTIONAL
 # by design: LLMHypothesizer degrades gracefully (client injection + safe-default
 # fallback) when anthropic is absent, so this is NOT a hard dependency. Install
-# with `pip install -e ".[llm]"` to enable the live LLM path; the arm reads
-# ANTHROPIC_API_KEY from the environment via the anthropic SDK.
+# the extra directly: `.venv/bin/pip install "anthropic>=0.34.0"` (the editable
+# `pip install -e ".[llm]"` form currently fails on the repo's flat-layout
+# setuptools package-discovery -- pre-existing, unrelated to this extra;
+# g-315-473). The arm reads ANTHROPIC_API_KEY from the environment via the
+# anthropic SDK (source /opt/ayoai-mind/.env.local before launch).
 llm = [
     "anthropic>=0.34.0",
 ]

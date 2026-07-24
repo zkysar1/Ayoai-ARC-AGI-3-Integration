@@ -1049,12 +1049,37 @@ def main() -> None:
                     build_ls20_exploration_predicate,
                 )
 
+                # g-315-473: opt-in LLM semantic-prior win-condition arm. When
+                # SOLVER_V2_V4_LLM is set, inject LLMHypothesizer so the
+                # zero-positive regime evaluates the LLM's semantic proposal
+                # against the structural-tail candidates. OFF by default ->
+                # hypothesizer=None -> pure structural-tail (byte-identical to
+                # the g-315-470 exploration path). The arm reads
+                # ANTHROPIC_API_KEY from the environment via the anthropic SDK
+                # (source /opt/ayoai-mind/.env.local before launch); it degrades
+                # gracefully to a safe default if the SDK or key is absent.
+                v4_hypothesizer = None
+                if os.environ.get("SOLVER_V2_V4_LLM", "").strip().lower() in (
+                    "1",
+                    "true",
+                    "on",
+                    "yes",
+                ):
+                    from analysis.win_condition_llm import LLMHypothesizer
+
+                    v4_hypothesizer = LLMHypothesizer()
+
                 v4_goal_predicate = build_ls20_exploration_predicate(
                     history_k=v4_history_k,
+                    hypothesizer=v4_hypothesizer,
                 )
+                # guard-1208: log WHICH arm answered (the name, never the key).
                 logger.info(
                     "[v4-exploration] threading synthesized ls20 exploration "
-                    "predicate (symmetry-tail)"
+                    "predicate (arm=%s)",
+                    "llm-semantic-prior"
+                    if v4_hypothesizer is not None
+                    else "structural-tail",
                 )
 
             streaming_client.set_v4_arm(

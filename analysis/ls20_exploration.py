@@ -46,6 +46,7 @@ def build_ls20_exploration_predicate(
     max_frames: int = 1500,
     history_k: int = 3,
     glob_pat: str = "ls20-*.recording.jsonl",
+    hypothesizer: Any = None,
 ) -> Callable[[Any], bool]:
     """Synthesize the increment-VI exploration-target goal_predicate from a
     bounded sample of recorded ls20 frames.  Returns a callable for
@@ -59,6 +60,12 @@ def build_ls20_exploration_predicate(
             Recorded k=0 frames are wrapped to this depth before synthesis
             so the returned predicate accepts live k-shaped states.
         glob_pat: Glob pattern for ls20 recording files.
+        hypothesizer: Optional ``WinConditionHypothesizer`` (g-315-473). When
+            provided (e.g. ``LLMHypothesizer()``), its semantic proposal
+            competes in ``synthesize_goal_predicate``'s zero-positive regime
+            against the structural-tail candidates. ``None`` (default) keeps
+            the pure deterministic heuristic path -- byte-identical to prior
+            behavior.
 
     Returns:
         A ``Callable[[Any], bool]`` suitable for
@@ -99,5 +106,5 @@ def build_ls20_exploration_predicate(
         )
 
     return synthesize_goal_predicate(
-        frames, history_k=history_k, max_rounds=5
+        frames, history_k=history_k, max_rounds=5, hypothesizer=hypothesizer
     )
