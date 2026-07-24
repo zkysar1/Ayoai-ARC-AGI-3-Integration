@@ -1031,12 +1031,39 @@ def main() -> None:
             from primitives.v4_arm import V4Arm
             from primitives.world_model_synthesizer import TableSynthesizer
 
+            v4_history_k = int(os.environ.get("SOLVER_V2_V4_HISTORY_K", "3"))
+            v4_goal_predicate = None
+
+            # g-315-470: opt-in exploration-target predicate from recorded ls20
+            # frames (increment VI zero-positive regime). OFF by default -- when
+            # absent the adapter's internal reward-state recognizer is used
+            # (unchanged behavior). Enable for the live ls20 A/B that threads
+            # the synthesized structural-tail predicate.
+            if os.environ.get("SOLVER_V2_V4_EXPLORATION", "").strip().lower() in (
+                "1",
+                "true",
+                "on",
+                "yes",
+            ):
+                from analysis.ls20_exploration import (
+                    build_ls20_exploration_predicate,
+                )
+
+                v4_goal_predicate = build_ls20_exploration_predicate(
+                    history_k=v4_history_k,
+                )
+                logger.info(
+                    "[v4-exploration] threading synthesized ls20 exploration "
+                    "predicate (symmetry-tail)"
+                )
+
             streaming_client.set_v4_arm(
                 V4Arm(
                     TableSynthesizer(),
                     horizon=int(os.environ.get("SOLVER_V2_V4_HORIZON", "4")),
                 ),
-                history_k=int(os.environ.get("SOLVER_V2_V4_HISTORY_K", "3")),
+                goal_predicate=v4_goal_predicate,
+                history_k=v4_history_k,
             )
     else:
         # streaming_url is resolved by this point (live: ayoai_session.streaming_url;
