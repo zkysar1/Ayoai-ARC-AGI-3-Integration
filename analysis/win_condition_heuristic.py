@@ -136,6 +136,55 @@ def _build_default_candidates() -> list[PredicateSpec]:
 _PRIOR_KEYS: list[str] = ["orderedness", "compression", "symmetry"]
 
 
+def _build_tail_candidates(
+    prior_percentiles: dict[str, float],
+    prior_medians: dict[str, float],
+) -> list[PriorThresholdConstraint]:
+    """Build tail-targeting candidates from per-prior percentile data.
+
+    For the zero-positive regime (Increment VI): instead of hardcoded
+    thresholds, derive thresholds from the observed prior distribution's
+    upper tail.  Each candidate targets the (100-K)th percentile of a
+    structural prior, ordered by TAIL SHARPNESS (largest gap between the
+    percentile threshold and the median -- so the most discriminative prior
+    comes first).
+
+    Mode-plateau guard: if ``theta_p <= median_p``, the percentile fell on
+    the distribution's mode plateau and the predicate would fire on a large
+    fraction of frames (not a selective tail).  Such candidates are skipped.
+
+    Args:
+        prior_percentiles: Mapping from prior name to (100-K)th percentile
+            value (precomputed by the caller).
+        prior_medians: Mapping from prior name to median value.
+
+    Returns:
+        ``PriorThresholdConstraint`` candidates ordered by tail sharpness
+        (descending).  May be empty if all priors are degenerate (mode
+        plateau).
+    """
+    candidates: list[tuple[float, PriorThresholdConstraint]] = []
+
+    for prior in _PRIOR_KEYS:
+        theta = prior_percentiles.get(prior, 0.0)
+        median = prior_medians.get(prior, 0.0)
+
+        # Mode-plateau guard: theta must exceed the median for the tail
+        # to be a genuine selective minority, not the mode plateau.
+        if theta <= median:
+            continue
+
+        sharpness = theta - median
+        candidates.append((
+            sharpness,
+            PriorThresholdConstraint(prior=prior, op=">=", value=theta),
+        ))
+
+    # Sort by tail sharpness descending (most discriminative first).
+    candidates.sort(key=lambda pair: pair[0], reverse=True)
+    return [spec for (_sharpness, spec) in candidates]
+
+
 def _build_summary_candidates(summary: SessionSummary) -> list[PredicateSpec]:
     """Derive candidate specs from a real SessionSummary's episode data.
 

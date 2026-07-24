@@ -22,10 +22,12 @@ at runtime.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
 
 from analysis.predicate_spec import CCSignature, PredicateSpec
+from analysis.win_condition_heuristic import _build_tail_candidates
 from analysis.win_condition_hypothesizer import (
     CounterExample,
     WinConditionHypothesizer,
@@ -54,6 +56,110 @@ class CEGISResult:
     rounds_used: int
     counterexample_count: int  # counterexamples for the returned spec
     viable: bool  # True iff zero counterexamples
+
+
+# ---------------------------------------------------------------------------
+# Zero-positive regime (Increment VI)
+# ---------------------------------------------------------------------------
+
+
+ZERO_POSITIVE_TAIL_K: float = 7.0
+"""Target tail fraction (percent) for the zero-positive regime.
+
+Mid-range of the design's 5-10% band (win-condition-zero-positive-objective.md).
+Tunable per-game if needed.
+"""
+
+_MIN_TAIL_FRAMES: int = 20
+"""Minimum validation frames for the zero-positive tail objective.
+
+Below this count, percentile estimation is too noisy for the structural-tail
+objective and the existing CEGIS refinement loop is more appropriate.
+"""
+
+
+def _select_zero_positive_candidate(
+    compiler: Callable[[PredicateSpec], Callable[[CCSignature], bool]],
+    validation_frames: list[tuple[CCSignature, float]],
+    tail_k: float = ZERO_POSITIVE_TAIL_K,
+) -> Optional[CEGISResult]:
+    """Select a structural-tail exploration candidate for the zero-positive regime.
+
+    Instead of the CEGIS FP-minimization objective (which is degenerate when
+    all scores are 0 -- any firing is a false positive, so the optimum is
+    fire-on-nothing), this function selects the prior-threshold candidate
+    whose fire rate is closest to ``tail_k``% -- a non-trivial selective
+    minority of structurally-distinctive frames.
+
+    Returns ``None`` if no tail candidate survives the mode-plateau guard,
+    signaling the caller to fall back to the existing CEGIS behavior.
+
+    ``counterexample_count`` in the returned ``CEGISResult`` is set to the
+    number of frames the selected predicate fires on (the exploration-target
+    selection count), consistent with the existing FP definition (every
+    score-0 frame the predicate flags IS a counterexample in the FP sense,
+    but here we WANT a controlled number of them).
+    """
+    n_frames = len(validation_frames)
+
+    # Collect per-prior values from all validation frames.
+    prior_values: dict[str, list[float]] = {
+        p: [] for p in ("orderedness", "compression", "symmetry")
+    }
+    for sig, _score in validation_frames:
+        for p in prior_values:
+            prior_values[p].append(sig.priors.get(p, 0.0))
+
+    # Compute (100-K)th percentile and median for each prior.
+    prior_percentiles: dict[str, float] = {}
+    prior_medians: dict[str, float] = {}
+    for p, vals in prior_values.items():
+        sorted_vals = sorted(vals)
+        n = len(sorted_vals)
+        # (100-K)th percentile via nearest-rank.
+        pct_idx = max(0, min(n - 1, math.ceil((100 - tail_k) / 100 * n) - 1))
+        prior_percentiles[p] = sorted_vals[pct_idx]
+        # Median.
+        if n % 2 == 1:
+            prior_medians[p] = sorted_vals[n // 2]
+        else:
+            prior_medians[p] = (
+                sorted_vals[n // 2 - 1] + sorted_vals[n // 2]
+            ) / 2
+
+    # Build tail candidates (sharpness-ordered, plateau-guarded).
+    candidates = _build_tail_candidates(prior_percentiles, prior_medians)
+    if not candidates:
+        return None
+
+    # Compile each candidate, measure fire rate, accept closest to K%.
+    target_frac = tail_k / 100.0
+    best_spec: Optional[PredicateSpec] = None
+    best_pred: Optional[Callable[[CCSignature], bool]] = None
+    best_dist = float("inf")
+    best_fire_count = 0
+
+    for candidate in candidates:
+        pred = compiler(candidate)
+        fire_count = sum(1 for sig, _s in validation_frames if pred(sig))
+        fire_rate = fire_count / n_frames
+        dist = abs(fire_rate - target_frac)
+        if dist < best_dist:
+            best_dist = dist
+            best_spec = candidate
+            best_pred = pred
+            best_fire_count = fire_count
+
+    assert best_spec is not None  # candidates is non-empty
+    assert best_pred is not None
+
+    return CEGISResult(
+        spec=best_spec,
+        predicate=best_pred,
+        rounds_used=1,
+        counterexample_count=best_fire_count,
+        viable=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +194,14 @@ def hypothesize_until_viable(
     ``None``.  The LLM-backed hypothesizer (Increment IV) will always
     receive a real ``SessionSummary``.
 
+    **Zero-positive regime (Increment VI):** when all validation frames
+    have ``score == 0`` and there are enough frames for meaningful
+    percentile estimation (>= ``_MIN_TAIL_FRAMES``), the FP-minimization
+    loop is skipped.  Instead, a structural-tail exploration target is
+    selected: the prior-threshold candidate whose fire rate is closest to
+    ``ZERO_POSITIVE_TAIL_K``%.  Falls back to the existing loop if no tail
+    candidate survives the mode-plateau guard.
+
     Args:
         summary: Trajectory summary for the session (may be ``None`` when
             driving test doubles).
@@ -102,6 +216,27 @@ def hypothesize_until_viable(
         ``CEGISResult`` with the best spec, its compiled predicate,
         round count, counterexample count, and a ``viable`` flag.
     """
+    # ------------------------------------------------------------------
+    # Zero-positive branch (Increment VI): structural-tail exploration.
+    # When ALL scores are 0 and enough frames exist for meaningful
+    # percentile estimation, the FP-minimization objective is degenerate.
+    # Switch to target-fraction acceptance instead.
+    # ------------------------------------------------------------------
+    if (
+        len(validation_frames) >= _MIN_TAIL_FRAMES
+        and max(score for (_sig, score) in validation_frames) == 0
+    ):
+        tail_result = _select_zero_positive_candidate(
+            compiler, validation_frames,
+        )
+        if tail_result is not None:
+            return tail_result
+        # Fall through: all priors degenerate, use existing CEGIS behavior.
+
+    # ------------------------------------------------------------------
+    # Existing FP-minimization path (>=1 positive example, few frames,
+    # or degenerate zero-positive fallback).  UNCHANGED from Increment III.
+    # ------------------------------------------------------------------
     accumulated_counterexamples: list[CounterExample] = []
     current_spec: Optional[PredicateSpec] = None
 
