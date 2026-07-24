@@ -295,6 +295,106 @@ class TestSynthetic:
 
 
 # ---------------------------------------------------------------------------
+# Hypothesizer passthrough (g-315-473 / g-315-476, sq-019 integration gap)
+# ---------------------------------------------------------------------------
+
+
+class TestHypothesizerPassthrough:
+    """``build_ls20_exploration_predicate`` must FORWARD its ``hypothesizer=``
+    arg to ``synthesize_goal_predicate``.
+
+    g-315-474 tests the ``synthesize_goal_predicate`` seam DIRECTLY; nothing
+    exercised the helper PASSTHROUGH added in g-315-473. A dropped arg would
+    silently degrade the live LLM arm to the structural-tail predicate with NO
+    other test failing (every g-315-474 test calls ``synthesize_goal_predicate``
+    directly, not through this helper). These guard that link.
+    """
+
+    @staticmethod
+    def _write_min_recording(dirpath: str, n: int) -> None:
+        """Write ``n`` identical zero-reward frames as an ls20 recording.
+
+        Identical zero-reward frames drive uniform priors -> the mode-plateau
+        guard isolates a caller's extra candidate (the g-315-474 pattern); n>=20
+        also arms the zero-positive regime for the real-synthesize test.
+        """
+        grid = [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]]
+        path = os.path.join(dirpath, "ls20-passthrough.recording.jsonl")
+        with open(path, "w") as f:
+            for _ in range(n):
+                # data.frame is the raw frame; build_..._predicate _freeze()s it.
+                # [grid] -> (grid,) matches the single-layer ``_framed`` shape.
+                f.write(json.dumps({"data": {"frame": [grid], "score": 0.0}}) + "\n")
+
+    def test_hypothesizer_forwarded_to_synthesize(
+        self, tmp_path: Any, monkeypatch: Any
+    ) -> None:
+        """The ``hypothesizer=`` arg reaches ``synthesize_goal_predicate``."""
+        self._write_min_recording(str(tmp_path), n=3)
+        captured: dict[str, Any] = {}
+
+        def _spy(frames: Any, **kwargs: Any) -> Any:
+            captured["hypothesizer"] = kwargs.get("hypothesizer", "MISSING")
+            return lambda state: False
+
+        # build_..._predicate does a CALL-TIME
+        # ``from analysis.win_condition_extractor import synthesize_goal_predicate``
+        # (module-scope import inside the function), so patch the name on the
+        # SOURCE module -- the call-time import re-reads the patched attribute.
+        monkeypatch.setattr(
+            "analysis.win_condition_extractor.synthesize_goal_predicate", _spy
+        )
+        sentinel = object()
+        build_ls20_exploration_predicate(
+            recordings_dir=str(tmp_path), history_k=3, hypothesizer=sentinel,
+        )
+        assert captured["hypothesizer"] is sentinel, (
+            "build_ls20_exploration_predicate dropped the hypothesizer= arg "
+            "(live LLM arm would silently degrade to structural-tail)"
+        )
+
+    def test_default_none_forwarded(
+        self, tmp_path: Any, monkeypatch: Any
+    ) -> None:
+        """Default (no ``hypothesizer=``) forwards ``None`` -- the byte-identical
+        structural-tail path."""
+        self._write_min_recording(str(tmp_path), n=3)
+        captured: dict[str, Any] = {}
+
+        def _spy(frames: Any, **kwargs: Any) -> Any:
+            captured["hypothesizer"] = kwargs.get("hypothesizer", "MISSING")
+            return lambda state: False
+
+        monkeypatch.setattr(
+            "analysis.win_condition_extractor.synthesize_goal_predicate", _spy
+        )
+        build_ls20_exploration_predicate(
+            recordings_dir=str(tmp_path), history_k=3,
+        )
+        assert captured["hypothesizer"] is None
+
+    def test_real_synthesize_with_hypothesizer_returns_callable(
+        self, tmp_path: Any
+    ) -> None:
+        """End-to-end (REAL synthesize, no mock): a ``StaticHypothesizer``
+        threaded through the helper returns a callable predicate without error.
+
+        24 identical zero-reward frames arm the zero-positive regime, where the
+        hypothesizer's spec competes as an extra candidate.
+        """
+        from analysis.predicate_spec import CountConstraint
+        from analysis.win_condition_hypothesizer import StaticHypothesizer
+
+        self._write_min_recording(str(tmp_path), n=24)
+        pred = build_ls20_exploration_predicate(
+            recordings_dir=str(tmp_path),
+            history_k=3,
+            hypothesizer=StaticHypothesizer(CountConstraint(op=">=", value=1)),
+        )
+        assert callable(pred)
+
+
+# ---------------------------------------------------------------------------
 # Boundary asserts: module source constraints
 # ---------------------------------------------------------------------------
 
