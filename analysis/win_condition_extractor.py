@@ -38,22 +38,47 @@ from solver_v2.state_graph import FrameProcessor, _CONFIG_PRIORS
 
 
 def state_to_cc_signature(state: Any, *, history_k: int = 0) -> CCSignature:
-    """Convert a V4Arm frozen-grid state to a ``CCSignature``.
+    """Convert a V4Arm state (``_v4_state`` output) to a ``CCSignature``.
+
+    The state is ``StreamingAdapter._v4_state``'s output
+    (streaming_adapter.py:647): ``_freeze(frame.frame)`` where ``frame.frame``
+    is a **3D layered grid** ``[layers][rows][cols]`` (solver_v0/perception.py:189)
+    frozen to nested tuples -- NOT a bare 2D grid.  The single-layer unwrap
+    below is the fix for the g-315-467 shape bug (the committed g-315-466
+    extractor treated the layered state as a 2D grid: ``_v4_state`` returns a
+    layered ``(grid,)`` so ``len(state)`` read #layers=1 as the height and the
+    per-cell iteration yielded row-tuples, ``TypeError``-ing inside
+    ``_components``; the 61 offline tests fed bare 2D grids and masked it).
 
     Args:
-        state: The hashable state produced by ``StreamingAdapter._v4_state``.
-            With ``history_k == 0`` this is the bare frozen current grid
-            (nested tuples of palette values).  With ``history_k >= 1`` it is
-            ``(current, prev_1, ..., prev_k)`` -- a tuple of frozen grids.
+        state: The hashable state from ``_v4_state``.  With ``history_k == 0``
+            this IS the frozen current frame ``(layer_0, layer_1, ...)`` -- a
+            tuple of 2D layers.  With ``history_k >= 1`` it is
+            ``(current_frame, prev_1, ..., prev_k)`` where each element is a
+            frozen frame (tuple of layers), ``None``-padded per episode.
         history_k: Must match the ``history_k`` used when the state was
-            produced.  Controls how the current grid is extracted.
+            produced.  Selects the current frame (``state`` vs ``state[0]``).
 
     Returns:
         A ``CCSignature`` with connected components (empty-HUD approximation)
         and the three config priors (orderedness, compression, symmetry).
+        An empty frame yields an empty signature with zero priors.
     """
-    # Pick the current grid from the state encoding.
-    grid: tuple[tuple[int, ...], ...] = state[0] if history_k >= 1 else state
+    # Select the current frozen FRAME (a tuple of layers) from the encoding.
+    frozen_frame = state[0] if history_k >= 1 else state
+
+    # Empty frame (initial/empty API responses -- perception.extract defends
+    # the same case, perception.py:213) -> empty signature.  _components would
+    # IndexError computing a background from an empty value list.
+    if not frozen_frame or not frozen_frame[0]:
+        return CCSignature(
+            components=(), priors={k: 0.0 for k in _CONFIG_PRIORS}
+        )
+
+    # The 2D grid is the PRIMARY (base) layer -- matches perception.extract's
+    # ``primary = current_frame[0]`` (perception.py:236), the layer whose
+    # height/width/values _components operates over.
+    grid: tuple[tuple[int, ...], ...] = frozen_frame[0]
 
     height = len(grid)
     width = len(grid[0]) if height else 0
