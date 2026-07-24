@@ -39,7 +39,8 @@ from analysis.win_condition_extractor import (
     state_to_cc_signature,
     synthesize_goal_predicate,
 )
-from analysis.predicate_spec import CCSignature, Component
+from analysis.predicate_spec import CCSignature, Component, CountConstraint
+from analysis.win_condition_hypothesizer import StaticHypothesizer
 
 
 # ---------------------------------------------------------------------------
@@ -312,3 +313,118 @@ class TestModuleSourceBoundary:
     def test_does_import_solver_v2(self) -> None:
         """The module SHOULD import solver_v2 (it is the bridge layer)."""
         assert "solver_v2" in self._source
+
+
+# ---------------------------------------------------------------------------
+# Hypothesizer seam (Increment IV -- LLM arm) -- g-315-474
+#
+# synthesize_goal_predicate gained a ``hypothesizer`` parameter (g-315-462):
+# when non-None it (a) drives the FP path AND (b) calls
+# ``hypothesizer.hypothesize(None, [], None)`` inside a fail-open try/except to
+# thread the proposal as ``zero_positive_extra_candidates``.  The default path
+# (hypothesizer=None -> HeuristicHypothesizer) is exercised above; these tests
+# cover the NEW seam end-to-end through synthesize_goal_predicate, which had
+# ZERO direct coverage (sq-019: 0 ``hypothesizer`` refs in this file before now).
+# ---------------------------------------------------------------------------
+
+
+class _SpyHypothesizer:
+    """Records that hypothesize() was called, then returns a fixed spec."""
+
+    def __init__(self, spec: object) -> None:
+        self._spec = spec
+        self.called = False
+
+    def hypothesize(
+        self, summary: object, counterexamples: object, current_spec: object
+    ) -> object:
+        self.called = True
+        return self._spec
+
+
+class _RaisingHypothesizer:
+    """hypothesize() raises -- simulates an LLM/client failure."""
+
+    def hypothesize(
+        self, summary: object, counterexamples: object, current_spec: object
+    ) -> object:
+        raise RuntimeError("simulated hypothesizer failure")
+
+
+def _identical_zero_reward_frames(
+    grid: tuple[tuple[int, ...], ...], n: int = 24
+) -> list:
+    """``n`` identical zero-reward ``(state, 0.0)`` frames over one grid.
+
+    Identical frames -> uniform priors -> every structural-tail candidate is
+    mode-plateau-guarded out (``win_condition_heuristic._build_tail_candidates``:
+    ``if theta <= median: continue``, verified inclusive), so a caller-supplied
+    extra candidate becomes the SOLE candidate in the zero-positive pool.  This
+    isolates the seam: whatever the returned predicate does is driven by the
+    proposal, not a tail candidate.  ``n >= _MIN_TAIL_FRAMES`` (20) so the
+    zero-positive branch fires.
+    """
+    framed = _framed(grid)
+    return [(framed, 0.0) for _ in range(n)]
+
+
+class TestHypothesizerSeam:
+    """synthesize_goal_predicate's Increment-IV ``hypothesizer`` parameter (g-315-474)."""
+
+    def test_hypothesizer_is_invoked(self) -> None:
+        """The extractor calls hypothesize() on the supplied arm."""
+        spy = _SpyHypothesizer(CountConstraint(op=">=", value=1))
+        frames = _identical_zero_reward_frames(_GRID_4x4)
+        pred = synthesize_goal_predicate(
+            frames, max_rounds=3, history_k=0, hypothesizer=spy
+        )
+        assert spy.called
+        assert callable(pred)
+
+    def test_proposal_drives_outcome_differential(self) -> None:
+        """The SAME frames yield OPPOSITE predicates for a firing vs
+        non-firing proposal -- proving the proposal (not a tail candidate)
+        reached the zero-positive pool and was selected.
+
+        Tail candidates are guarded out (uniform priors), so the only variable
+        between the two runs is the proposal.  ``CountConstraint(>=1)`` fires on
+        _GRID_4x4 (2 components); ``CountConstraint(>=99)`` never fires.  A
+        differing outcome isolates the proposal's contribution.
+        """
+        frames = _identical_zero_reward_frames(_GRID_4x4)
+        pred_fires = synthesize_goal_predicate(
+            frames, max_rounds=3, history_k=0,
+            hypothesizer=StaticHypothesizer(CountConstraint(op=">=", value=1)),
+        )
+        pred_never = synthesize_goal_predicate(
+            frames, max_rounds=3, history_k=0,
+            hypothesizer=StaticHypothesizer(CountConstraint(op=">=", value=99)),
+        )
+        assert pred_fires(_framed(_GRID_4x4)) is True
+        assert pred_never(_framed(_GRID_4x4)) is False
+
+    def test_raising_hypothesizer_degrades_fail_open(self) -> None:
+        """A hypothesizer that raises degrades to no-extra-candidate, not a crash.
+
+        Zero-positive frames WITH a surviving structural-tail candidate (a
+        high-prior minority over a zero-prior majority) so the zero-positive
+        branch returns a tail result without entering the FP loop (which would
+        call the raising arm).  The proposal extraction is caught by the
+        extractor's try/except; synthesis still returns a usable predicate.
+        """
+        frames = (
+            [(_framed(_GRID_3x3_UNIFORM), 0.0)] * 21
+            + [(_framed(_GRID_4x4), 0.0)] * 3
+        )
+        pred = synthesize_goal_predicate(
+            frames, max_rounds=3, history_k=0, hypothesizer=_RaisingHypothesizer()
+        )
+        assert callable(pred)
+        assert isinstance(pred(_framed(_GRID_4x4)), bool)
+
+    def test_default_none_matches_heuristic_path(self) -> None:
+        """hypothesizer=None is the byte-identical heuristic default path."""
+        frames = _identical_zero_reward_frames(_GRID_4x4)
+        pred = synthesize_goal_predicate(frames, max_rounds=3, history_k=0)
+        assert callable(pred)
+        assert isinstance(pred(_framed(_GRID_4x4)), bool)
