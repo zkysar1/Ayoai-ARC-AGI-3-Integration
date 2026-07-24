@@ -74,10 +74,12 @@ from adapters.base import (
     Executor,
     ProximityModel,
     Result,
+    Transport,
     UnitLike,
     WorldBuilder,
 )
 from adapters.episode import run_exploration_episode as _run_shared_episode
+from adapters.transport_executor import TransportExecutor
 from primitives.frontier_coverage import Cell
 from primitives.learned_displacement import LearnedDisplacementModel
 
@@ -415,7 +417,7 @@ class FootballProximityModel(LearnedDisplacementModel):
 # --------------------------------------------------------------------------- #
 # Slot 3 -- Executor (action adapter + Vocabulary).                             #
 # --------------------------------------------------------------------------- #
-class FootballExecutor:
+class FootballExecutor(TransportExecutor[Coord]):
     """Move action space + execute (Plan 7.2.A Executor slot).
 
     ``declare_actions()`` is the Vocabulary of move tasks. ``execute(decision)``
@@ -423,41 +425,18 @@ class FootballExecutor:
     Result{outcome, reason, retry_safe}. Every FrontierCoverage Decision MUST exit
     here so ``decided_by`` routing stays intact (gate 2). The transport is
     injected, so the same Executor drives a simulated pitch or a live one.
+
+    __init__ / declare_actions / execute / position / world_state are INHERITED from
+    TransportExecutor[Coord] (g-315-452, hoisted per rb-4884). Football overrides only
+    ``_reason_ineffective``: a legal-but-refused move is "contested" (an opponent's body
+    blocked it), not the base default "blocked". The other two labels ("action space" /
+    "moved") match the base defaults, so they are inherited.
     """
 
-    def __init__(self, *, transport: PitchTransport, actions: Sequence[int]) -> None:
-        if not actions:
-            raise ValueError("Executor needs a non-empty action space")
-        self._transport = transport
-        self._actions = list(actions)
-
-    def declare_actions(self) -> list[int]:
-        return list(self._actions)
-
-    def execute(self, decision: Decision) -> Result:
-        if decision.action not in self._actions:
-            return Result(
-                outcome="fail",
-                reason=f"action {decision.action} not in declared action space",
-                retry_safe=False,
-            )
-        try:
-            ok, reason = self._transport.move(decision.action)
-        except Exception as exc:  # transport failure -> unconfirmed (Q10)
-            return Result(
-                outcome="fail", reason=f"transport error: {exc}", retry_safe=False
-            )
-        if ok:
-            return Result(outcome="success", reason=reason or "moved", retry_safe=True)
-        # A move refused by an opponent's body is safe to retry from a new pose --
-        # on a pitch the blocker moves too, so the same action may succeed next tick.
-        return Result(outcome="fail", reason=reason or "contested", retry_safe=True)
-
-    def position(self) -> Coord:
-        return self._transport.position()
-
-    def world_state(self) -> Mapping[str, object]:
-        return self._transport.world_state()
+    # A move refused by an opponent's body is safe to retry from a new pose -- on a
+    # pitch the blocker moves too, so the same action may succeed next tick. The base
+    # already marks the ineffective case retry_safe=True; only the LABEL differs.
+    _reason_ineffective = "contested"
 
 
 # --------------------------------------------------------------------------- #
@@ -617,6 +596,13 @@ def build_football_adapter(
     return EnvironmentAdapter(
         name="football",
         world_builder=cast(WorldBuilder, FootballWorldBuilder()),
-        executor=cast(Executor, FootballExecutor(transport=tx, actions=acts)),
+        # FootballExecutor now inherits TransportExecutor[Coord] (g-315-453), whose
+        # __init__ types transport as base.Transport[Coord]. tx is the standalone
+        # PitchTransport (structurally identical -- move/position/world_state -- but not
+        # nominally base.Transport), so cast it here: the same single-construction-site
+        # runtime-valid-to-static-checker bridge rb-2280 uses for the concrete slots.
+        executor=cast(
+            Executor, FootballExecutor(transport=cast(Transport[Coord], tx), actions=acts)
+        ),
         proximity_model=cast(ProximityModel, FootballProximityModel()),
     )
