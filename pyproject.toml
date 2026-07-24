@@ -10,6 +10,16 @@ dependencies = [
     "requests>=2.32.4",
 ]
 
+[project.optional-dependencies]
+# LLM semantic-prior arm (analysis/win_condition_llm.py, Increment IV). OPTIONAL
+# by design: LLMHypothesizer degrades gracefully (client injection + safe-default
+# fallback) when anthropic is absent, so this is NOT a hard dependency. Install
+# with `pip install -e ".[llm]"` to enable the live LLM path; the arm reads
+# ANTHROPIC_API_KEY from the environment via the anthropic SDK.
+llm = [
+    "anthropic>=0.34.0",
+]
+
 [dependency-groups]
 dev = [
     "mypy>=1.15.0",

@@ -82,6 +82,7 @@ def _select_zero_positive_candidate(
     compiler: Callable[[PredicateSpec], Callable[[CCSignature], bool]],
     validation_frames: list[tuple[CCSignature, float]],
     tail_k: float = ZERO_POSITIVE_TAIL_K,
+    extra_candidates: Optional[list[PredicateSpec]] = None,
 ) -> Optional[CEGISResult]:
     """Select a structural-tail exploration candidate for the zero-positive regime.
 
@@ -91,8 +92,20 @@ def _select_zero_positive_candidate(
     whose fire rate is closest to ``tail_k``% -- a non-trivial selective
     minority of structurally-distinctive frames.
 
-    Returns ``None`` if no tail candidate survives the mode-plateau guard,
-    signaling the caller to fall back to the existing CEGIS behavior.
+    ``extra_candidates`` (Increment IV -- LLM arm): additional caller-supplied
+    ``PredicateSpec`` proposals (e.g. an LLM hypothesizer's semantic win-proxy)
+    added to the candidate pool.  They compete under the SAME target-fraction
+    objective as the structural-tail candidates -- so a non-degenerate LLM
+    proposal that fires near ``tail_k``% can win, while a degenerate one
+    (fire-on-nothing / fire-on-everything) is simply out-competed by a
+    tail candidate closer to K%.  This IS g-315-468's protection: the LLM's
+    proposal is evaluated by the reframed target-fraction objective, NOT the
+    FP-minimization filter that would tighten it back to fire-on-nothing.
+    When ``extra_candidates`` is ``None`` the behaviour is byte-identical to
+    the prior structural-tail-only selection (backward compatible).
+
+    Returns ``None`` if no candidate (tail OR extra) survives, signaling the
+    caller to fall back to the existing CEGIS behavior.
 
     ``counterexample_count`` in the returned ``CEGISResult`` is set to the
     number of frames the selected predicate fires on (the exploration-target
@@ -127,8 +140,13 @@ def _select_zero_positive_candidate(
                 sorted_vals[n // 2 - 1] + sorted_vals[n // 2]
             ) / 2
 
-    # Build tail candidates (sharpness-ordered, plateau-guarded).
-    candidates = _build_tail_candidates(prior_percentiles, prior_medians)
+    # Build tail candidates (sharpness-ordered, plateau-guarded), then append
+    # any caller-supplied extra candidates (Increment IV -- LLM arm proposals).
+    candidates: list[PredicateSpec] = list(
+        _build_tail_candidates(prior_percentiles, prior_medians)
+    )
+    if extra_candidates:
+        candidates.extend(extra_candidates)
     if not candidates:
         return None
 
@@ -174,6 +192,7 @@ def hypothesize_until_viable(
     validation_frames: list[tuple[CCSignature, float]],
     *,
     max_rounds: int = 5,
+    zero_positive_extra_candidates: Optional[list[PredicateSpec]] = None,
 ) -> CEGISResult:
     """Run the CEGIS loop for win-condition discovery.
 
@@ -211,6 +230,12 @@ def hypothesize_until_viable(
         validation_frames: ``(CCSignature, score)`` pairs for
             counterexample detection.
         max_rounds: Hard upper bound on CEGIS iterations.
+        zero_positive_extra_candidates: Optional caller-supplied
+            ``PredicateSpec`` proposals (Increment IV -- LLM arm) added to the
+            zero-positive regime's candidate pool, where they compete under the
+            target-fraction objective alongside the structural-tail candidates.
+            Ignored outside the zero-positive branch.  Default ``None``
+            preserves the prior structural-tail-only behaviour byte-for-byte.
 
     Returns:
         ``CEGISResult`` with the best spec, its compiled predicate,
@@ -228,6 +253,7 @@ def hypothesize_until_viable(
     ):
         tail_result = _select_zero_positive_candidate(
             compiler, validation_frames,
+            extra_candidates=zero_positive_extra_candidates,
         )
         if tail_result is not None:
             return tail_result

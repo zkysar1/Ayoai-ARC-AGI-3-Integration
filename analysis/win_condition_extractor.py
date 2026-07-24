@@ -27,12 +27,13 @@ predicate into ``set_v4_arm``) is a follow-on.
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Optional
 
 from analysis.predicate_compiler import compile_spec, to_state_predicate
-from analysis.predicate_spec import CCSignature, Component
+from analysis.predicate_spec import CCSignature, Component, PredicateSpec
 from analysis.win_condition_cegis import hypothesize_until_viable
 from analysis.win_condition_heuristic import HeuristicHypothesizer
+from analysis.win_condition_hypothesizer import WinConditionHypothesizer
 from solver_v0.perception import FrameFeatures
 from solver_v2.state_graph import FrameProcessor, _CONFIG_PRIORS
 
@@ -118,14 +119,15 @@ def synthesize_goal_predicate(
     *,
     max_rounds: int = 5,
     history_k: int = 0,
+    hypothesizer: Optional[WinConditionHypothesizer] = None,
 ) -> Callable[[Any], bool]:
     """Offline synthesis of a goal predicate from buffered (state, score) pairs.
 
     Composes the full win-condition-discovery pipeline (Increments I--IV):
       1. Converts each ``(state, score)`` pair to ``(CCSignature, score)``
          via ``state_to_cc_signature``.
-      2. Runs the CEGIS loop (``hypothesize_until_viable``) with the
-         ``HeuristicHypothesizer`` to find a structural predicate.
+      2. Runs the CEGIS loop (``hypothesize_until_viable``) with a
+         ``WinConditionHypothesizer`` to find a structural predicate.
       3. Lifts the result via ``to_state_predicate`` so it accepts raw
          V4Arm states directly.
 
@@ -136,6 +138,15 @@ def synthesize_goal_predicate(
             pipeline targets).
         max_rounds: CEGIS round budget.
         history_k: Must match the ``history_k`` used to produce the states.
+        hypothesizer: The goal-predicate synthesis arm.  ``None`` (default)
+            uses the deterministic ``HeuristicHypothesizer`` and is BYTE-
+            IDENTICAL to the prior behaviour.  Pass an ``LLMHypothesizer``
+            (Increment IV, ``analysis.win_condition_llm``) to use the LLM
+            semantic-prior arm: it drives the FP-minimization path directly
+            AND its single proposal is threaded as an extra candidate into the
+            zero-positive regime, where it competes under the target-fraction
+            objective (g-315-468) rather than the FP filter that would collapse
+            it to fire-on-nothing.
 
     Returns:
         A ``Callable[[Any], bool]`` suitable for
@@ -146,12 +157,32 @@ def synthesize_goal_predicate(
         for (s, score) in frames
     ]
 
+    # Default arm: the deterministic heuristic.  No extra zero-positive
+    # candidates are threaded, so the zero-positive branch is byte-identical
+    # to the prior structural-tail-only behaviour.
+    zero_positive_extra: Optional[list[PredicateSpec]] = None
+    if hypothesizer is None:
+        active_hypothesizer: WinConditionHypothesizer = HeuristicHypothesizer()
+    else:
+        # A caller-supplied arm (e.g. the LLM semantic-prior arm).  Ask it for
+        # one proposal to ALSO compete in the zero-positive regime under the
+        # target-fraction objective; the FP-minimization path still consults it
+        # every round via the driver's ``hypothesizer`` argument.  A failing
+        # arm degrades to no-extra-candidate (fail-open -- never blocks synth).
+        active_hypothesizer = hypothesizer
+        try:
+            proposal = hypothesizer.hypothesize(None, [], None)
+            zero_positive_extra = [proposal]
+        except Exception:
+            zero_positive_extra = None
+
     result = hypothesize_until_viable(
         None,
-        HeuristicHypothesizer(),
+        active_hypothesizer,
         compile_spec,
         validation_frames,
         max_rounds=max_rounds,
+        zero_positive_extra_candidates=zero_positive_extra,
     )
 
     return to_state_predicate(
