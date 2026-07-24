@@ -223,6 +223,15 @@ class TestRecorderClassMethods:
 
 @pytest.mark.unit
 class TestRecorderErrorHandling:
+    @pytest.mark.skipif(
+        os.name == "posix" and os.geteuid() == 0,
+        reason=(
+            "root bypasses 0o444 file permissions, so record() writes successfully "
+            "and PermissionError is never raised — the test asserts a non-root "
+            "invariant (g-315-481). `os.name == 'posix'` short-circuits before "
+            "os.geteuid() so this decorator is safe on non-POSIX boxes."
+        ),
+    )
     def test_recording_to_readonly_file(self, temp_recordings_dir):
         recorder = Recorder(prefix="test-readonly")
 

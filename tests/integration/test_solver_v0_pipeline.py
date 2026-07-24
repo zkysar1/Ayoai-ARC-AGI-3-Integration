@@ -13,24 +13,55 @@ signature predicate signature change, policy.choose() return type drift)
 break the pipeline without unit-test catch.
 
 All tests remain offline - no Lambda, no HTTP, no live env. The recording
-fixture is committed to the repo.
+fixtures (recordings/*.recording.jsonl) are gitignored LOCAL artifacts
+(~27MB each), NOT committed to the repo -- so these tests DISCOVER any
+available ls20 recording at import time and SKIP cleanly when none is present
+(fresh checkout / CI). To run them locally, generate a recording:
+`.venv/bin/python main.py --game <ls20-id> --use-solver-v2 --record` (see
+world/conventions/arc-agi-3-api.md Live-Run Recipe), then re-run pytest.
+Replay is capped at MAX_REPLAY_FRAMES so runtime stays bounded regardless of
+which recording is discovered (g-315-481 -- the original hardcoded fixture
+existed on exactly one box and was absent everywhere else, bare-failing 5
+tests on every fresh checkout).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from solver_v0.client_adapter import RecordingReplayAdapter
 from solver_v0.perception import FrameFeatures
 from solver_v0.policy import HandBuiltPolicy, invalid_action_rate
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-RECORDING_FIXTURE = (
-    REPO_ROOT
-    / "recordings"
-    / "ls20-fa137e247ce6.random.da95b915-c505-4010-8a1c-e333e7ddbdac.recording.jsonl"
-)
+
+
+def _discover_ls20_recording() -> Path | None:
+    """First available ls20 recording (sorted for determinism), or None.
+
+    Recordings are gitignored local artifacts (see module docstring), so the
+    original hardcoded fixture path existed on exactly one box and is absent
+    everywhere else (g-315-481). Globbing any ls20 recording lets these tests
+    run wherever a recording exists and skip cleanly otherwise.
+    """
+    matches = sorted(REPO_ROOT.glob("recordings/ls20*.recording.jsonl"))
+    return matches[0] if matches else None
+
+
+RECORDING_FIXTURE = _discover_ls20_recording()
+MAX_REPLAY_FRAMES = 150  # cap replay so runtime is bounded on long recordings
 LS20_AVAILABLE_ACTIONS = [0, 1, 2, 3, 4]  # RESET + ACTION1..4 per ls20-class.md
+
+pytestmark = pytest.mark.skipif(
+    RECORDING_FIXTURE is None,
+    reason=(
+        "no ls20 recording present -- recordings/*.recording.jsonl are gitignored "
+        "local artifacts; generate one with `.venv/bin/python main.py --game "
+        "<ls20-id> --use-solver-v2 --record` (g-315-481)"
+    ),
+)
 
 
 def test_pipeline_runs_end_to_end_on_recording() -> None:
@@ -55,10 +86,13 @@ def test_pipeline_runs_end_to_end_on_recording() -> None:
             chosen = policy.choose(features)
             issued_actions.append(chosen)
             policy.observe(chosen, frame_changed=True)
+            if frames_seen >= MAX_REPLAY_FRAMES:
+                break
 
     assert frames_seen >= 1
     assert len(issued_actions) == frames_seen
-    assert frames_seen == 81  # ls20 random recording length
+    # (frame count was recording-specific -- the fixture is now globbed +
+    # capped, so assert the smoke-test invariant, not an exact length; g-315-481)
 
 
 def test_pipeline_invalid_action_rate_under_one_percent() -> None:
@@ -80,6 +114,8 @@ def test_pipeline_invalid_action_rate_under_one_percent() -> None:
             chosen = policy.choose(features)
             issued.append(chosen)
             policy.observe(chosen, frame_changed=True)
+            if len(issued) >= MAX_REPLAY_FRAMES:
+                break
 
     rate = invalid_action_rate(issued, LS20_AVAILABLE_ACTIONS)
     assert rate < 0.01, f"invalid_action_rate={rate} >= 0.01"
@@ -127,8 +163,10 @@ def test_pipeline_policy_returns_valid_int_every_frame() -> None:
             assert chosen <= 7, f"chosen out of range={chosen}"
             issued.append(chosen)
             policy.observe(chosen, frame_changed=True)
+            if len(issued) >= MAX_REPLAY_FRAMES:
+                break
 
-    assert len(issued) == 81
+    assert len(issued) >= 1
 
 
 def test_pipeline_threads_recording_available_actions_and_holds_filter_invariant() -> None:
@@ -162,8 +200,10 @@ def test_pipeline_threads_recording_available_actions_and_holds_filter_invariant
             )
             issued.append(chosen)
             policy.observe(chosen, frame_changed=True)
+            if len(issued) >= MAX_REPLAY_FRAMES:
+                break
 
-    assert len(issued) == 81
+    assert len(issued) >= 1
     # invalid_action_rate (RESET-exempt) must be 0 against the threaded set.
     assert invalid_action_rate(issued, [1, 2, 3, 4]) == 0.0
     # The explicit primer section-1 invariant: no ACTION5/6/7 on an
