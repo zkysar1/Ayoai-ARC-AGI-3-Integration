@@ -44,6 +44,7 @@ keeps this offline-provable.
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Protocol, runtime_checkable
 
 from primitives.synthesized_world_model import TransitionBuffer, WorldModel
@@ -108,6 +109,432 @@ class TableSynthesizer:
             # deterministic environment never contradicts, so last-write-wins is exact.
             table[(t.state, t.action)] = t.next_state
         return WorldModel(lambda s, a: table.get((s, a), s))
+
+
+def _numeric_tuple_delta(state, next_state):
+    """Component-wise ``next_state[i] - state[i]`` when BOTH are same-arity,
+    non-empty tuples of real numbers (``int``/``float``, but NOT ``bool`` -- in
+    Python ``True`` is an ``int`` and must never be treated as a coordinate).
+    Returns ``None`` for any other shape (opaque scalars, nested/grid
+    tuple-of-tuples, ragged arity). That ``None`` is how the synthesizer
+    DEGRADES to the memorize-only table on non-coordinate encodings instead of
+    inventing a delta -- the env-agnostic escape hatch (rb-4569)."""
+    if (not isinstance(state, tuple) or not isinstance(next_state, tuple)
+            or len(state) == 0 or len(state) != len(next_state)):
+        return None
+    delta = []
+    for a, b in zip(state, next_state):
+        if (not isinstance(a, (int, float)) or isinstance(a, bool)
+                or not isinstance(b, (int, float)) or isinstance(b, bool)):
+            return None
+        delta.append(b - a)
+    return tuple(delta)
+
+
+def _apply_numeric_delta(state, delta):
+    """``state + delta`` component-wise when ``state`` is a same-arity, non-empty
+    numeric tuple; ``None`` otherwise (so an unseen state whose shape does not
+    match the learned rule falls through to IDENTITY rather than raising)."""
+    if not isinstance(state, tuple) or len(state) == 0 or len(state) != len(delta):
+        return None
+    out = []
+    for a, d in zip(state, delta):
+        if not isinstance(a, (int, float)) or isinstance(a, bool):
+            return None
+        out.append(a + d)
+    return tuple(out)
+
+
+class GeneralizingSynthesizer:
+    """Deterministic (non-LLM) rule-INDUCING synthesizer -- the tiny-compute v1 of
+    the ``WorldModelSynthesizer`` seam, one honest step beyond ``TableSynthesizer``
+    (this module's docstring: "a symbolic synthesizer is another" implementation).
+
+    ``TableSynthesizer`` MEMORIZES ``(state, action) -> next_state`` and falls back
+    to IDENTITY on unseen pairs -- it never GENERALIZES. This synthesizer
+    additionally INDUCES, per action, the most general CONSISTENT structural rule
+    that maps ``state -> next_state``: currently a constant component-wise integer
+    DELTA on numeric-tuple states (the canonical navigation dynamic -- an action
+    that TRANSLATES the actor by a fixed vector regardless of position). When every
+    observed transition for an action agrees on ONE delta, that delta is
+    EXTRAPOLATED to UNSEEN states under that action; the induced program still
+    returns the memorized table value on OBSERVED pairs (exact) and identity where
+    no rule was learned.
+
+    Strict relationship to ``TableSynthesizer`` (design invariant): on OBSERVED
+    ``(state, action)`` pairs the program returns the memorized ``next_state``
+    EXACTLY -- identical to ``TableSynthesizer`` there, so it NEVER regresses on the
+    buffer and keeps ``explains_all`` for a self-consistent deterministic buffer
+    (``synthesize_until_consistent`` still converges in ONE round). It differs ONLY
+    on UNSEEN pairs, where a learned per-action delta EXTRAPOLATES instead of the
+    table's identity fallback. That extrapolation is a BET: on translation-invariant
+    dynamics (open navigation) it is correct and BEATS the identity floor; on
+    boundary/collision dynamics (a wall the actor cannot cross) it can over-shoot a
+    no-op that identity would have matched, so NET held-out accuracy vs the table
+    floor is an EMPIRICAL question the offline corpus measures. This IS the
+    SYNTHESIZED-over-INHERITED dynamic (rb-4560): the navigation delta is LEARNED
+    from the buffer, not a fixed ``reach_cell`` prior.
+
+    Induction is STRICT (no modal heuristic in v0): a delta is adopted for an
+    action ONLY when EVERY observed transition for it is a numeric-tuple pair AND
+    they UNANIMOUSLY agree on one delta. Any mixed shape or any disagreement (e.g.
+    a bounded grid where interior moves shift by (-1,0) but a boundary move is a
+    (0,0) no-op) leaves the action with NO rule -> it DEGRADES to the memorize-only
+    table (ties ``TableSynthesizer``, never worse on those actions). The honest v0
+    limit: strict unanimity means collision-bearing dynamics learn nothing until a
+    future robust/modal inducer; a clean translation-invariant buffer generalizes
+    fully.
+
+    Env-AGNOSTIC (rb-4569): carries NO env constant and NO game-model assumption --
+    only a WEAK, generic STRUCTURAL assumption (states MAY be numeric tuples),
+    applied ONLY where that structure is present and consistent; otherwise it is
+    exactly ``TableSynthesizer``. DETERMINISTIC (no LLM / no RNG -- tiny-compute
+    hot-path fit, self.md "math first for the hot path"). guard-660: proves
+    generalization OFFLINE, never a live score. Stateless: the buffer is the sole
+    ground truth, rebuilt each call, so the current ``model`` argument is ignored
+    (the Protocol permits it)."""
+
+    def synthesize(self, buffer: TransitionBuffer, model: WorldModel) -> WorldModel:
+        table: dict = {}
+        observed_deltas: dict = {}      # action -> set of per-transition deltas
+        action_has_nontuple: dict = {}  # action -> saw a non-numeric-tuple transition
+        for t in buffer:
+            # Memorized table: exact on observed pairs -- the TableSynthesizer floor.
+            table[(t.state, t.action)] = t.next_state
+            d = _numeric_tuple_delta(t.state, t.next_state)
+            if d is None:
+                action_has_nontuple[t.action] = True
+            else:
+                observed_deltas.setdefault(t.action, set()).add(d)
+        # Adopt a per-action constant delta ONLY under strict unanimity: every
+        # observed transition for the action is a numeric-tuple pair AND they all
+        # agree on one delta. Otherwise no rule -> degrade to table for that action.
+        deltas: dict = {}
+        for action, dset in observed_deltas.items():
+            if action_has_nontuple.get(action):
+                continue           # mixed shapes -> no rule (degrade to table)
+            if len(dset) == 1:
+                deltas[action] = next(iter(dset))
+
+        def program(s, a, _table=table, _deltas=deltas):
+            key = (s, a)
+            if key in _table:
+                return _table[key]  # observed -> EXACT (never worse than the table floor)
+            delta = _deltas.get(a)
+            if delta is not None:
+                extrapolated = _apply_numeric_delta(s, delta)
+                if extrapolated is not None:
+                    return extrapolated  # learned rule -> GENERALIZE to unseen (state, action)
+            return s                # no applicable rule -> identity fallback
+
+        return WorldModel(program)
+
+
+class SlotwiseModalSynthesizer:
+    """Deterministic (non-LLM) PER-OBJECT rule-inducing synthesizer -- the tiny-compute
+    v2 of the ``WorldModelSynthesizer`` seam, the step past ``GeneralizingSynthesizer``
+    that real ls20 dynamics EMPIRICALLY FORCE (g-315-493 / rb-5037).
+
+    ``GeneralizingSynthesizer`` induces ONE constant delta for the WHOLE state tuple
+    under STRICT unanimity. On real ls20 recordings that degrades EXACTLY to the table
+    floor (``gen_acc == tab_acc`` on 12/12 recordings, rb-5037) for two compounding
+    reasons the per-slot probe isolated:
+
+      1. WRONG GRANULARITY -- whole-tuple unanimity needs ALL ~32 slots to agree, but
+         only 4-7 vary while 25-28 are consistently static; a single varying slot
+         breaks whole-tuple unanimity every time, so NO rule is ever learned.
+      2. WRONG ROBUSTNESS -- the one moving slot's delta is BIMODAL (an action moves
+         the object by a fixed vector on a clear path but is a ``(0,0)`` no-op on a
+         wall-collision); strict unanimity sees >=2 deltas and adopts none.
+
+    This synthesizer fixes BOTH by inducing a delta PER SLOT (per object coordinate)
+    and adopting the DOMINANT (modal) delta rather than requiring unanimity:
+
+      - PER-SLOT: each slot index learns its own delta independently, so the 25-28
+        static slots each learn delta 0 (100% dominant) and the few moving slots each
+        learn their own vector -- the whole-tuple-unanimity requirement that zeroed v1
+        is gone.
+      - MODAL + DOMINANCE: for each ``(action, arity, slot)`` the adopted delta is the
+        most common one, and ONLY when its share of observations is >= ``min_dominance``
+        (default 0.5). The collision no-op is the MINORITY mode for a moving slot, so
+        the actual move is adopted; a genuinely noisy slot with no dominant mode gets
+        NO rule and stays identity (honest degradation -- never inventing motion on
+        ambiguous evidence).
+
+    This is OPINE-World's "transition_function PER OBJECT TYPE" (self.md L64-67) in the
+    tiny-compute deterministic form: the state IS the per-object coordinate tuple (the
+    g-315-492 seam produces it), and each slot's modal delta IS that object's learned
+    transition under the action. rb-4560's SYNTHESIZED-over-INHERITED dynamic, now at
+    per-object granularity -- the exact lever the g-315-493 measurement NAMED, not assumed.
+
+    Strict relationship to the floor (design invariant, preserved): on OBSERVED
+    ``(state, action)`` pairs the program returns the memorized ``next_state`` EXACTLY
+    (the ``TableSynthesizer`` floor) -- it NEVER regresses on the buffer and keeps
+    ``explains_all`` for a self-consistent deterministic buffer, so
+    ``synthesize_until_consistent`` still converges in ONE round. It differs only on
+    UNSEEN pairs, where per-slot modal deltas EXTRAPOLATE. Rules are keyed by
+    ``(action, ARITY)``: a learned rule applies only to an unseen state whose object
+    count matches, so an arity shift degrades to identity for that state rather than
+    mis-indexing across a different object layout.
+
+    Env-AGNOSTIC (rb-4569): the only assumption is the same WEAK generic structural one
+    ``GeneralizingSynthesizer`` makes (states MAY be numeric tuples), applied per slot
+    only where present; otherwise exactly ``TableSynthesizer``. DETERMINISTIC (no LLM /
+    no RNG -- modal ties broken by a ``(-count, abs(delta), delta)`` sort, never
+    ``Math.random`` -- so the hot-path fit and offline-reproducibility hold; self.md
+    "math first for the hot path"). guard-660: proves per-object generalization
+    OFFLINE, never a live score. Stateless: the buffer is the sole ground truth,
+    rebuilt each call, so the current ``model`` argument is ignored (the Protocol
+    permits it)."""
+
+    def __init__(self, *, min_dominance: float = 0.5) -> None:
+        # A slot's modal delta is adopted only when its share of that
+        # (action, arity, slot)'s observations reaches min_dominance. 0.5 = "at least
+        # half agree" -- the bimodal move/collision case adopts the majority move; a
+        # slot with no dominant mode stays identity. 0.0 would adopt any plurality (a
+        # weaker bet); 1.0 collapses back to GeneralizingSynthesizer's per-slot unanimity.
+        self.min_dominance = min_dominance
+
+    def synthesize(self, buffer: TransitionBuffer, model: WorldModel) -> WorldModel:
+        table: dict = {}
+        slot_delta_counts: dict = {}   # (action, arity) -> [Counter per slot index]
+        for t in buffer:
+            # Memorized table: exact on observed pairs -- the TableSynthesizer floor.
+            table[(t.state, t.action)] = t.next_state
+            d = _numeric_tuple_delta(t.state, t.next_state)
+            if d is None:
+                continue           # non-coordinate encoding -> contributes only to the table
+            key = (t.action, len(d))
+            counters = slot_delta_counts.get(key)
+            if counters is None:
+                counters = [Counter() for _ in range(len(d))]
+                slot_delta_counts[key] = counters
+            for i, di in enumerate(d):
+                counters[i][di] += 1
+        # Adopt, per (action, arity), the modal delta for each slot that clears the
+        # dominance floor. Slots with no dominant mode are omitted (identity for them).
+        adopted: dict = {}         # (action, arity) -> {slot_index: delta}
+        for key, counters in slot_delta_counts.items():
+            slot_rules: dict = {}
+            for i, counter in enumerate(counters):
+                total = sum(counter.values())
+                if total == 0:
+                    continue
+                # Deterministic mode: highest count; ties -> smallest |delta| then delta.
+                best_delta, best_count = min(
+                    counter.items(), key=lambda kv: (-kv[1], abs(kv[0]), kv[0])
+                )
+                if best_count / total >= self.min_dominance:
+                    slot_rules[i] = best_delta
+            if slot_rules:
+                adopted[key] = slot_rules
+
+        def program(s, a, _table=table, _adopted=adopted):
+            key = (s, a)
+            if key in _table:
+                return _table[key]  # observed -> EXACT (never worse than the table floor)
+            if not isinstance(s, tuple) or len(s) == 0:
+                return s            # non-tuple state -> identity
+            slot_rules = _adopted.get((a, len(s)))
+            if not slot_rules:
+                return s            # no per-slot rule at this arity -> identity
+            out = list(s)
+            for i, x in enumerate(s):
+                delta = slot_rules.get(i)
+                if delta is None:
+                    continue        # slot has no dominant rule -> identity for this slot
+                if not isinstance(x, (int, float)) or isinstance(x, bool):
+                    return s         # non-numeric slot at a ruled index -> whole-state identity (honest)
+                out[i] = x + delta
+            return tuple(out)       # per-slot modal deltas applied -> GENERALIZE to unseen
+
+        return WorldModel(program)
+
+
+class ContextConditionedModalSynthesizer:
+    """Deterministic (non-LLM) CONTEXT-CONDITIONED modal synthesizer -- the tiny-compute
+    v3 of the ``WorldModelSynthesizer`` seam, the boundary/collision-aware step the real
+    ls20 measurement EMPIRICALLY FORCED (g-315-494 -> g-315-495).
+
+    ``SlotwiseModalSynthesizer`` (v2) learns a per-slot modal delta keyed by
+    ``(action, arity, slot)`` -- CONTEXT-FREE: the delta ignores pre-state geometry, so
+    it mispredicts the collision MINORITY (predicts the move where a wall blocks it). The
+    g-315-494 measurement named this residual ceiling AND g-315-495 proved WHY it was
+    unfixable in v2: the ``FrameCoordinateDecomposer`` bare-centroid state does not carry
+    walls at all (walls are excluded terrain -- value 3, 22% of the ls20 grid), so a
+    synthesizer over ``(r,c,r,c,...)`` literally cannot see them. The fix is a RICHER
+    STATE (``decompose_with_wall_context`` appends per-object occupancy bits) plus this
+    synthesizer, which CONDITIONS each dynamic slot's modal delta on a per-object CONTEXT
+    SIGNATURE. "Move UNLESS the direction is blocked" is then LEARNED from the buffer
+    (rb-4560 synthesized-over-inherited), not hand-coded.
+
+    ENV-AGNOSTIC by PARAMETERIZATION, not by ignoring structure (self.md Constraint 3/4:
+    no env schema in ``primitives/``). The object layout is INJECTED, never hardcoded:
+
+      - ``period``  -- slots per object block (e.g. 6 for ``(r,c,wN,wE,wS,wW)``).
+      - ``dynamic`` -- within-period offsets whose deltas are LEARNED (e.g. ``(0, 1)`` =
+        the r,c coordinates that move).
+      - ``context`` -- within-period offsets that CONDITION the delta but are NOT
+        predicted (e.g. ``(2,3,4,5)`` = the wall-occupancy bits). Context slots pass
+        through UNCHANGED (they are frame-derived, not tuple-predictable), so callers
+        score DYNAMIC slots only.
+
+    The ARC arc-solver seam injects ``period=6, dynamic=(0,1), context=(2,3,4,5)``; a
+    different environment injects its own layout; a bare numeric tuple with no context
+    (``context=()``) degrades this to a pooled-across-objects ``SlotwiseModalSynthesizer``.
+    NO ARC constant lives here.
+
+    Rule keying is ``(action, dynamic_offset, context_signature)`` -- POOLED across object
+    blocks AND arities (object-type sharing, the g-315-494 next-lever #2): all objects
+    that share a context signature share the physics, so the collision rule is learned
+    once from every object's evidence, not re-learned per slot. The modal delta is adopted
+    per key only when its share of observations is >= ``min_dominance`` (default 0.5);
+    otherwise that slot stays identity under that context (honest degradation -- never
+    inventing motion on ambiguous evidence).
+
+    Strict relationship to the floor (design invariant, preserved): on OBSERVED
+    ``(state, action)`` pairs the program returns the memorized ``next_state`` EXACTLY
+    (the ``TableSynthesizer`` floor); a state whose length is not a clean multiple of
+    ``period``, or whose slots are non-numeric, degrades to identity/table rather than
+    mis-indexing. DETERMINISTIC (no LLM/RNG -- modal ties broken by
+    ``(-count, abs(delta), delta)``; self.md "math first for the hot path"). guard-660:
+    proves boundary-aware generalization OFFLINE, never a live score. Stateless: the
+    buffer is the sole ground truth, so ``model`` is ignored (the Protocol permits it)."""
+
+    def __init__(
+        self,
+        *,
+        period: int,
+        dynamic,
+        context,
+        min_dominance: float = 0.5,
+    ) -> None:
+        if period <= 0:
+            raise ValueError("period must be positive")
+        self.period = period
+        self.dynamic = tuple(dynamic)
+        self.context = tuple(context)
+        self.min_dominance = min_dominance
+
+    def _blocks_ok(self, s) -> bool:
+        return (
+            isinstance(s, tuple)
+            and len(s) > 0
+            and len(s) % self.period == 0
+        )
+
+    @staticmethod
+    def _all_numeric(vals) -> bool:
+        return all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in vals)
+
+    def synthesize(self, buffer: TransitionBuffer, model: WorldModel) -> WorldModel:
+        table: dict = {}
+        # (action, dynamic_offset, context_signature) -> Counter of observed deltas,
+        # POOLED across every object block and arity (object-type sharing).
+        counts: dict = {}
+        for t in buffer:
+            # Memorized table: exact on observed pairs -- the TableSynthesizer floor.
+            table[(t.state, t.action)] = t.next_state
+            s, ns = t.state, t.next_state
+            if not (self._blocks_ok(s) and isinstance(ns, tuple) and len(ns) == len(s)):
+                continue  # non-block-structured -> contributes only to the table
+            if not (self._all_numeric(s) and self._all_numeric(ns)):
+                continue
+            nblocks = len(s) // self.period
+            for b in range(nblocks):
+                base = b * self.period
+                sig = tuple(s[base + off] for off in self.context)
+                for off in self.dynamic:
+                    d = ns[base + off] - s[base + off]
+                    counts.setdefault((t.action, off, sig), Counter())[d] += 1
+        # Adopt the modal delta per (action, dynamic_offset, context_signature) that
+        # clears the dominance floor. Keys with no dominant mode are omitted (identity).
+        adopted: dict = {}
+        for key, counter in counts.items():
+            total = sum(counter.values())
+            if total == 0:
+                continue
+            best_delta, best_count = min(
+                counter.items(), key=lambda kv: (-kv[1], abs(kv[0]), kv[0])
+            )
+            if best_count / total >= self.min_dominance:
+                adopted[key] = best_delta
+
+        period, dynamic, context = self.period, self.dynamic, self.context
+
+        def program(s, a, _table=table, _adopted=adopted):
+            key = (s, a)
+            if key in _table:
+                return _table[key]  # observed -> EXACT (never worse than the table floor)
+            if not (isinstance(s, tuple) and len(s) > 0 and len(s) % period == 0):
+                return s            # not block-structured -> identity
+            if not ContextConditionedModalSynthesizer._all_numeric(s):
+                return s            # non-numeric slot -> whole-state identity (honest)
+            out = list(s)
+            nblocks = len(s) // period
+            for b in range(nblocks):
+                base = b * period
+                sig = tuple(s[base + off] for off in context)
+                for off in dynamic:
+                    delta = _adopted.get((a, off, sig))
+                    if delta is not None:
+                        out[base + off] = s[base + off] + delta
+                    # context slots (and unruled dynamic slots) pass through unchanged
+            return tuple(out)       # context-conditioned modal deltas -> GENERALIZE to unseen
+
+        return WorldModel(program)
+
+
+def make_world_model_synthesizer(
+    name: str,
+    *,
+    period: int | None = None,
+    dynamic=None,
+    context=None,
+    min_dominance: float = 0.5,
+) -> WorldModelSynthesizer:
+    """Env-AGNOSTIC synthesizer SELECTOR: map a short config name to a concrete
+    ``WorldModelSynthesizer`` so a solver's composition root can swap the v0/v1/v2/v3
+    deterministic synthesizers from CONFIG (an env var, a card field) WITHOUT a code
+    edit (g-315-500). g-315-499 found the production ``V4Arm`` hardcoded to the v0
+    ``TableSynthesizer`` floor; this makes the whole deterministic lineage swappable, so
+    the v0->v2 deploy win (context-free +37% over floor, honest-degradation so never
+    below v0) -- and a future v3 -- is a config flip, and offline A/Bs need no fork.
+
+    Names (case-insensitive, surrounding whitespace ignored):
+      'v0' / 'table'        -> TableSynthesizer                   (the honest memorize floor)
+      'v1' / 'generalizing' -> GeneralizingSynthesizer            (whole-tuple unanimity delta)
+      'v2' / 'slotwise'     -> SlotwiseModalSynthesizer           (per-slot modal delta; CONTEXT-FREE)
+      'v3' / 'context'      -> ContextConditionedModalSynthesizer (boundary-aware; needs layout)
+
+    The env's object LAYOUT (``period`` / ``dynamic`` / ``context``) is INJECTED by the
+    caller -- it is NOT known here (self.md Constraint 3/4: NO env literal in
+    ``primitives/``). v0/v1/v2 are context-free and ignore the layout; v3 REQUIRES it and
+    raises ``ValueError`` when any part is missing (a loud fail, never a silent wrong
+    default). An UNRECOGNIZED / empty name degrades to the v0 floor -- honest-degradation
+    for a bad selector, matching the strict-superset contract every synthesizer preserves.
+    """
+    key = (name or "").strip().lower()
+    if key in ("v2", "slotwise"):
+        return SlotwiseModalSynthesizer(min_dominance=min_dominance)
+    if key in ("v1", "generalizing"):
+        return GeneralizingSynthesizer()
+    if key in ("v3", "context"):
+        if period is None or dynamic is None or context is None:
+            raise ValueError(
+                "make_world_model_synthesizer('v3'): period/dynamic/context must be "
+                "injected by the caller (env-agnostic -- no object layout lives in "
+                "primitives/); got period=%r dynamic=%r context=%r"
+                % (period, dynamic, context)
+            )
+        return ContextConditionedModalSynthesizer(
+            period=period,
+            dynamic=dynamic,
+            context=context,
+            min_dominance=min_dominance,
+        )
+    # 'v0' / 'table' / unrecognized -> the honest floor (never raise on a bad name).
+    return TableSynthesizer()
 
 
 def synthesize_until_consistent(

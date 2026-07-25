@@ -28,7 +28,9 @@ from typing import Callable, Hashable, Sequence
 from primitives.synthesized_world_model import TransitionBuffer, WorldModel
 from primitives.v4_arm import V4Arm
 from primitives.world_model_synthesizer import (
+    SlotwiseModalSynthesizer,
     TableSynthesizer,
+    make_world_model_synthesizer,
     synthesize_until_consistent,
 )
 
@@ -51,6 +53,15 @@ def _grid(s: tuple, a: str) -> tuple:
     """2-D grid: NESW over (x, y) tuple states -- a DIFFERENT env shape than the line."""
     x, y = s
     return {"N": (x, y + 1), "S": (x, y - 1), "E": (x + 1, y), "W": (x - 1, y)}.get(a, s)
+
+
+def _line_tuple(s: tuple, a: str) -> tuple:
+    """1-slot TUPLE line: R advances, L retreats (floored at 0). TUPLE states (not a
+    scalar int) so the slotwise synthesizer's per-slot coordinate-delta induction
+    ENGAGES -- v2 degrades to the table floor on non-tuple encodings, so a scalar
+    line would not discriminate v2 from v0."""
+    (n,) = s
+    return (n + 1,) if a == "R" else (max(0, n - 1),)
 
 
 def _drive(
@@ -184,3 +195,45 @@ def test_v4_cross_env_transfer_gridworld() -> None:
     arm._pending = None
     action = arm.step((0, 0), goal, ("N", "E", "S", "W"), fallback_action="W")
     assert action == "E"  # SAME arm+synthesizer plans on a NON-ARC shape -> transfer
+
+
+# --------------------------------------------------------------------------- #
+# g-315-500: the v2 SlotwiseModalSynthesizer's predictions FLOW THROUGH the    #
+# planner and reach a goal the v0 TableSynthesizer floor cannot -- the deploy  #
+# swap is not silently ignored (the goal's "v2 reaches model_planner" check).  #
+# --------------------------------------------------------------------------- #
+
+
+def test_v2_slotwise_generalizes_through_planner_where_v0_falls_back() -> None:
+    """THE g-315-500 payoff: swapping the v0 floor for v2 changes what V4Arm PLANS.
+    v2 induces a per-slot modal delta from observed moves and EXTRAPOLATES it to an
+    UNSEEN state, so the planner reaches a goal through never-observed territory; v0
+    returns identity on unseen (state, action) -> no forward path -> honest fallback.
+    The v0 and v2 arms observe the SAME buffer and diverge ONLY because v2's
+    predictions reach ``model_planner.plan`` (proves the swap is live, not inert)."""
+    # v2: learn the +1/R dynamic from three OBSERVED moves near the origin, then plan
+    # from an UNSEEN state (5,) toward (7,) -- reachable ONLY via the extrapolated delta.
+    v2_arm = V4Arm(SlotwiseModalSynthesizer(), horizon=6)
+    _drive(v2_arm, _line_tuple, (0,), lambda s: False, ("R", "L"), fallback="R", max_steps=3)
+    assert v2_arm.model.predict((5,), "R") == (6,)  # GENERALIZES to unseen (v0 cannot)
+    v2_arm._pending = None
+    assert v2_arm.step((5,), lambda s: s == (7,), ("R", "L"), fallback_action="L") == "R"
+
+    # v0: the SAME observed buffer, but identity on the unseen (5,) -> no plan reaches
+    # (7,) -> the arm honestly degrades to the (wrong) fallback "L".
+    v0_arm = V4Arm(TableSynthesizer(), horizon=6)
+    _drive(v0_arm, _line_tuple, (0,), lambda s: False, ("R", "L"), fallback="R", max_steps=3)
+    assert v0_arm.model.predict((5,), "R") == (5,)  # identity on unseen -- no generalization
+    v0_arm._pending = None
+    assert v0_arm.step((5,), lambda s: s == (7,), ("R", "L"), fallback_action="L") == "L"
+
+
+def test_make_synthesizer_v2_drives_v4arm_end_to_end() -> None:
+    """The production wiring path: the SOLVER_V2_V4_SYNTH selector ('v2') builds the
+    synthesizer main.py hands to V4Arm, and that arm learns + reaches the goal on a
+    tuple env -- the selector is not merely a class-picker, it drives real planning."""
+    arm = V4Arm(make_world_model_synthesizer("v2"), horizon=6)
+    final, _ = _drive(arm, _line_tuple, (0,), lambda s: s == (3,), ("R", "L"), fallback="R", max_steps=10)
+    assert final == (3,)
+    assert arm.model.predict((0,), "R") == (1,)  # learned a NON-identity model
+    assert arm.model.explains_all(arm.buffer)
