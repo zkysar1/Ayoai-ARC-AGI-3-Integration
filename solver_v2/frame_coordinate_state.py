@@ -37,6 +37,49 @@ from solver_v2.cc_segment import Component, segment, terrain_values
 # (row, col) ints, ordered by STABLE object id. Feed straight to a TransitionBuffer.
 CoordinateState = tuple
 
+# The four cardinal moves, (dr, dc), in N, E, S, W order -- the occupancy-bit order
+# in the wall-context state (g-315-495). Matches the intuitive "up, right, down, left".
+_DIRECTIONS = ((-1, 0), (0, 1), (1, 0), (0, -1))
+
+
+def wall_occupancy(
+    values: list[int],
+    width: int,
+    height: int,
+    cells: frozenset,
+    wall_set: frozenset,
+) -> tuple[int, int, int, int]:
+    """Per-object collision context: is moving this object one cell in each cardinal
+    direction (N, E, S, W) blocked by a wall or the grid boundary? (g-315-495).
+
+    A direction is BLOCKED (bit=1) when ANY of the object's frontier neighbors in that
+    direction is (a) out of bounds -- the grid edge is a wall too -- or (b) a cell whose
+    value is in ``wall_set`` (the non-background terrain, e.g. maze walls) AND not part
+    of the object itself. This is true collision detection over the object's OWN cells,
+    not a fuzzy centroid probe: it answers "would this object collide if it moved dir?".
+
+    ``wall_set`` is the terrain MINUS the single most-common (walkable background/floor)
+    value -- the load-bearing distinction g-315-495 found: value 4 (floor, 64% of grid)
+    is walkable terrain, value 3 (wall, 22%) blocks. Both were excluded from the object
+    segmentation, so wall adjacency was undecodable from the bare centroid state; this
+    helper recovers it from the raw frame at decompose time.
+    """
+    bits = []
+    for dr, dc in _DIRECTIONS:
+        blocked = False
+        for (r, c) in cells:
+            nr, nc = r + dr, c + dc
+            if nr < 0 or nr >= height or nc < 0 or nc >= width:
+                blocked = True  # grid boundary blocks
+                break
+            if (nr, nc) in cells:
+                continue  # neighbor is part of the same object -- not a wall
+            if values[nr * width + nc] in wall_set:
+                blocked = True
+                break
+        bits.append(1 if blocked else 0)
+    return tuple(bits)  # (wN, wE, wS, wW)
+
 
 class FrameCoordinateDecomposer:
     """Stateful frame -> flat coordinate-tuple state decomposer with cross-tick
@@ -88,6 +131,57 @@ class FrameCoordinateDecomposer:
             r, c = assigned[oid]
             state.append(int(round(r)))
             state.append(int(round(c)))
+        return tuple(state)
+
+    def decompose_with_wall_context(
+        self, values: list[int], width: int, height: Optional[int] = None
+    ) -> CoordinateState:
+        """Frame -> flat state with per-object local WALL CONTEXT (g-315-495).
+
+        Same stable-id decomposition as ``decompose``, but each object contributes SIX
+        ints ``(r, c, wN, wE, wS, wW)`` instead of two: its centroid plus four
+        collision bits (is a move N/E/S/W blocked by a wall or the grid edge). The
+        wall bits recover the information ``decompose`` throws away -- walls are
+        excluded terrain (g-315-495: value 3, 22% of the ls20 grid), so the bare
+        centroid state cannot see them. A boundary/collision-aware synthesizer gates
+        its position delta on these bits ("move UNLESS the direction is blocked").
+
+        Backward compatible: ``decompose`` is unchanged; this is a strict superset
+        method callers opt into. Slot layout per object: index%6 in {0:r, 1:c, 2:wN,
+        3:wE, 4:wS, 5:wW}.
+        """
+        h = height if height is not None else (len(values) // width if width else 0)
+        terrain = terrain_values(values, self._terrain_top_n)
+        # Background = the SINGLE most-common value (walkable floor); wall_set = the
+        # remaining terrain (maze walls). Ranking matches terrain_values exactly:
+        # (count, value) descending. This is the load-bearing distinction g-315-495
+        # found -- floor and wall are BOTH terrain but only wall blocks.
+        if values:
+            counts: dict[int, int] = {}
+            for v in values:
+                counts[v] = counts.get(v, 0) + 1
+            background = sorted(counts, key=lambda v: (counts[v], v), reverse=True)[0]
+            wall_set = frozenset(t for t in terrain if t != background)
+        else:
+            wall_set = frozenset()
+        comps = segment(
+            values, width, height, ignore_values=terrain, min_size=self._min_size
+        )
+        assigned = self._assign_ids(comps)
+        self._prev = dict(assigned)
+        by_centroid = {comp.centroid: comp for comp in comps}
+        state: list[int] = []
+        for oid in sorted(assigned):
+            cen = assigned[oid]
+            comp = by_centroid.get(cen)
+            occ = (
+                wall_occupancy(values, width, h, comp.cells, wall_set)
+                if comp is not None
+                else (0, 0, 0, 0)
+            )
+            state.append(int(round(cen[0])))
+            state.append(int(round(cen[1])))
+            state.extend(occ)
         return tuple(state)
 
     def _assign_ids(self, comps: list[Component]) -> dict[int, tuple[float, float]]:

@@ -351,6 +351,140 @@ class SlotwiseModalSynthesizer:
         return WorldModel(program)
 
 
+class ContextConditionedModalSynthesizer:
+    """Deterministic (non-LLM) CONTEXT-CONDITIONED modal synthesizer -- the tiny-compute
+    v3 of the ``WorldModelSynthesizer`` seam, the boundary/collision-aware step the real
+    ls20 measurement EMPIRICALLY FORCED (g-315-494 -> g-315-495).
+
+    ``SlotwiseModalSynthesizer`` (v2) learns a per-slot modal delta keyed by
+    ``(action, arity, slot)`` -- CONTEXT-FREE: the delta ignores pre-state geometry, so
+    it mispredicts the collision MINORITY (predicts the move where a wall blocks it). The
+    g-315-494 measurement named this residual ceiling AND g-315-495 proved WHY it was
+    unfixable in v2: the ``FrameCoordinateDecomposer`` bare-centroid state does not carry
+    walls at all (walls are excluded terrain -- value 3, 22% of the ls20 grid), so a
+    synthesizer over ``(r,c,r,c,...)`` literally cannot see them. The fix is a RICHER
+    STATE (``decompose_with_wall_context`` appends per-object occupancy bits) plus this
+    synthesizer, which CONDITIONS each dynamic slot's modal delta on a per-object CONTEXT
+    SIGNATURE. "Move UNLESS the direction is blocked" is then LEARNED from the buffer
+    (rb-4560 synthesized-over-inherited), not hand-coded.
+
+    ENV-AGNOSTIC by PARAMETERIZATION, not by ignoring structure (self.md Constraint 3/4:
+    no env schema in ``primitives/``). The object layout is INJECTED, never hardcoded:
+
+      - ``period``  -- slots per object block (e.g. 6 for ``(r,c,wN,wE,wS,wW)``).
+      - ``dynamic`` -- within-period offsets whose deltas are LEARNED (e.g. ``(0, 1)`` =
+        the r,c coordinates that move).
+      - ``context`` -- within-period offsets that CONDITION the delta but are NOT
+        predicted (e.g. ``(2,3,4,5)`` = the wall-occupancy bits). Context slots pass
+        through UNCHANGED (they are frame-derived, not tuple-predictable), so callers
+        score DYNAMIC slots only.
+
+    The ARC arc-solver seam injects ``period=6, dynamic=(0,1), context=(2,3,4,5)``; a
+    different environment injects its own layout; a bare numeric tuple with no context
+    (``context=()``) degrades this to a pooled-across-objects ``SlotwiseModalSynthesizer``.
+    NO ARC constant lives here.
+
+    Rule keying is ``(action, dynamic_offset, context_signature)`` -- POOLED across object
+    blocks AND arities (object-type sharing, the g-315-494 next-lever #2): all objects
+    that share a context signature share the physics, so the collision rule is learned
+    once from every object's evidence, not re-learned per slot. The modal delta is adopted
+    per key only when its share of observations is >= ``min_dominance`` (default 0.5);
+    otherwise that slot stays identity under that context (honest degradation -- never
+    inventing motion on ambiguous evidence).
+
+    Strict relationship to the floor (design invariant, preserved): on OBSERVED
+    ``(state, action)`` pairs the program returns the memorized ``next_state`` EXACTLY
+    (the ``TableSynthesizer`` floor); a state whose length is not a clean multiple of
+    ``period``, or whose slots are non-numeric, degrades to identity/table rather than
+    mis-indexing. DETERMINISTIC (no LLM/RNG -- modal ties broken by
+    ``(-count, abs(delta), delta)``; self.md "math first for the hot path"). guard-660:
+    proves boundary-aware generalization OFFLINE, never a live score. Stateless: the
+    buffer is the sole ground truth, so ``model`` is ignored (the Protocol permits it)."""
+
+    def __init__(
+        self,
+        *,
+        period: int,
+        dynamic,
+        context,
+        min_dominance: float = 0.5,
+    ) -> None:
+        if period <= 0:
+            raise ValueError("period must be positive")
+        self.period = period
+        self.dynamic = tuple(dynamic)
+        self.context = tuple(context)
+        self.min_dominance = min_dominance
+
+    def _blocks_ok(self, s) -> bool:
+        return (
+            isinstance(s, tuple)
+            and len(s) > 0
+            and len(s) % self.period == 0
+        )
+
+    @staticmethod
+    def _all_numeric(vals) -> bool:
+        return all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in vals)
+
+    def synthesize(self, buffer: TransitionBuffer, model: WorldModel) -> WorldModel:
+        table: dict = {}
+        # (action, dynamic_offset, context_signature) -> Counter of observed deltas,
+        # POOLED across every object block and arity (object-type sharing).
+        counts: dict = {}
+        for t in buffer:
+            # Memorized table: exact on observed pairs -- the TableSynthesizer floor.
+            table[(t.state, t.action)] = t.next_state
+            s, ns = t.state, t.next_state
+            if not (self._blocks_ok(s) and isinstance(ns, tuple) and len(ns) == len(s)):
+                continue  # non-block-structured -> contributes only to the table
+            if not (self._all_numeric(s) and self._all_numeric(ns)):
+                continue
+            nblocks = len(s) // self.period
+            for b in range(nblocks):
+                base = b * self.period
+                sig = tuple(s[base + off] for off in self.context)
+                for off in self.dynamic:
+                    d = ns[base + off] - s[base + off]
+                    counts.setdefault((t.action, off, sig), Counter())[d] += 1
+        # Adopt the modal delta per (action, dynamic_offset, context_signature) that
+        # clears the dominance floor. Keys with no dominant mode are omitted (identity).
+        adopted: dict = {}
+        for key, counter in counts.items():
+            total = sum(counter.values())
+            if total == 0:
+                continue
+            best_delta, best_count = min(
+                counter.items(), key=lambda kv: (-kv[1], abs(kv[0]), kv[0])
+            )
+            if best_count / total >= self.min_dominance:
+                adopted[key] = best_delta
+
+        period, dynamic, context = self.period, self.dynamic, self.context
+
+        def program(s, a, _table=table, _adopted=adopted):
+            key = (s, a)
+            if key in _table:
+                return _table[key]  # observed -> EXACT (never worse than the table floor)
+            if not (isinstance(s, tuple) and len(s) > 0 and len(s) % period == 0):
+                return s            # not block-structured -> identity
+            if not ContextConditionedModalSynthesizer._all_numeric(s):
+                return s            # non-numeric slot -> whole-state identity (honest)
+            out = list(s)
+            nblocks = len(s) // period
+            for b in range(nblocks):
+                base = b * period
+                sig = tuple(s[base + off] for off in context)
+                for off in dynamic:
+                    delta = _adopted.get((a, off, sig))
+                    if delta is not None:
+                        out[base + off] = s[base + off] + delta
+                    # context slots (and unruled dynamic slots) pass through unchanged
+            return tuple(out)       # context-conditioned modal deltas -> GENERALIZE to unseen
+
+        return WorldModel(program)
+
+
 def synthesize_until_consistent(
     buffer: TransitionBuffer,
     model: WorldModel,
