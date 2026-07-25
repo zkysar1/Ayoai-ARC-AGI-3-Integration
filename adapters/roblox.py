@@ -56,7 +56,7 @@ from __future__ import annotations
 import heapq
 import math
 from dataclasses import dataclass
-from typing import Callable, Mapping, Optional, Sequence, cast
+from typing import Mapping, Optional, Sequence, cast
 
 from adapters.base import (
     Decision,
@@ -69,6 +69,7 @@ from adapters.base import (
 )
 from adapters.episode import run_exploration_episode as _run_shared_episode
 from primitives.frontier_coverage import Cell
+from primitives.learned_displacement import LearnedDisplacementModel
 
 Vec3 = tuple[float, float, float]
 
@@ -294,7 +295,7 @@ class RobloxWorldBuilder:
 # --------------------------------------------------------------------------- #
 # Slot 2 -- ProximityModel (variance-absorbing action adapter).                 #
 # --------------------------------------------------------------------------- #
-class RobloxProximityModel:
+class RobloxProximityModel(LearnedDisplacementModel):
     """PATH-distance + the learned-displacement projection seam (Plan 7.2.A ProximityModel).
 
     distance(a, b) is Dijkstra over the WorldBuilder navigation graph (edges already
@@ -308,8 +309,8 @@ class RobloxProximityModel:
     def __init__(self, *, cell_size: float = 4.0) -> None:
         if cell_size <= 0.0:
             raise ValueError("cell_size must be positive")
+        super().__init__()  # seeds self._displacement (the shared learned-displacement seam)
         self._cell_size = cell_size
-        self._displacement: dict[int, Cell] = {}
         self._units_by_id: dict[str, Unit] = {}
 
     # ---- cell quantization (XZ -> integer Cell, matching FrontierCoverage.Cell) ----
@@ -319,28 +320,9 @@ class RobloxProximityModel:
             int(math.floor(position[2] / self._cell_size)),
         )
 
-    # ---- learned displacement model (primitive-side memory) ----
-    def record_effect(self, action: int, from_cell: Cell, to_cell: Cell) -> None:
-        """Observe that `action` moved the NPC from_cell -> to_cell (learn its delta)."""
-        delta = (to_cell[0] - from_cell[0], to_cell[1] - from_cell[1])
-        # Only record a real displacement; a no-op move teaches nothing about the
-        # action's intended effect (and would poison projection with a (0,0) delta).
-        if delta != (0, 0) or action not in self._displacement:
-            self._displacement[action] = delta
-
-    def learned_actions(self) -> set[int]:
-        return set(self._displacement)
-
-    def project_from(self, cell: Cell) -> Callable[[int], Optional[Cell]]:
-        """Return the projection seam project(action)->Cell|None anchored at `cell`."""
-
-        def project(action: int) -> Optional[Cell]:
-            delta = self._displacement.get(action)
-            if delta is None:
-                return None  # never observed -> skipped (bootstraps via calibration)
-            return (cell[0] + delta[0], cell[1] + delta[1])
-
-        return project
+    # ---- learned-displacement seam (record_effect / learned_actions / project_from) is
+    #      inherited from primitives.learned_displacement.LearnedDisplacementModel
+    #      (g-315-449; byte-identical across all 4 adapters, hoisted per g-315-448/rb-4880) ----
 
     # ---- path-distance (Plan 7.2.A signature: distance(unitA, unitB)) ----
     def set_units(self, units: Sequence[Unit]) -> None:
