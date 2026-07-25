@@ -110,6 +110,125 @@ class TableSynthesizer:
         return WorldModel(lambda s, a: table.get((s, a), s))
 
 
+def _numeric_tuple_delta(state, next_state):
+    """Component-wise ``next_state[i] - state[i]`` when BOTH are same-arity,
+    non-empty tuples of real numbers (``int``/``float``, but NOT ``bool`` -- in
+    Python ``True`` is an ``int`` and must never be treated as a coordinate).
+    Returns ``None`` for any other shape (opaque scalars, nested/grid
+    tuple-of-tuples, ragged arity). That ``None`` is how the synthesizer
+    DEGRADES to the memorize-only table on non-coordinate encodings instead of
+    inventing a delta -- the env-agnostic escape hatch (rb-4569)."""
+    if (not isinstance(state, tuple) or not isinstance(next_state, tuple)
+            or len(state) == 0 or len(state) != len(next_state)):
+        return None
+    delta = []
+    for a, b in zip(state, next_state):
+        if (not isinstance(a, (int, float)) or isinstance(a, bool)
+                or not isinstance(b, (int, float)) or isinstance(b, bool)):
+            return None
+        delta.append(b - a)
+    return tuple(delta)
+
+
+def _apply_numeric_delta(state, delta):
+    """``state + delta`` component-wise when ``state`` is a same-arity, non-empty
+    numeric tuple; ``None`` otherwise (so an unseen state whose shape does not
+    match the learned rule falls through to IDENTITY rather than raising)."""
+    if not isinstance(state, tuple) or len(state) == 0 or len(state) != len(delta):
+        return None
+    out = []
+    for a, d in zip(state, delta):
+        if not isinstance(a, (int, float)) or isinstance(a, bool):
+            return None
+        out.append(a + d)
+    return tuple(out)
+
+
+class GeneralizingSynthesizer:
+    """Deterministic (non-LLM) rule-INDUCING synthesizer -- the tiny-compute v1 of
+    the ``WorldModelSynthesizer`` seam, one honest step beyond ``TableSynthesizer``
+    (this module's docstring: "a symbolic synthesizer is another" implementation).
+
+    ``TableSynthesizer`` MEMORIZES ``(state, action) -> next_state`` and falls back
+    to IDENTITY on unseen pairs -- it never GENERALIZES. This synthesizer
+    additionally INDUCES, per action, the most general CONSISTENT structural rule
+    that maps ``state -> next_state``: currently a constant component-wise integer
+    DELTA on numeric-tuple states (the canonical navigation dynamic -- an action
+    that TRANSLATES the actor by a fixed vector regardless of position). When every
+    observed transition for an action agrees on ONE delta, that delta is
+    EXTRAPOLATED to UNSEEN states under that action; the induced program still
+    returns the memorized table value on OBSERVED pairs (exact) and identity where
+    no rule was learned.
+
+    Strict relationship to ``TableSynthesizer`` (design invariant): on OBSERVED
+    ``(state, action)`` pairs the program returns the memorized ``next_state``
+    EXACTLY -- identical to ``TableSynthesizer`` there, so it NEVER regresses on the
+    buffer and keeps ``explains_all`` for a self-consistent deterministic buffer
+    (``synthesize_until_consistent`` still converges in ONE round). It differs ONLY
+    on UNSEEN pairs, where a learned per-action delta EXTRAPOLATES instead of the
+    table's identity fallback. That extrapolation is a BET: on translation-invariant
+    dynamics (open navigation) it is correct and BEATS the identity floor; on
+    boundary/collision dynamics (a wall the actor cannot cross) it can over-shoot a
+    no-op that identity would have matched, so NET held-out accuracy vs the table
+    floor is an EMPIRICAL question the offline corpus measures. This IS the
+    SYNTHESIZED-over-INHERITED dynamic (rb-4560): the navigation delta is LEARNED
+    from the buffer, not a fixed ``reach_cell`` prior.
+
+    Induction is STRICT (no modal heuristic in v0): a delta is adopted for an
+    action ONLY when EVERY observed transition for it is a numeric-tuple pair AND
+    they UNANIMOUSLY agree on one delta. Any mixed shape or any disagreement (e.g.
+    a bounded grid where interior moves shift by (-1,0) but a boundary move is a
+    (0,0) no-op) leaves the action with NO rule -> it DEGRADES to the memorize-only
+    table (ties ``TableSynthesizer``, never worse on those actions). The honest v0
+    limit: strict unanimity means collision-bearing dynamics learn nothing until a
+    future robust/modal inducer; a clean translation-invariant buffer generalizes
+    fully.
+
+    Env-AGNOSTIC (rb-4569): carries NO env constant and NO game-model assumption --
+    only a WEAK, generic STRUCTURAL assumption (states MAY be numeric tuples),
+    applied ONLY where that structure is present and consistent; otherwise it is
+    exactly ``TableSynthesizer``. DETERMINISTIC (no LLM / no RNG -- tiny-compute
+    hot-path fit, self.md "math first for the hot path"). guard-660: proves
+    generalization OFFLINE, never a live score. Stateless: the buffer is the sole
+    ground truth, rebuilt each call, so the current ``model`` argument is ignored
+    (the Protocol permits it)."""
+
+    def synthesize(self, buffer: TransitionBuffer, model: WorldModel) -> WorldModel:
+        table: dict = {}
+        observed_deltas: dict = {}      # action -> set of per-transition deltas
+        action_has_nontuple: dict = {}  # action -> saw a non-numeric-tuple transition
+        for t in buffer:
+            # Memorized table: exact on observed pairs -- the TableSynthesizer floor.
+            table[(t.state, t.action)] = t.next_state
+            d = _numeric_tuple_delta(t.state, t.next_state)
+            if d is None:
+                action_has_nontuple[t.action] = True
+            else:
+                observed_deltas.setdefault(t.action, set()).add(d)
+        # Adopt a per-action constant delta ONLY under strict unanimity: every
+        # observed transition for the action is a numeric-tuple pair AND they all
+        # agree on one delta. Otherwise no rule -> degrade to table for that action.
+        deltas: dict = {}
+        for action, dset in observed_deltas.items():
+            if action_has_nontuple.get(action):
+                continue           # mixed shapes -> no rule (degrade to table)
+            if len(dset) == 1:
+                deltas[action] = next(iter(dset))
+
+        def program(s, a, _table=table, _deltas=deltas):
+            key = (s, a)
+            if key in _table:
+                return _table[key]  # observed -> EXACT (never worse than the table floor)
+            delta = _deltas.get(a)
+            if delta is not None:
+                extrapolated = _apply_numeric_delta(s, delta)
+                if extrapolated is not None:
+                    return extrapolated  # learned rule -> GENERALIZE to unseen (state, action)
+            return s                # no applicable rule -> identity fallback
+
+        return WorldModel(program)
+
+
 def synthesize_until_consistent(
     buffer: TransitionBuffer,
     model: WorldModel,
