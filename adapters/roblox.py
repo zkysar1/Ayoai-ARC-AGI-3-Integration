@@ -70,6 +70,7 @@ from adapters.base import (
 from adapters.episode import run_exploration_episode as _run_shared_episode
 from primitives.frontier_coverage import Cell
 from primitives.learned_displacement import LearnedDisplacementModel
+from adapters.transport_executor import TransportExecutor
 
 Vec3 = tuple[float, float, float]
 
@@ -360,7 +361,7 @@ class RobloxProximityModel(LearnedDisplacementModel):
 # --------------------------------------------------------------------------- #
 # Slot 3 -- Executor (action adapter + Vocabulary).                             #
 # --------------------------------------------------------------------------- #
-class RobloxExecutor:
+class RobloxExecutor(TransportExecutor[Vec3]):
     """Behavior-tree move-toward action space + execute (Plan 7.2.A Executor slot).
 
     declare_actions() is the Vocabulary of move-toward tasks (a discrete set of
@@ -369,38 +370,19 @@ class RobloxExecutor:
     retrySafe}. Every FrontierCoverage Decision MUST exit here -- that is what keeps
     decided_by routing intact (gate 2). The transport is injected so the SAME
     Executor drives a simulated world (tests) or the live AyoBridge BT dispatch.
+
+    The Executor skeleton -- __init__ / declare_actions / execute / position /
+    world_state -- is INHERITED from adapters.transport_executor.TransportExecutor
+    (g-315-454; byte-near-identical across all 4 adapters, hoisted per rb-4884). roblox
+    supplies only its reason vocabulary via the three class attributes below, so the
+    inherited execute() emits the identical strings it always has ("... not in declared
+    move-toward space" / "moved" / "blocked"). roblox aliases Transport[Vec3] cleanly, so
+    RobloxExecutor(TransportExecutor[Vec3]) specializes the base with position() -> Vec3.
     """
 
-    def __init__(self, *, transport: MoveTransport, actions: Sequence[int]) -> None:
-        if not actions:
-            raise ValueError("Executor needs a non-empty action space")
-        self._transport = transport
-        self._actions = list(actions)
-
-    def declare_actions(self) -> list[int]:
-        return list(self._actions)
-
-    def execute(self, decision: Decision) -> Result:
-        if decision.action not in self._actions:
-            return Result(
-                outcome="fail",
-                reason=f"action {decision.action} not in declared move-toward space",
-                retry_safe=False,
-            )
-        try:
-            ok, reason = self._transport.move(decision.action)
-        except Exception as exc:  # transport failure -> unknown (Q10: fail:unconfirmed)
-            return Result(outcome="fail", reason=f"transport error: {exc}", retry_safe=False)
-        if ok:
-            return Result(outcome="success", reason=reason or "moved", retry_safe=True)
-        # A refused move (blocked by geometry) is safe to retry from a new pose.
-        return Result(outcome="fail", reason=reason or "blocked", retry_safe=True)
-
-    def position(self) -> Vec3:
-        return self._transport.position()
-
-    def world_state(self) -> Mapping[str, object]:
-        return self._transport.world_state()
+    _label_action_space = "move-toward space"
+    _reason_effective = "moved"
+    _reason_ineffective = "blocked"
 
 
 # --------------------------------------------------------------------------- #
