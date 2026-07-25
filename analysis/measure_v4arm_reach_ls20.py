@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+"""End-to-end V4Arm planner-reach A/B: does the DEPLOYED v2 synthesizer give the
+V4Arm PLANNER reach that the v0 memorize-floor cannot? (g-315-501; g-315-500 follow-up)
+
+g-315-500 wired a config-selectable synthesizer into production V4Arm
+(SOLVER_V2_V4_SYNTH; TableSynthesizer=v0 vs SlotwiseModalSynthesizer=v2). g-315-496/497/498
+measured per-STEP prediction accuracy (v2 0.199 vs table 0.168 at step 1). This harness
+measures the thing that actually matters for PLAY: end-to-end PLANNER REACH — does the
+better world model let the bounded forward-search planner reach goals the v0 floor cannot?
+
+WHY reach, not per-step accuracy: production wires the synthesizer into V4Arm, whose value
+is the PLANNER (v4_arm.py:111 `plan(self.model.predict, ...)`), not raw one-step prediction.
+A synthesizer earns its keep iff it expands the set of goals the planner can REACH.
+
+WHY offline (not live): immediately executable, no ≥12min Collect rate-limit, and it
+isolates the synthesizer swap as the ONLY variable across the 12 real ls20 recordings.
+The LIVE arm (SOLVER_V2_V4_ARM=1) is gated behind the score-0 wall (no ls20 recording has a
+reward-state, so V4Arm's reward-recognizer goal_predicate is always empty → the arm always
+degrades to fallback → v0==v2 live; g-315-446). This offline test uses a SYNTHETIC reach
+goal (the actual state H steps ahead), which the score-0 wall does NOT gate — it exercises
+the planner+synthesizer directly, not the reward recognizer.
+
+OFFLINE FIDELITY (the load-bearing design choice): feeding a fixed recording through
+`arm.step()` would CORRUPT the buffer — step observes (state, ARM'S chosen action, next
+state I feed), but the arm's action != the recording's actual action, so the transition
+label is wrong. So we build the TransitionBuffer from the recording's ACTUAL (s,a,s')
+transitions (the training portion) and synthesize via V4Arm's OWN
+`synthesize_until_consistent` (v4_arm.py:104). Table/modal synthesis is order-independent,
+so batch-from-training-buffer == the incremental model the arm would hold after the training
+portion. We then call `model_planner.plan` (v4_arm.py:111, THE planner V4Arm.step invokes)
+with each synthesizer's model. This is the FULL V4Arm loop's two load-bearing internals
+(synthesize + plan) exercised faithfully; the only thing dropped is closed-loop `act`, which
+offline (a fixed recording, no environment to apply arbitrary planned actions to) is
+impossible — and irrelevant to a REACH measure (reach = "does a plan exist under the model").
+
+THE METRIC — planner-reach coverage at horizon H (H=1,2,3):
+  For each held-out test window (start state s[i]), synthetic goal = the ACTUAL state H
+  steps ahead (s[i+H]); is_goal(s) := (s == s[i+H]). Does plan(model.predict, s[i], is_goal,
+  actions, horizon=H) find an action sequence whose model-predicted terminal state reaches
+  the goal?
+  - v0 (TableSynthesizer, memorize floor): predict(s,a)=memorized next on a SEEN (s,a),
+    else IDENTITY (s unchanged). Held-out test starts are unseen → identity → every action
+    self-loops → the planner's visited-set prunes them → reach ~0 on MOVING windows.
+  - v2 (SlotwiseModalSynthesizer, per-(action,arity,slot) modal delta): EXTRAPOLATES the
+    learned motion to unseen states → the planner composes the modal deltas over H steps to
+    navigate to the goal → reach > 0.
+  The reach-rate DELTA (v2 - v0) IS the end-to-end answer: does the deployed v2 improve
+  planning REACH, not merely per-step accuracy.
+
+Secondary signal — first-action alignment: among reached windows, does the plan's FIRST
+action match the recording's actual action[i]? A directional plan-QUALITY signal (v2's plans
+aren't just more numerous, they start with the right move), NOT a strict correctness proof
+(the planner may reach the same state via a different equally-short path).
+
+Run: PYTHONPATH=/opt/Ayoai-ARC-AGI-3-Integration .venv/bin/python analysis/measure_v4arm_reach_ls20.py 12 3
+"""
+from __future__ import annotations
+
+import glob
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(__file__))
+from measure_seam_real_ls20 import REC_DIR, load_frames  # noqa: E402
+
+from solver_v2.frame_coordinate_state import FrameCoordinateDecomposer  # noqa: E402
+
+from primitives.model_planner import plan  # noqa: E402
+from primitives.synthesized_world_model import TransitionBuffer, WorldModel  # noqa: E402
+from primitives.v4_arm import V4Arm  # noqa: E402
+from primitives.world_model_synthesizer import (  # noqa: E402
+    SlotwiseModalSynthesizer,
+    TableSynthesizer,
+    synthesize_until_consistent,
+)
+
+MAX_EXPANSIONS = 10_000  # planner budget; |actions|^H << this for H<=3, so never the binding limit
+
+
+def build_models(states, actions, valid, k, min_dominance=0.5):
+    """Build v0 (table/memorize floor) + v2 (slotwise modal) from the training-portion
+    ACTUAL transitions, via V4Arm's own synthesize_until_consistent (v4_arm.py:104) — so the
+    models are exactly what the arm would hold after processing the training portion (modal /
+    table synthesis is order-independent → batch == incremental for the final model)."""
+    b = TransitionBuffer()
+    for j in range(k):
+        if valid[j]:
+            b.observe(states[j], actions[j], states[j + 1])
+    v0 = synthesize_until_consistent(b, WorldModel(), TableSynthesizer())
+    v2 = synthesize_until_consistent(
+        b, WorldModel(), SlotwiseModalSynthesizer(min_dominance=min_dominance)
+    )
+    return v0, v2
+
+
+def measure_one(path, max_h=3, split=0.8, min_dominance=0.5, terrain_top_n=2):
+    frames = load_frames(path)
+    M = len(frames)
+    if M < 8:
+        return None
+    # v0/v2 are CONTEXT-FREE → the plain 2-slot position decompose (no wall context).
+    dec = FrameCoordinateDecomposer(terrain_top_n=terrain_top_n)
+    states = []
+    for flat, w, _a, reset in frames:
+        if reset:
+            dec.reset()
+        states.append(dec.decompose(flat, w))
+
+    actions = [None] * (M - 1)
+    valid = [False] * (M - 1)
+    for j in range(M - 1):
+        na, nr = frames[j + 1][2], frames[j + 1][3]
+        actions[j] = na
+        valid[j] = (not nr) and (na not in (None, "RESET"))
+
+    # The planner's opaque action set = the distinct valid actions the recording uses.
+    action_set = sorted({a for a, v in zip(actions, valid) if v}, key=str)
+    if not action_set:
+        return None
+
+    k = int((M - 1) * split)
+    v0, v2 = build_models(states, actions, valid, k, min_dominance)
+
+    reach = {"v0": [0] * max_h, "v2": [0] * max_h}
+    firstok = {"v0": [0] * max_h, "v2": [0] * max_h}
+    denom = [0] * max_h
+
+    # Test-portion windows: transitions i..i+max_h-1 all valid.
+    for i in range(k, (M - 1) - max_h + 1):
+        if not all(valid[i + t] for t in range(max_h)):
+            continue
+        for h in range(1, max_h + 1):
+            goal_state = states[i + h]
+            if goal_state == states[i]:
+                continue  # trivial (goal == start): plan() returns () for BOTH → uninformative
+            denom[h - 1] += 1
+            is_goal = (lambda gs: (lambda s: s == gs))(goal_state)
+            p0 = plan(v0.predict, states[i], is_goal, action_set, horizon=h,
+                      max_expansions=MAX_EXPANSIONS)
+            p2 = plan(v2.predict, states[i], is_goal, action_set, horizon=h,
+                      max_expansions=MAX_EXPANSIONS)
+            if p0 is not None:
+                reach["v0"][h - 1] += 1
+                if p0 and p0[0] == actions[i]:
+                    firstok["v0"][h - 1] += 1
+            if p2 is not None:
+                reach["v2"][h - 1] += 1
+                if p2 and p2[0] == actions[i]:
+                    firstok["v2"][h - 1] += 1
+
+    if all(d == 0 for d in denom):
+        return None
+
+    def rate(counts):
+        return [round(counts[t] / denom[t], 3) if denom[t] else 0.0 for t in range(max_h)]
+
+    return {
+        "path": os.path.basename(path)[:40],
+        "denom": denom,
+        "reach_v0": rate(reach["v0"]),
+        "reach_v2": rate(reach["v2"]),
+        "firstok_v0": rate(firstok["v0"]),
+        "firstok_v2": rate(firstok["v2"]),
+        "action_set_size": len(action_set),
+    }
+
+
+def confirm_via_arm(path, split=0.8, min_dominance=0.5, terrain_top_n=2, horizon=3):
+    """Nail the check: drive the ACTUAL production V4Arm.step() (not just its internals),
+    proving the reach delta above IS what the deployed arm does. For a window where the
+    reach A/B differs, seed a v0-arm and a v2-arm with the model the arm would hold after
+    the training portion (buffer = training transitions, model = synthesize_until_consistent
+    — exactly step()'s line-104 output; _pending=None so the first step() plans immediately),
+    then call arm.step(s[i], is_goal, actions, fallback). The v2-arm returns a PLANNED action
+    (non-fallback) where the v0-arm degrades to the fallback — the strict-superset behavior
+    the aggregate 12/12 measures, here observed through the real class."""
+    frames = load_frames(path)
+    M = len(frames)
+    dec = FrameCoordinateDecomposer(terrain_top_n=terrain_top_n)
+    states = []
+    for flat, w, _a, reset in frames:
+        if reset:
+            dec.reset()
+        states.append(dec.decompose(flat, w))
+    actions = [None] * (M - 1)
+    valid = [False] * (M - 1)
+    for j in range(M - 1):
+        na, nr = frames[j + 1][2], frames[j + 1][3]
+        actions[j] = na
+        valid[j] = (not nr) and (na not in (None, "RESET"))
+    action_set = sorted({a for a, v in zip(actions, valid) if v}, key=str)
+    k = int((M - 1) * split)
+
+    b = TransitionBuffer()
+    for j in range(k):
+        if valid[j]:
+            b.observe(states[j], actions[j], states[j + 1])
+
+    def make_arm(synth):
+        arm = V4Arm(synth, horizon=horizon)
+        # Seed the arm with the model + buffer it would hold after the training portion —
+        # bypassing step()'s action-choosing (which offline would mislabel transitions).
+        arm.buffer = b
+        arm.model = synthesize_until_consistent(b, WorldModel(), synth)
+        return arm
+
+    FALLBACK = "__FALLBACK__"  # a sentinel NOT in action_set → an unambiguous "arm fell back" tell
+    # Find a window where v2 reaches an h=horizon goal and v0 does not, and drive both arms.
+    v0m = synthesize_until_consistent(b, WorldModel(), TableSynthesizer())
+    v2m = synthesize_until_consistent(b, WorldModel(), SlotwiseModalSynthesizer(min_dominance=min_dominance))
+    for i in range(k, (M - 1) - horizon + 1):
+        if not all(valid[i + t] for t in range(horizon)):
+            continue
+        goal = states[i + horizon]
+        if goal == states[i]:
+            continue
+        is_goal = lambda s: s == goal
+        p0 = plan(v0m.predict, states[i], is_goal, action_set, horizon=horizon, max_expansions=MAX_EXPANSIONS)
+        p2 = plan(v2m.predict, states[i], is_goal, action_set, horizon=horizon, max_expansions=MAX_EXPANSIONS)
+        if p2 is not None and p0 is None:
+            a0 = make_arm(TableSynthesizer()).step(states[i], is_goal, action_set, FALLBACK)
+            a2 = make_arm(SlotwiseModalSynthesizer(min_dominance=min_dominance)).step(
+                states[i], is_goal, action_set, FALLBACK)
+            print(f"\n=== V4Arm.step() confirmation ({os.path.basename(path)[:40]}, window i={i}, H={horizon}) ===")
+            print(f"  v0-arm.step() -> {a0!r}   (fallback? {a0 == FALLBACK})")
+            print(f"  v2-arm.step() -> {a2!r}   (fallback? {a2 == FALLBACK})")
+            ok = (a0 == FALLBACK) and (a2 != FALLBACK)
+            print(f"  EXPECTED: v0 falls back, v2 plans a real action -> {'CONFIRMED' if ok else 'UNEXPECTED'}")
+            return ok
+    print("\n=== V4Arm.step() confirmation: no differing window found in this recording (skipped) ===")
+    return None
+
+
+def main(argv):
+    paths = sorted(glob.glob(os.path.join(REC_DIR, "*.recording.jsonl")))
+    if not paths:
+        print("no recordings found in", REC_DIR)
+        return 1
+    limit = int(argv[0]) if len(argv) > 0 else 12
+    max_h = int(argv[1]) if len(argv) > 1 else 3
+    paths = paths[:limit]
+    rows = []
+    for p in paths:
+        try:
+            r = measure_one(p, max_h=max_h)
+            if r:
+                rows.append(r)
+        except Exception as e:  # noqa: BLE001 -- one bad recording must not sink the sweep
+            print(f"  SKIP {os.path.basename(p)[:40]}: {type(e).__name__}: {e}")
+    if not rows:
+        print("no measurable recordings")
+        return 1
+
+    last = max_h - 1
+    print(f"{'recording':40} {'win':>4} {'as':>3} "
+          f"{'reachV0@'+str(max_h):>9} {'reachV2@'+str(max_h):>9} {'delta':>6}")
+    for r in rows:
+        d = round(r["reach_v2"][last] - r["reach_v0"][last], 3)
+        print(f"{r['path']:40} {r['denom'][last]:>4} {r['action_set_size']:>3} "
+              f"{r['reach_v0'][last]:>9} {r['reach_v2'][last]:>9} {d:>+6}")
+
+    def mean(key, t):
+        # denom-weighted mean across recordings (a recording with more windows counts more).
+        num = sum(r[key][t] * r["denom"][t] for r in rows)
+        den = sum(r["denom"][t] for r in rows)
+        return round(num / den, 3) if den else 0.0
+
+    print(f"\n=== AGGREGATE (n={len(rows)} recordings, window-weighted, MOVING+non-trivial windows) ===")
+    print(f"  {'H':>3} {'reach_v0':>9} {'reach_v2':>9} {'delta':>7} "
+          f"{'first_v0':>9} {'first_v2':>9} {'windows':>8}")
+    for t in range(max_h):
+        h = t + 1
+        rv0, rv2 = mean("reach_v0", t), mean("reach_v2", t)
+        f0, f2 = mean("firstok_v0", t), mean("firstok_v2", t)
+        win = sum(r["denom"][t] for r in rows)
+        print(f"  {h:>3} {rv0:>9} {rv2:>9} {round(rv2-rv0,3):>+7} {f0:>9} {f2:>9} {win:>8}")
+
+    # THE GATE: does the deployed v2 give the planner strictly more reach than the v0 floor?
+    v2_gt_v0 = sum(1 for r in rows if r["reach_v2"][last] > r["reach_v0"][last])
+    v2_ge_v0 = sum(1 for r in rows if r["reach_v2"][last] >= r["reach_v0"][last])
+    v2_reach_pos = sum(1 for r in rows if r["reach_v2"][last] > 0.0)
+    v0_reach_pos = sum(1 for r in rows if r["reach_v0"][last] > 0.0)
+    print(f"\n  THE GATE (does the deployed v2 improve planner REACH) at H={max_h}:")
+    print(f"    v2 reach > v0 reach: {v2_gt_v0}/{len(rows)}")
+    print(f"    v2 reach >= v0 reach (never worse — strict-superset floor): {v2_ge_v0}/{len(rows)}")
+    print(f"    v2 reaches >0 goals: {v2_reach_pos}/{len(rows)}  |  v0 reaches >0 goals: {v0_reach_pos}/{len(rows)}")
+    print(f"    mean reach@{max_h}: v0={mean('reach_v0',last)} v2={mean('reach_v2',last)} "
+          f"(delta {round(mean('reach_v2',last)-mean('reach_v0',last),3):+})")
+
+    # Nail the check: drive the ACTUAL V4Arm.step() on a differing window (first recording
+    # that has one) — confirms the reach delta is what the deployed arm does, not just its
+    # extracted internals.
+    for p in paths:
+        result = confirm_via_arm(p, horizon=max_h)
+        if result is not None:
+            break
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
