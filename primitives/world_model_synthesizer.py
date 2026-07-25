@@ -44,6 +44,7 @@ keeps this offline-provable.
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Protocol, runtime_checkable
 
 from primitives.synthesized_world_model import TransitionBuffer, WorldModel
@@ -225,6 +226,127 @@ class GeneralizingSynthesizer:
                 if extrapolated is not None:
                     return extrapolated  # learned rule -> GENERALIZE to unseen (state, action)
             return s                # no applicable rule -> identity fallback
+
+        return WorldModel(program)
+
+
+class SlotwiseModalSynthesizer:
+    """Deterministic (non-LLM) PER-OBJECT rule-inducing synthesizer -- the tiny-compute
+    v2 of the ``WorldModelSynthesizer`` seam, the step past ``GeneralizingSynthesizer``
+    that real ls20 dynamics EMPIRICALLY FORCE (g-315-493 / rb-5037).
+
+    ``GeneralizingSynthesizer`` induces ONE constant delta for the WHOLE state tuple
+    under STRICT unanimity. On real ls20 recordings that degrades EXACTLY to the table
+    floor (``gen_acc == tab_acc`` on 12/12 recordings, rb-5037) for two compounding
+    reasons the per-slot probe isolated:
+
+      1. WRONG GRANULARITY -- whole-tuple unanimity needs ALL ~32 slots to agree, but
+         only 4-7 vary while 25-28 are consistently static; a single varying slot
+         breaks whole-tuple unanimity every time, so NO rule is ever learned.
+      2. WRONG ROBUSTNESS -- the one moving slot's delta is BIMODAL (an action moves
+         the object by a fixed vector on a clear path but is a ``(0,0)`` no-op on a
+         wall-collision); strict unanimity sees >=2 deltas and adopts none.
+
+    This synthesizer fixes BOTH by inducing a delta PER SLOT (per object coordinate)
+    and adopting the DOMINANT (modal) delta rather than requiring unanimity:
+
+      - PER-SLOT: each slot index learns its own delta independently, so the 25-28
+        static slots each learn delta 0 (100% dominant) and the few moving slots each
+        learn their own vector -- the whole-tuple-unanimity requirement that zeroed v1
+        is gone.
+      - MODAL + DOMINANCE: for each ``(action, arity, slot)`` the adopted delta is the
+        most common one, and ONLY when its share of observations is >= ``min_dominance``
+        (default 0.5). The collision no-op is the MINORITY mode for a moving slot, so
+        the actual move is adopted; a genuinely noisy slot with no dominant mode gets
+        NO rule and stays identity (honest degradation -- never inventing motion on
+        ambiguous evidence).
+
+    This is OPINE-World's "transition_function PER OBJECT TYPE" (self.md L64-67) in the
+    tiny-compute deterministic form: the state IS the per-object coordinate tuple (the
+    g-315-492 seam produces it), and each slot's modal delta IS that object's learned
+    transition under the action. rb-4560's SYNTHESIZED-over-INHERITED dynamic, now at
+    per-object granularity -- the exact lever the g-315-493 measurement NAMED, not assumed.
+
+    Strict relationship to the floor (design invariant, preserved): on OBSERVED
+    ``(state, action)`` pairs the program returns the memorized ``next_state`` EXACTLY
+    (the ``TableSynthesizer`` floor) -- it NEVER regresses on the buffer and keeps
+    ``explains_all`` for a self-consistent deterministic buffer, so
+    ``synthesize_until_consistent`` still converges in ONE round. It differs only on
+    UNSEEN pairs, where per-slot modal deltas EXTRAPOLATE. Rules are keyed by
+    ``(action, ARITY)``: a learned rule applies only to an unseen state whose object
+    count matches, so an arity shift degrades to identity for that state rather than
+    mis-indexing across a different object layout.
+
+    Env-AGNOSTIC (rb-4569): the only assumption is the same WEAK generic structural one
+    ``GeneralizingSynthesizer`` makes (states MAY be numeric tuples), applied per slot
+    only where present; otherwise exactly ``TableSynthesizer``. DETERMINISTIC (no LLM /
+    no RNG -- modal ties broken by a ``(-count, abs(delta), delta)`` sort, never
+    ``Math.random`` -- so the hot-path fit and offline-reproducibility hold; self.md
+    "math first for the hot path"). guard-660: proves per-object generalization
+    OFFLINE, never a live score. Stateless: the buffer is the sole ground truth,
+    rebuilt each call, so the current ``model`` argument is ignored (the Protocol
+    permits it)."""
+
+    def __init__(self, *, min_dominance: float = 0.5) -> None:
+        # A slot's modal delta is adopted only when its share of that
+        # (action, arity, slot)'s observations reaches min_dominance. 0.5 = "at least
+        # half agree" -- the bimodal move/collision case adopts the majority move; a
+        # slot with no dominant mode stays identity. 0.0 would adopt any plurality (a
+        # weaker bet); 1.0 collapses back to GeneralizingSynthesizer's per-slot unanimity.
+        self.min_dominance = min_dominance
+
+    def synthesize(self, buffer: TransitionBuffer, model: WorldModel) -> WorldModel:
+        table: dict = {}
+        slot_delta_counts: dict = {}   # (action, arity) -> [Counter per slot index]
+        for t in buffer:
+            # Memorized table: exact on observed pairs -- the TableSynthesizer floor.
+            table[(t.state, t.action)] = t.next_state
+            d = _numeric_tuple_delta(t.state, t.next_state)
+            if d is None:
+                continue           # non-coordinate encoding -> contributes only to the table
+            key = (t.action, len(d))
+            counters = slot_delta_counts.get(key)
+            if counters is None:
+                counters = [Counter() for _ in range(len(d))]
+                slot_delta_counts[key] = counters
+            for i, di in enumerate(d):
+                counters[i][di] += 1
+        # Adopt, per (action, arity), the modal delta for each slot that clears the
+        # dominance floor. Slots with no dominant mode are omitted (identity for them).
+        adopted: dict = {}         # (action, arity) -> {slot_index: delta}
+        for key, counters in slot_delta_counts.items():
+            slot_rules: dict = {}
+            for i, counter in enumerate(counters):
+                total = sum(counter.values())
+                if total == 0:
+                    continue
+                # Deterministic mode: highest count; ties -> smallest |delta| then delta.
+                best_delta, best_count = min(
+                    counter.items(), key=lambda kv: (-kv[1], abs(kv[0]), kv[0])
+                )
+                if best_count / total >= self.min_dominance:
+                    slot_rules[i] = best_delta
+            if slot_rules:
+                adopted[key] = slot_rules
+
+        def program(s, a, _table=table, _adopted=adopted):
+            key = (s, a)
+            if key in _table:
+                return _table[key]  # observed -> EXACT (never worse than the table floor)
+            if not isinstance(s, tuple) or len(s) == 0:
+                return s            # non-tuple state -> identity
+            slot_rules = _adopted.get((a, len(s)))
+            if not slot_rules:
+                return s            # no per-slot rule at this arity -> identity
+            out = list(s)
+            for i, x in enumerate(s):
+                delta = slot_rules.get(i)
+                if delta is None:
+                    continue        # slot has no dominant rule -> identity for this slot
+                if not isinstance(x, (int, float)) or isinstance(x, bool):
+                    return s         # non-numeric slot at a ruled index -> whole-state identity (honest)
+                out[i] = x + delta
+            return tuple(out)       # per-slot modal deltas applied -> GENERALIZE to unseen
 
         return WorldModel(program)
 
