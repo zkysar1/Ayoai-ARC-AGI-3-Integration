@@ -673,7 +673,7 @@ def main() -> None:
         help=(
             "g-315-437: corridor-aware route coordinator in the movement "
             "StateGraphExplorer. g-315-436 found the ON solver's 2nd-half "
-            "en-route re-crossing concentrates ~70% in one emergent region "
+            "en-route re-crossing concentrates ~70%% in one emergent region "
             "band; when ON, _route_to_frontier adds a late-gated, bounded "
             "CorridorPenalty as a SECONDARY tie-break (key = (episodes_seen, "
             "depth, region_occupancy, action)) that prefers, among "
