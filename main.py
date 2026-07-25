@@ -1029,7 +1029,9 @@ def main() -> None:
             "yes",
         ):
             from primitives.v4_arm import V4Arm
-            from primitives.world_model_synthesizer import TableSynthesizer
+            from primitives.world_model_synthesizer import (
+                make_world_model_synthesizer,
+            )
 
             v4_history_k = int(os.environ.get("SOLVER_V2_V4_HISTORY_K", "3"))
             v4_goal_predicate = None
@@ -1082,9 +1084,27 @@ def main() -> None:
                     else "structural-tail",
                 )
 
+            # g-315-500: opt-in synthesizer selector. Default "v0" = the
+            # TableSynthesizer memorize-floor -- byte-identical to the prior
+            # hardcode, so the SOLVER_V2_V4_ARM strict-superset floor (L1019-1024)
+            # still holds when the arm is enabled with the default synth. g-315-499
+            # found production pinned to v0; "v2" (SlotwiseModalSynthesizer) is the
+            # deploy win -- CONTEXT-FREE, +37% over the floor at 1-step, and it holds
+            # ABOVE the v0 table at every rollout depth up to the horizon=4 the
+            # planner searches (rollout v2 0.199/0.126/0.128 vs table
+            # 0.168/0.090/0.106 at steps 1/2/3), with honest-degradation so it is
+            # NEVER below v0. The ARC object layout (r,c,wN,wE,wS,wW) is supplied
+            # HERE at the composition root; primitives/ stays env-agnostic (self.md
+            # gate 3). v0/v2 ignore the layout -- only v3 uses it.
+            v4_synth = make_world_model_synthesizer(
+                os.environ.get("SOLVER_V2_V4_SYNTH", "v0"),
+                period=6,
+                dynamic=(0, 1),
+                context=(2, 3, 4, 5),
+            )
             streaming_client.set_v4_arm(
                 V4Arm(
-                    TableSynthesizer(),
+                    v4_synth,
                     horizon=int(os.environ.get("SOLVER_V2_V4_HORIZON", "4")),
                 ),
                 goal_predicate=v4_goal_predicate,

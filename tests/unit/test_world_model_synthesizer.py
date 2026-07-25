@@ -12,11 +12,18 @@ driver carries no env semantics.
 
 from __future__ import annotations
 
+import pytest
+
 from primitives.model_planner import plan
 from primitives.synthesized_world_model import TransitionBuffer, WorldModel
 from primitives.world_model_synthesizer import (
+    ContextConditionedModalSynthesizer,
+    GeneralizingSynthesizer,
     NoOpSynthesizer,
+    SlotwiseModalSynthesizer,
+    TableSynthesizer,
     WorldModelSynthesizer,
+    make_world_model_synthesizer,
     synthesize_until_consistent,
 )
 
@@ -200,3 +207,62 @@ def test_driver_is_env_agnostic_tuple_state_encoding() -> None:
     out = synthesize_until_consistent(b, WorldModel(), synth)
     assert out.explains_all(b)
     assert synth.calls == 1
+
+
+# --------------------------------------------------------------------------- #
+# make_world_model_synthesizer: the env-agnostic v0/v1/v2/v3 config selector.  #
+# g-315-500 -- so a solver's composition root swaps synthesizers from config   #
+# (SOLVER_V2_V4_SYNTH) without a code edit; the ARC layout is INJECTED, so no  #
+# env literal lives in primitives/ (self.md gate 3).                          #
+# --------------------------------------------------------------------------- #
+
+
+def test_make_synthesizer_selects_each_variant() -> None:
+    """The selector maps each short name to the right synthesizer class -- v0/v1/v2
+    are context-free (no layout needed); v3 takes the caller-injected env layout."""
+    assert isinstance(make_world_model_synthesizer("v0"), TableSynthesizer)
+    assert isinstance(make_world_model_synthesizer("table"), TableSynthesizer)
+    assert isinstance(make_world_model_synthesizer("v1"), GeneralizingSynthesizer)
+    assert isinstance(make_world_model_synthesizer("generalizing"), GeneralizingSynthesizer)
+    assert isinstance(make_world_model_synthesizer("v2"), SlotwiseModalSynthesizer)
+    assert isinstance(make_world_model_synthesizer("slotwise"), SlotwiseModalSynthesizer)
+    v3 = make_world_model_synthesizer("v3", period=6, dynamic=(0, 1), context=(2, 3, 4, 5))
+    assert isinstance(v3, ContextConditionedModalSynthesizer)
+    assert isinstance(make_world_model_synthesizer("context", period=6, dynamic=(0, 1), context=(2, 3, 4, 5)),
+                      ContextConditionedModalSynthesizer)
+
+
+def test_make_synthesizer_defaults_and_is_case_insensitive() -> None:
+    """An empty / unrecognized name degrades to the honest v0 floor (never raises on a
+    bad selector -- honest-degradation), and names are case- and whitespace-insensitive."""
+    assert isinstance(make_world_model_synthesizer(""), TableSynthesizer)
+    assert isinstance(make_world_model_synthesizer("bogus"), TableSynthesizer)
+    assert isinstance(make_world_model_synthesizer("V2"), SlotwiseModalSynthesizer)
+    assert isinstance(make_world_model_synthesizer("  Slotwise  "), SlotwiseModalSynthesizer)
+
+
+def test_make_synthesizer_all_conform_to_protocol() -> None:
+    """Every selected instance is a structurally-valid WorldModelSynthesizer (the seam
+    V4Arm/synthesize_until_consistent consume) -- the selector cannot return a dud."""
+    for name in ("v0", "v1", "v2"):
+        assert isinstance(make_world_model_synthesizer(name), WorldModelSynthesizer)
+    v3 = make_world_model_synthesizer("v3", period=6, dynamic=(0, 1), context=(2, 3, 4, 5))
+    assert isinstance(v3, WorldModelSynthesizer)
+
+
+def test_make_synthesizer_v3_requires_injected_layout() -> None:
+    """v3 (context-conditioned) REQUIRES period/dynamic/context -- the caller injects the
+    env layout; primitives/ holds none. Missing layout is a loud ValueError, not a silent
+    wrong default (self.md gate 3 + fail-loud)."""
+    with pytest.raises(ValueError):
+        make_world_model_synthesizer("v3")
+    with pytest.raises(ValueError):
+        make_world_model_synthesizer("v3", period=6, dynamic=(0, 1))  # context missing
+
+
+def test_make_synthesizer_v2_forwards_min_dominance() -> None:
+    """A non-default dominance threshold reaches the selected v2 instance (the selector
+    is a thin construction seam, not a behavior change)."""
+    s = make_world_model_synthesizer("v2", min_dominance=0.75)
+    assert isinstance(s, SlotwiseModalSynthesizer)
+    assert s.min_dominance == 0.75

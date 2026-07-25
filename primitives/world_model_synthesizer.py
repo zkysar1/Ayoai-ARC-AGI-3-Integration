@@ -485,6 +485,58 @@ class ContextConditionedModalSynthesizer:
         return WorldModel(program)
 
 
+def make_world_model_synthesizer(
+    name: str,
+    *,
+    period: int | None = None,
+    dynamic=None,
+    context=None,
+    min_dominance: float = 0.5,
+) -> WorldModelSynthesizer:
+    """Env-AGNOSTIC synthesizer SELECTOR: map a short config name to a concrete
+    ``WorldModelSynthesizer`` so a solver's composition root can swap the v0/v1/v2/v3
+    deterministic synthesizers from CONFIG (an env var, a card field) WITHOUT a code
+    edit (g-315-500). g-315-499 found the production ``V4Arm`` hardcoded to the v0
+    ``TableSynthesizer`` floor; this makes the whole deterministic lineage swappable, so
+    the v0->v2 deploy win (context-free +37% over floor, honest-degradation so never
+    below v0) -- and a future v3 -- is a config flip, and offline A/Bs need no fork.
+
+    Names (case-insensitive, surrounding whitespace ignored):
+      'v0' / 'table'        -> TableSynthesizer                   (the honest memorize floor)
+      'v1' / 'generalizing' -> GeneralizingSynthesizer            (whole-tuple unanimity delta)
+      'v2' / 'slotwise'     -> SlotwiseModalSynthesizer           (per-slot modal delta; CONTEXT-FREE)
+      'v3' / 'context'      -> ContextConditionedModalSynthesizer (boundary-aware; needs layout)
+
+    The env's object LAYOUT (``period`` / ``dynamic`` / ``context``) is INJECTED by the
+    caller -- it is NOT known here (self.md Constraint 3/4: NO env literal in
+    ``primitives/``). v0/v1/v2 are context-free and ignore the layout; v3 REQUIRES it and
+    raises ``ValueError`` when any part is missing (a loud fail, never a silent wrong
+    default). An UNRECOGNIZED / empty name degrades to the v0 floor -- honest-degradation
+    for a bad selector, matching the strict-superset contract every synthesizer preserves.
+    """
+    key = (name or "").strip().lower()
+    if key in ("v2", "slotwise"):
+        return SlotwiseModalSynthesizer(min_dominance=min_dominance)
+    if key in ("v1", "generalizing"):
+        return GeneralizingSynthesizer()
+    if key in ("v3", "context"):
+        if period is None or dynamic is None or context is None:
+            raise ValueError(
+                "make_world_model_synthesizer('v3'): period/dynamic/context must be "
+                "injected by the caller (env-agnostic -- no object layout lives in "
+                "primitives/); got period=%r dynamic=%r context=%r"
+                % (period, dynamic, context)
+            )
+        return ContextConditionedModalSynthesizer(
+            period=period,
+            dynamic=dynamic,
+            context=context,
+            min_dominance=min_dominance,
+        )
+    # 'v0' / 'table' / unrecognized -> the honest floor (never raise on a bad name).
+    return TableSynthesizer()
+
+
 def synthesize_until_consistent(
     buffer: TransitionBuffer,
     model: WorldModel,
