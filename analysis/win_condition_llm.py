@@ -54,6 +54,7 @@ injected client never touches it.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Optional
@@ -75,12 +76,58 @@ if TYPE_CHECKING:
 # Configuration
 # ---------------------------------------------------------------------------
 
-DEFAULT_MODEL: str = os.environ.get("WINCON_LLM_MODEL", "claude-sonnet-5")
+SMALLEST_MODEL: str = "claude-haiku-4-5-20251001"
+"""The smallest tier the arm may reach for -- the DEFAULT, deliberately.
+
+g-315-508 (verbatim user directive 2026-07-25): "try to get it to work with
+smaller models, we do not want to cheat by using expensive models."  The
+constraint is METHODOLOGICAL, not financial: this vertical's whole claim is
+that structured, inspectable reasoning solves novel interactive puzzles under a
+tiny-compute envelope, and a win-condition arm that only works on a frontier
+model answers a different, easier question.  So model size is an experimental
+variable to MINIMIZE and REPORT, not a free parameter -- start here, escalate
+only with evidence, and never silently.
+"""
+
+DEFAULT_MODEL: str = os.environ.get("WINCON_LLM_MODEL", SMALLEST_MODEL)
 """Model id for the LLM arm.  Overridable via ``WINCON_LLM_MODEL`` env or the
-``model=`` constructor arg.  Defaults to a capable-but-fast model suitable for
-a structured-synthesis loop."""
+``model=`` constructor arg.
+
+Defaults to ``SMALLEST_MODEL`` (Haiku tier).  It previously defaulted to
+``claude-sonnet-5`` -- a mid tier -- which meant every run silently used Sonnet
+while the logs recorded no model at all, so a Sonnet result was indistinguishable
+from a Haiku one.  That is exactly the "quiet upgrade" the directive forbids, and
+it made results incomparable across runs.  Escalating the tier is still one env
+var away; what changed is that the escalation is now DELIBERATE and VISIBLE
+(``model_tier_note`` below is emitted on every proposal).
+"""
 
 DEFAULT_MAX_TOKENS: int = 1024
+
+logger = logging.getLogger(__name__)
+
+
+def model_tier_note(model: str) -> str:
+    """One-line, attributable description of which model produced a result.
+
+    g-315-508 work item 2: "Report model tier alongside every ARC result.  A
+    result produced on a larger model is not comparable to one produced on a
+    smaller model and must not be presented as if it were."  Attribution has to
+    ride WITH the result -- a tier recorded only in someone's memory of how a
+    run was launched is not attribution, and an unlabelled result silently
+    invites exactly the cross-tier comparison the directive forbids.
+
+    ``ESCALATED`` is the load-bearing token: it is what makes a quiet upgrade
+    loud.  Grep it across run logs to find every result that did NOT come from
+    the smallest tier.
+    """
+    if model == SMALLEST_MODEL:
+        return f"model={model} tier=SMALLEST (baseline; comparable across runs)"
+    return (
+        f"model={model} tier=ESCALATED (NOT the smallest tier "
+        f"{SMALLEST_MODEL} -- results are NOT comparable to smallest-tier runs "
+        f"and must be reported with this tier attached; g-315-508)"
+    )
 
 # Safe, non-degenerate default returned when the LLM is unavailable AND there
 # is no current_spec to fall back to.  High-symmetry states are a plausible
@@ -617,8 +664,26 @@ class LLMHypothesizer:
         )
         text = self._call_llm(prompt)
         spec = parse_spec_response(text)
+        # g-315-508 work item 2: attribute EVERY proposal to a model tier, and
+        # say plainly when no model produced it at all.  The degraded path is
+        # called out separately because its output is a module constant, not a
+        # model's answer -- reading a fallback spec as a model proposal is a
+        # measured failure mode (rb-5607), and a tier label on it would be an
+        # outright false attribution.
         if spec is None:
             spec = self._fallback(current_spec)
+            logger.info(
+                "win-condition LLM arm: NO model response (no client / call "
+                "failed / unparseable reply) -- returning the FALLBACK spec. "
+                "This result is NOT attributable to %s; do not report it as a "
+                "model proposal (g-315-508, rb-5607).",
+                self._model,
+            )
+        else:
+            logger.info(
+                "win-condition LLM arm: proposal from %s",
+                model_tier_note(self._model),
+            )
         return clamp_spec_to_observed(spec, self._prior_stats)
 
     # -- internals ----------------------------------------------------------

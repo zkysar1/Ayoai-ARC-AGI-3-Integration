@@ -44,11 +44,14 @@ from analysis.win_condition_hypothesizer import (
 )
 from analysis.win_condition_llm import (
     _DEFAULT_FALLBACK_SPEC,
+    DEFAULT_MODEL,
+    SMALLEST_MODEL,
     LLMHypothesizer,
     _extract_json_object,
     _extract_text,
     build_prompt,
     clamp_spec_to_observed,
+    model_tier_note,
     parse_spec_response,
 )
 
@@ -637,3 +640,81 @@ class TestFallbackPathIsClamped:
         # No stats supplied -> byte-identical to pre-g-315-510 behaviour.
         h = LLMHypothesizer(client=None)
         assert h.hypothesize(None, [], None) == _DEFAULT_FALLBACK_SPEC
+
+
+# ---------------------------------------------------------------------------
+# g-315-508 -- model-tier floor + attribution
+# ---------------------------------------------------------------------------
+
+
+class TestModelTierFloor:
+    """The arm must DEFAULT to the smallest tier, not a mid/frontier one."""
+
+    def test_default_model_is_the_smallest_tier(self) -> None:
+        # Regression for the silent-escalation defect: DEFAULT_MODEL was
+        # claude-sonnet-5 (mid tier) while nothing logged the model, so every
+        # run quietly used Sonnet and the result was indistinguishable from a
+        # Haiku one.  User directive 2026-07-25: "we do not want to cheat by
+        # using expensive models."
+        assert DEFAULT_MODEL == SMALLEST_MODEL
+
+    def test_smallest_model_is_haiku_tier(self) -> None:
+        assert "haiku" in SMALLEST_MODEL.lower()
+
+    def test_env_override_still_permits_deliberate_escalation(self, monkeypatch) -> None:
+        # Escalation stays possible -- the point is that it is explicit, not
+        # that it is forbidden.  Constructor arg is the per-call equivalent.
+        h = LLMHypothesizer(client=None, model="claude-opus-5")
+        assert h._model == "claude-opus-5"
+
+
+class TestModelTierNote:
+    """Attribution must ride WITH the result (g-315-508 work item 2)."""
+
+    def test_smallest_tier_is_labelled_baseline(self) -> None:
+        note = model_tier_note(SMALLEST_MODEL)
+        assert SMALLEST_MODEL in note
+        assert "SMALLEST" in note
+
+    def test_escalated_tier_is_labelled_and_names_the_floor(self) -> None:
+        note = model_tier_note("claude-opus-5")
+        assert "ESCALATED" in note        # the greppable marker
+        assert "claude-opus-5" in note    # which model actually ran
+        assert SMALLEST_MODEL in note     # what it should be compared against
+
+    def test_escalation_marker_is_greppable_across_tiers(self) -> None:
+        # A run log must be scannable for "which results were not baseline".
+        for m in ("claude-sonnet-5", "claude-opus-5", "some-future-model"):
+            assert "ESCALATED" in model_tier_note(m), m
+
+    def test_note_is_a_single_line(self) -> None:
+        # It is emitted as one log record per proposal; a multi-line note would
+        # break line-oriented log scanning.
+        assert "\n" not in model_tier_note(SMALLEST_MODEL)
+        assert "\n" not in model_tier_note("claude-opus-5")
+
+
+class TestProposalAttributionLogging:
+    def test_real_proposal_logs_the_tier(self, caplog) -> None:
+        client = _client_returning(
+            '{"type":"prior_threshold","prior":"symmetry","op":">=","value":0.9}'
+        )
+        h = LLMHypothesizer(client)
+        with caplog.at_level("INFO", logger="analysis.win_condition_llm"):
+            h.hypothesize(None, [], None)
+        joined = " ".join(r.getMessage() for r in caplog.records)
+        assert "proposal from model=" in joined
+        assert SMALLEST_MODEL in joined
+        assert "tier=SMALLEST" in joined
+
+    def test_fallback_is_NOT_attributed_to_a_model(self, caplog) -> None:
+        # The critical case (rb-5607): with no client the "proposal" is a
+        # module constant.  Labelling it with a tier would be a false
+        # attribution -- the log must say so instead.
+        h = LLMHypothesizer(client=None)
+        with caplog.at_level("INFO", logger="analysis.win_condition_llm"):
+            h.hypothesize(None, [], None)
+        joined = " ".join(r.getMessage() for r in caplog.records)
+        assert "NO model response" in joined
+        assert "NOT attributable" in joined
+        assert "tier=SMALLEST" not in joined  # no tier claim on a non-result
