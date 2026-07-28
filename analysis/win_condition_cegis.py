@@ -22,9 +22,12 @@ at runtime.
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 from analysis.predicate_spec import CCSignature, PredicateSpec
 from analysis.win_condition_heuristic import _build_tail_candidates
@@ -76,6 +79,49 @@ _MIN_TAIL_FRAMES: int = 20
 Below this count, percentile estimation is too noisy for the structural-tail
 objective and the existing CEGIS refinement loop is more appropriate.
 """
+
+
+def compute_prior_stats(
+    validation_frames: list[tuple[CCSignature, float]],
+) -> dict[str, dict[str, float]]:
+    """Summarize the observed per-prior distribution over the validation frames.
+
+    g-315-510.  Returns ``{prior: {n, min, p50, p90, p95, max}}`` for the three
+    structural priors.  This is the scale the LLM arm was missing: the
+    deterministic tail candidates are BUILT AT the observed (100-K)th
+    percentile, so they fire at ~K% by construction, while the LLM proposed an
+    absolute threshold having never been shown the range.  That is not a
+    contest the LLM can win -- it is a structural handicap.  Feeding the same
+    distribution to both arms is what makes the comparison meaningful.
+
+    Percentiles use nearest-rank on the sorted values, matching the convention
+    already used by ``_select_zero_positive_candidate``.  An empty frame list
+    yields ``{}`` (callers treat a falsy result as "no stats").
+    """
+    if not validation_frames:
+        return {}
+    stats: dict[str, dict[str, float]] = {}
+    for name in ("orderedness", "compression", "symmetry"):
+        vals = sorted(
+            sig.priors.get(name, 0.0) for sig, _score in validation_frames
+        )
+        n = len(vals)
+        if not n:
+            continue
+
+        def _pct(q: float) -> float:
+            idx = max(0, min(n - 1, math.ceil(q / 100.0 * n) - 1))
+            return vals[idx]
+
+        stats[name] = {
+            "n": float(n),
+            "min": vals[0],
+            "p50": _pct(50.0),
+            "p90": _pct(90.0),
+            "p95": _pct(95.0),
+            "max": vals[-1],
+        }
+    return stats
 
 
 def _select_zero_positive_candidate(
@@ -156,20 +202,61 @@ def _select_zero_positive_candidate(
     best_pred: Optional[Callable[[CCSignature], bool]] = None
     best_dist = float("inf")
     best_fire_count = 0
+    best_origin = "tail"
 
-    for candidate in candidates:
+    # g-315-510: this loop previously emitted NOTHING, so a wired-but-inert arm
+    # was indistinguishable from a wired-and-working one in the run log -- the
+    # live log prints arm=llm-semantic-prior either way, whether the LLM's spec
+    # won or lost. Proving the arm was inert took an offline harness that
+    # monkey-patched hypothesize_until_viable to capture the CEGISResult that
+    # synthesize_goal_predicate discards at its return. Log the contest instead.
+    n_extra = len(extra_candidates) if extra_candidates else 0
+    n_tail = len(candidates) - n_extra
+    for idx, candidate in enumerate(candidates):
         pred = compiler(candidate)
         fire_count = sum(1 for sig, _s in validation_frames if pred(sig))
         fire_rate = fire_count / n_frames
         dist = abs(fire_rate - target_frac)
+        # Provenance: candidates are tail-first, extras appended (see above).
+        origin = "extra" if idx >= n_tail else "tail"
+        logger.debug(
+            "[win-cegis] candidate origin=%s fires=%d/%d (%.4f) "
+            "target=%.4f dist=%.4f spec=%r",
+            origin, fire_count, n_frames, fire_rate, target_frac, dist,
+            candidate,
+        )
+        if fire_count == 0:
+            logger.info(
+                "[win-cegis] candidate origin=%s fires on ZERO frames -- "
+                "structurally unsatisfiable against the observed priors, "
+                "cannot win the target-fraction objective: spec=%r",
+                origin, candidate,
+            )
         if dist < best_dist:
             best_dist = dist
             best_spec = candidate
             best_pred = pred
             best_fire_count = fire_count
+            best_origin = origin
 
     assert best_spec is not None  # candidates is non-empty
     assert best_pred is not None
+
+    logger.info(
+        "[win-cegis] SELECTED origin=%s from %d candidates "
+        "(%d tail + %d extra) fires=%d/%d (%.4f) target=%.4f spec=%r",
+        best_origin, len(candidates), n_tail, n_extra,
+        best_fire_count, n_frames, best_fire_count / n_frames, target_frac,
+        best_spec,
+    )
+    if n_extra and best_origin != "extra":
+        logger.info(
+            "[win-cegis] the %d caller-supplied (e.g. LLM) proposal(s) were "
+            "OFFERED and LOST -- the arm is INERT on these frames; the "
+            "selected predicate is the one the structural-tail baseline "
+            "picks on its own",
+            n_extra,
+        )
 
     return CEGISResult(
         spec=best_spec,

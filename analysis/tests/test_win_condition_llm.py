@@ -48,6 +48,7 @@ from analysis.win_condition_llm import (
     _extract_json_object,
     _extract_text,
     build_prompt,
+    clamp_spec_to_observed,
     parse_spec_response,
 )
 
@@ -506,3 +507,133 @@ class TestBoundaryAsserts:
         # anthropic package installed -- if the import were top-level, collection
         # would have failed.  Assert the class is usable as a final proof.
         assert LLMHypothesizer is not None
+
+
+# ---------------------------------------------------------------------------
+# g-315-510 -- observed-range clamping of proposed thresholds
+# ---------------------------------------------------------------------------
+
+# The REAL measured distribution over 1500 ls20 validation frames.  Note
+# symmetry's min == p50 == 0.0: a genuinely skewed prior, and the reason the
+# fire-on-everything guard below is not hypothetical.
+_LS20_STATS = {
+    "orderedness": {
+        "n": 1500, "min": 0.0, "p50": 0.3262,
+        "p90": 0.3294, "p95": 0.3329, "max": 0.3349,
+    },
+    "compression": {
+        "n": 1500, "min": 0.0, "p50": 0.1000,
+        "p90": 0.1200, "p95": 0.1300, "max": 0.1365,
+    },
+    "symmetry": {
+        "n": 1500, "min": 0.0, "p50": 0.0,
+        "p90": 0.1053, "p95": 0.1579, "max": 0.2632,
+    },
+}
+
+
+class TestClampSpecToObserved:
+    """``clamp_spec_to_observed`` -- satisfiability by construction."""
+
+    def test_out_of_range_threshold_is_remapped_into_range(self) -> None:
+        spec = PriorThresholdConstraint(prior="symmetry", op=">=", value=0.8)
+        out = clamp_spec_to_observed(spec, _LS20_STATS)
+        assert out.value <= _LS20_STATS["symmetry"]["max"]
+
+    def test_in_range_threshold_is_untouched(self) -> None:
+        # The clamp must be an identity for well-scaled proposals -- it exists
+        # to rescue unsatisfiable ones, not to second-guess good ones.
+        spec = PriorThresholdConstraint(prior="symmetry", op=">=", value=0.15)
+        assert clamp_spec_to_observed(spec, _LS20_STATS) == spec
+
+    def test_order_is_preserved_across_remaps(self) -> None:
+        # The rescale must carry the SEMANTIC content: a more extreme ask has
+        # to stay at least as selective as a less extreme one.
+        hi = clamp_spec_to_observed(
+            PriorThresholdConstraint(prior="symmetry", op=">=", value=0.95),
+            _LS20_STATS,
+        ).value
+        lo = clamp_spec_to_observed(
+            PriorThresholdConstraint(prior="symmetry", op=">=", value=0.7),
+            _LS20_STATS,
+        ).value
+        assert hi >= lo
+
+    def test_never_fires_on_nothing(self) -> None:
+        for v in (0.3, 0.5, 0.7, 0.9, 0.95, 1.0):
+            out = clamp_spec_to_observed(
+                PriorThresholdConstraint(prior="symmetry", op=">=", value=v),
+                _LS20_STATS,
+            )
+            assert out.value <= _LS20_STATS["symmetry"]["max"], v
+
+    def test_never_fires_on_everything(self) -> None:
+        # A '>=' at or below the observed min matches every frame.  Regression
+        # for the skewed-prior case: symmetry p50 == min == 0.0, so a modest
+        # '>= 0.3' selected p50 and fired on all 1500 frames before the guard.
+        for v in (0.3, 0.5, 0.7, 0.9, 0.95, 1.0):
+            out = clamp_spec_to_observed(
+                PriorThresholdConstraint(prior="symmetry", op=">=", value=v),
+                _LS20_STATS,
+            )
+            assert out.value > _LS20_STATS["symmetry"]["min"], v
+
+    def test_recurses_through_composites(self) -> None:
+        from analysis.predicate_spec import AndConstraint, NotConstraint
+
+        spec = AndConstraint(clauses=(
+            PriorThresholdConstraint(prior="symmetry", op=">=", value=0.8),
+            NotConstraint(clause=PriorThresholdConstraint(
+                prior="orderedness", op=">=", value=0.75,
+            )),
+        ))
+        out = clamp_spec_to_observed(spec, _LS20_STATS)
+        assert out.clauses[0].value <= _LS20_STATS["symmetry"]["max"]
+        assert (
+            out.clauses[1].clause.value
+            <= _LS20_STATS["orderedness"]["max"]
+        )
+
+    def test_non_prior_constraints_pass_through(self) -> None:
+        # type_count / count live on their own natural scale -- rescaling them
+        # against a prior's range would be meaningless.
+        spec = CountConstraint(op="<=", value=4)
+        assert clamp_spec_to_observed(spec, _LS20_STATS) == spec
+
+    def test_missing_stats_is_identity(self) -> None:
+        spec = PriorThresholdConstraint(prior="symmetry", op=">=", value=0.7)
+        assert clamp_spec_to_observed(spec, None) == spec
+        assert clamp_spec_to_observed(spec, {}) == spec
+        # A prior absent from the stats dict is also left alone.
+        assert clamp_spec_to_observed(spec, {"orderedness": {}}) == spec
+
+    def test_none_spec_is_identity(self) -> None:
+        assert clamp_spec_to_observed(None, _LS20_STATS) is None
+
+    def test_frozen_input_is_not_mutated(self) -> None:
+        spec = PriorThresholdConstraint(prior="symmetry", op=">=", value=0.8)
+        clamp_spec_to_observed(spec, _LS20_STATS)
+        assert spec.value == 0.8  # new object returned; original intact
+
+
+class TestFallbackPathIsClamped:
+    """The no-LLM path is the one that runs when no API key is configured."""
+
+    def test_default_fallback_is_unsatisfiable_on_observed_data(self) -> None:
+        # Documents WHY the clamp must cover the fallback branch: the shipped
+        # default is symmetry >= 0.7 against an observed max of 0.2632, so
+        # unclamped it contributes a fire-on-nothing candidate.
+        assert _DEFAULT_FALLBACK_SPEC.prior == "symmetry"
+        assert _DEFAULT_FALLBACK_SPEC.value > _LS20_STATS["symmetry"]["max"]
+
+    def test_hypothesize_clamps_the_fallback(self) -> None:
+        h = LLMHypothesizer(client=None)  # no client -> fallback path
+        h.set_prior_stats(_LS20_STATS)
+        got = h.hypothesize(None, [], None)
+        assert got.value <= _LS20_STATS["symmetry"]["max"]
+        assert got.value > _LS20_STATS["symmetry"]["min"]
+
+    def test_hypothesize_without_stats_preserves_prior_behaviour(self) -> None:
+        # No stats supplied -> byte-identical to pre-g-315-510 behaviour.
+        h = LLMHypothesizer(client=None)
+        assert h.hypothesize(None, [], None) == _DEFAULT_FALLBACK_SPEC

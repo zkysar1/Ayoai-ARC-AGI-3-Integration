@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Optional
 
 from analysis.predicate_spec import (
@@ -187,6 +188,56 @@ def _summarize_session(summary: Optional["SessionSummary"]) -> str:
     return "\n".join(lines)
 
 
+def summarize_prior_distribution(
+    prior_stats: Optional[dict[str, dict[str, float]]],
+) -> str:
+    """Render the OBSERVED range of each structural prior, or a no-data note.
+
+    g-315-510.  Without this block the prompt tells the model to fire on the
+    "top 5-10%" and to look for "HIGH orderedness / HIGH symmetry" while giving
+    it no scale to locate either on -- so "high" is read on the absolute 0..1
+    scale and the proposal lands ABOVE the observed maximum, making the
+    conjunction structurally unsatisfiable (fires 0/N) and guaranteeing it
+    loses the target-fraction objective.  Measured on 1500 ls20 frames: the
+    model proposed symmetry>=0.8 / orderedness>=0.75 against observed maxima of
+    0.2632 / 0.3349 -- the arm lost 100% of the time, deterministically.
+
+    ``prior_stats`` maps prior name -> {n, min, p50, p90, p95, max}.  ``None``
+    yields the pre-g-315-510 no-data note, so the prompt stays byte-identical
+    when no distribution is supplied.
+    """
+    if not prior_stats:
+        return (
+            "No per-frame prior distribution supplied. Thresholds must be "
+            "chosen WITHIN 0..1 and cannot be validated against observed data."
+        )
+    lines: list[str] = []
+    for name in ("orderedness", "compression", "symmetry"):
+        s = prior_stats.get(name)
+        if not s:
+            continue
+        lines.append(
+            f"  {name}: n={int(s.get('n', 0))} "
+            f"min={s.get('min', 0.0):.4f} "
+            f"p50={s.get('p50', 0.0):.4f} "
+            f"p90={s.get('p90', 0.0):.4f} "
+            f"p95={s.get('p95', 0.0):.4f} "
+            f"max={s.get('max', 0.0):.4f}"
+        )
+    if not lines:
+        return (
+            "No per-frame prior distribution supplied. Thresholds must be "
+            "chosen WITHIN 0..1 and cannot be validated against observed data."
+        )
+    lines.append(
+        "  A threshold ABOVE a prior's max fires on ZERO frames and is "
+        "automatically rejected. Choose each threshold at or below that "
+        "prior's p90/p95 so the predicate fires on the observed tail. "
+        "'HIGH' means high RELATIVE TO THIS RANGE, not near 1.0."
+    )
+    return "\n".join(lines)
+
+
 def _summarize_counterexamples(counterexamples: list[CounterExample]) -> str:
     """Render the frames the current predicate wrongly flagged as goals.
 
@@ -210,12 +261,21 @@ def build_prompt(
     summary: Optional["SessionSummary"],
     counterexamples: list[CounterExample],
     current_spec: Optional[PredicateSpec],
+    prior_stats: Optional[dict[str, dict[str, float]]] = None,
 ) -> str:
     """Assemble the full LLM prompt.
 
     Pure function -- deterministic given its inputs, no network or clock.  The
     prompt bundles: the DSL, the zero-positive framing, the game-semantics
-    context, the false-positive feedback, and the current spec (if refining).
+    context, the OBSERVED PRIOR RANGES (g-315-510), the false-positive
+    feedback, and the current spec (if refining).
+
+    ``prior_stats`` (g-315-510) is the per-prior observed distribution over the
+    validation frames.  It is what makes the "fire on the top 5-10%"
+    instruction answerable: without a scale the model reads "HIGH" as ~0.8 and
+    proposes above the observed maximum, which fires on nothing.  Default
+    ``None`` renders the no-data note, so callers that do not supply stats get
+    the pre-g-315-510 prompt.
     """
     from analysis.predicate_spec import to_dict  # local: keep top imports lean
 
@@ -229,6 +289,9 @@ def build_prompt(
         f"{_DSL_DESCRIPTION}\n"
         "GAME SEMANTICS OBSERVED (no reward signal -- all scores are 0):\n"
         f"{_summarize_session(summary)}\n\n"
+        "OBSERVED PRIOR DISTRIBUTION over the validation frames -- your "
+        "thresholds MUST lie inside these ranges:\n"
+        f"{summarize_prior_distribution(prior_stats)}\n\n"
         "YOUR PREVIOUS PROPOSAL over-fired on these score-0 frames "
         "(false positives to avoid):\n"
         f"{_summarize_counterexamples(counterexamples)}\n\n"
@@ -331,6 +394,118 @@ def parse_spec_response(text: Optional[str]) -> Optional[PredicateSpec]:
         return None
 
 
+def clamp_spec_to_observed(
+    spec: Optional[PredicateSpec],
+    prior_stats: Optional[dict[str, dict[str, float]]],
+) -> Optional[PredicateSpec]:
+    """Remap out-of-range prior thresholds into the OBSERVED distribution.
+
+    Work item (2) of g-315-510: make a proposal *structurally satisfiable by
+    construction* rather than relying on the proposer to respect a range it
+    was merely TOLD about.  Prompt grounding (work item 1) asks nicely; this
+    enforces.  It also covers the no-LLM path -- see ``hypothesize``.
+
+    The proposer reasons on an ABSOLUTE 0..1 scale ("HIGH symmetry" -> 0.8),
+    but the priors are ratios whose observed range is far narrower (measured
+    over 1500 ls20 frames: symmetry max 0.2632, orderedness max 0.3349).  A
+    threshold above a prior's observed max fires on ZERO frames and is
+    auto-rejected, so the arm loses without ever being evaluated on the
+    MERIT of its semantic guess.  Rather than discard that guess, translate
+    it: read the absolute value as an intent about *how extreme* a tail is
+    wanted, and map that intent onto the matching quantile of the observed
+    range.  Order is preserved (a more extreme ask -> a higher quantile), so
+    the semantic content survives the rescale.
+
+    Only genuinely unsatisfiable thresholds are touched.  A threshold already
+    inside the observed range is returned UNCHANGED (identity), so this is a
+    no-op for any well-scaled proposal, and a ``None``/empty ``prior_stats``
+    makes the whole function an identity -- callers without measured frames
+    are unaffected.
+
+    Args:
+        spec: The proposed spec (may be a composite ``and``/``or``/``not``).
+        prior_stats: ``compute_prior_stats`` output -- ``{prior: {n, min, p50,
+            p90, p95, max}}``.  Falsy disables clamping entirely.
+
+    Returns:
+        A spec of the same shape with out-of-range thresholds remapped.  Input
+        dataclasses are frozen, so this returns NEW objects and never mutates.
+    """
+    if spec is None or not prior_stats:
+        return spec
+
+    # Composite nodes: recurse structurally.  Duck-typed on the field name
+    # rather than isinstance so a future composite type needs no edit here.
+    clauses = getattr(spec, "clauses", None)
+    if clauses is not None:
+        return replace(
+            spec,
+            clauses=tuple(
+                clamp_spec_to_observed(c, prior_stats) for c in clauses
+            ),
+        )
+    clause = getattr(spec, "clause", None)
+    if clause is not None:
+        return replace(
+            spec, clause=clamp_spec_to_observed(clause, prior_stats)
+        )
+
+    if getattr(spec, "type", None) != "prior_threshold":
+        return spec  # type_count and friends are on their own natural scale
+    stats = prior_stats.get(spec.prior)
+    if not stats:
+        return spec
+
+    op = spec.op
+    value = float(spec.value)
+    lo = float(stats.get("min", 0.0))
+    hi = float(stats.get("max", 0.0))
+
+    if op in (">=", ">"):
+        if value <= hi:
+            return spec  # already satisfiable -- leave the proposal alone
+        # Intent: how extreme was the ask on the absolute scale it used?
+        if value >= 0.9:
+            key = "p95"
+        elif value >= 0.5:
+            key = "p90"
+        else:
+            key = "p50"
+        new_value = float(stats.get(key, hi))
+        # A STRICT '>' at the top of the range still fires on nothing when the
+        # chosen quantile coincides with the max (possible on a degenerate
+        # distribution).  Step down so satisfiability is by construction, not
+        # by luck.
+        if op == ">" and new_value >= hi:
+            new_value = float(stats.get("p50", lo))
+        # Symmetric guard at the BOTTOM: a '>=' threshold at or below the
+        # observed min fires on EVERY frame -- fire-on-everything, the other
+        # degenerate this arm exists to avoid, and no more useful than the
+        # fire-on-nothing we just escaped.  Reachable on a skewed prior where
+        # the low quantiles collapse onto the min (measured: ls20 symmetry has
+        # min == p50 == 0.0, so a modest ask like '>= 0.3' selected p50 and
+        # fired on all 1500 frames).  Step UP to the first quantile that
+        # actually selects a tail.
+        if new_value <= lo:
+            for fallback_key in ("p90", "p95", "max"):
+                candidate = float(stats.get(fallback_key, hi))
+                if candidate > lo:
+                    new_value = candidate
+                    break
+    elif op in ("<=", "<"):
+        if value >= lo:
+            return spec
+        new_value = float(stats.get("p50", lo))
+        if op == "<" and new_value <= lo:
+            new_value = float(stats.get("p90", hi))
+    else:
+        return spec  # '==' is an exact match; rescaling it is meaningless
+
+    if new_value == value:
+        return spec
+    return replace(spec, value=new_value)
+
+
 def _extract_text(response: Any) -> Optional[str]:
     """Pull the text out of an anthropic-style response, defensively.
 
@@ -397,6 +572,24 @@ class LLMHypothesizer:
             fallback_spec if fallback_spec is not None else _DEFAULT_FALLBACK_SPEC
         )
         self._client_construct_attempted = False
+        # g-315-510: observed per-prior distribution, supplied by the caller
+        # that owns the validation frames (synthesize_goal_predicate).  Set via
+        # ``set_prior_stats`` rather than a ``hypothesize`` parameter because
+        # ``hypothesize`` is fixed by the WinConditionHypothesizer Protocol --
+        # widening it would break the heuristic arm and every test double.
+        self._prior_stats: Optional[dict[str, dict[str, float]]] = None
+
+    def set_prior_stats(
+        self, prior_stats: Optional[dict[str, dict[str, float]]]
+    ) -> None:
+        """Supply the observed per-prior distribution for prompt grounding.
+
+        Called by ``synthesize_goal_predicate`` (the only site where the
+        validation frames and the hypothesizer are both in scope) before
+        ``hypothesize``.  Duck-typed at the call site via ``hasattr``, so arms
+        that do not implement it are unaffected.  Idempotent; ``None`` clears.
+        """
+        self._prior_stats = prior_stats
 
     def hypothesize(
         self,
@@ -409,13 +602,24 @@ class LLMHypothesizer:
         On any LLM failure (no client, network error, unparseable response),
         returns ``current_spec`` if present (so the CEGIS driver's stall-guard
         fires and terminates), else the safe fallback spec.  Never raises.
+
+        The returned spec is passed through ``clamp_spec_to_observed`` so any
+        threshold outside the observed prior range is remapped to an
+        order-preserving quantile of that range (g-315-510).  This applies to
+        the FALLBACK path too, deliberately: ``_DEFAULT_FALLBACK_SPEC`` is
+        ``symmetry >= 0.7`` while the measured ls20 symmetry max is 0.2632, so
+        without the clamp the arm contributes a fire-on-nothing candidate even
+        when the LLM is entirely unavailable -- which is the path that runs
+        whenever no API key is configured.
         """
-        prompt = build_prompt(summary, counterexamples, current_spec)
+        prompt = build_prompt(
+            summary, counterexamples, current_spec, self._prior_stats
+        )
         text = self._call_llm(prompt)
         spec = parse_spec_response(text)
         if spec is None:
-            return self._fallback(current_spec)
-        return spec
+            spec = self._fallback(current_spec)
+        return clamp_spec_to_observed(spec, self._prior_stats)
 
     # -- internals ----------------------------------------------------------
 

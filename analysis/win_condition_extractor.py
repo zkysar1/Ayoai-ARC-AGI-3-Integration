@@ -31,7 +31,10 @@ from typing import Any, Callable, Iterable, Optional
 
 from analysis.predicate_compiler import compile_spec, to_state_predicate
 from analysis.predicate_spec import CCSignature, Component, PredicateSpec
-from analysis.win_condition_cegis import hypothesize_until_viable
+from analysis.win_condition_cegis import (
+    compute_prior_stats,
+    hypothesize_until_viable,
+)
 from analysis.win_condition_heuristic import HeuristicHypothesizer
 from analysis.win_condition_hypothesizer import WinConditionHypothesizer
 from solver_v0.perception import FrameFeatures
@@ -170,6 +173,24 @@ def synthesize_goal_predicate(
         # every round via the driver's ``hypothesizer`` argument.  A failing
         # arm degrades to no-extra-candidate (fail-open -- never blocks synth).
         active_hypothesizer = hypothesizer
+        # g-315-510: ground the arm in the OBSERVED prior distribution before
+        # asking for a proposal.  ``summary`` is passed as None below (there is
+        # no SessionSummary on this path), so without this the arm's entire
+        # view of the game is _summarize_session's no-data fallback -- "reason
+        # from general structural priors: HIGH orderedness, HIGH symmetry" --
+        # with no scale attached.  Read on the absolute 0..1 scale that yields
+        # thresholds above the observed maximum, a predicate that fires on
+        # nothing, and a guaranteed loss to the target-fraction objective.
+        # Measured 1500 ls20 frames: proposed 0.8/0.75 vs maxima 0.2632/0.3349.
+        # Duck-typed: arms without ``set_prior_stats`` are untouched, and a
+        # failure here must not block synthesis (fail-open, as below).
+        if hasattr(hypothesizer, "set_prior_stats"):
+            try:
+                hypothesizer.set_prior_stats(
+                    compute_prior_stats(validation_frames)
+                )
+            except Exception:
+                pass
         try:
             proposal = hypothesizer.hypothesize(None, [], None)
             zero_positive_extra = [proposal]
