@@ -65,6 +65,70 @@ LOG_INTERVALS = {1, 5, 10, 20, 30, 45, 60}
 # Default env key — registered by g-315-02 with taskCount=8.
 DEFAULT_ENV_KEY = "arc-agi-3"
 
+# Cold-start resilience (g-315-509). The readiness poll below gets 90 attempts
+# with per-attempt transport handling, while the cold-start POST that PRECEDES
+# it — the call that actually provisions the env-server — was single-shot with
+# zero retries. Three consecutive live ls20 runs (2026-07-28, echo) aborted at
+# session-open on an identical `ReadTimeout(read timeout=10.0)`; the third came
+# after a full 720s rate-limit backoff, which rules out 429 throttling and makes
+# it a transport failure. Exit code was 0 on all three (the abort is logged, not
+# raised), so they read as successful runs.
+#
+# Scope note: this fixes the ASYMMETRY, which is established by reading the code.
+#
+# The default is ALSO measured, not guessed. Observed 2026-07-28 on a live ls20
+# run: the HTTP 200 provisioning path took 14.5s end-to-end (session-open
+# 16:14:38.474 -> "Cold-start initiated" 16:14:52.991, invocation_type=warm_pool).
+# That is ABOVE the former 10.0 default, which is why three consecutive live runs
+# died at `ReadTimeout(read timeout=10.0)`.
+#
+# Retry alone does NOT rescue this: every attempt inherits the same timeout, so a
+# systematically-slow endpoint just fails N times instead of once. The timeout
+# floor and the retry are complementary — retry covers transient transport blips,
+# this default covers steady-state provisioning latency. 30s is ~2x the observed
+# warm_pool figure, leaving headroom for a cold pool (which has no measurement
+# yet), and is still far below the readiness poll's own budget that follows it.
+DEFAULT_HTTP_TIMEOUT_S = 30.0
+COLD_START_MAX_ATTEMPTS = 4
+COLD_START_RETRY_DELAY_S = 2.0
+COLD_START_RETRY_DELAY_CAP_S = 16.0
+
+
+def _env_float(name: str, default: float) -> float:
+    """Read a positive float from env; fall back to `default` on absent/garbage.
+
+    Fail-safe by construction: a malformed override must never break
+    session-open, so anything unparseable or non-positive yields the default.
+    """
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        val = float(raw.strip())
+    except ValueError:
+        logger.warning("%s=%r is not a number — using default %s", name, raw, default)
+        return default
+    if val <= 0:
+        logger.warning("%s=%r must be > 0 — using default %s", name, raw, default)
+        return default
+    return val
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read a positive int from env; fall back to `default` on absent/garbage."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        val = int(raw.strip())
+    except ValueError:
+        logger.warning("%s=%r is not an integer — using default %s", name, raw, default)
+        return default
+    if val < 1:
+        logger.warning("%s=%r must be >= 1 — using default %s", name, raw, default)
+        return default
+    return val
+
 
 class AyoaiSessionError(Exception):
     """Raised when the AyoAI session cannot be opened (terminal failure)."""
@@ -144,12 +208,44 @@ def _initiate_cold_start(
         "Content-Type": "application/json",
         "AYOAI-API-KEY": api_key,
     }
-    try:
-        r = sess.post(COLD_START_URL, headers=headers, json=payload, timeout=http_timeout_s)
-    except requests.exceptions.RequestException as e:
+    # Bounded retry on TRANSPORT failures only (g-315-509). An HTTP *response* —
+    # any status — is a decision from the server and is handled below verbatim:
+    # 200 success, 409 already-initiated, everything else terminal. Retrying a
+    # 4xx would be wrong (it will not change) and retrying a non-idempotent write
+    # is only safe here because Collect is idempotent per ayoServerKey — a repeat
+    # POST returns 409 rather than provisioning twice, which is exactly what the
+    # 409 branch below already treats as success.
+    max_attempts = _env_int("AYOAI_COLD_START_ATTEMPTS", COLD_START_MAX_ATTEMPTS)
+    base_delay = _env_float("AYOAI_COLD_START_RETRY_DELAY_S", COLD_START_RETRY_DELAY_S)
+    r = None
+    last_exc: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            r = sess.post(
+                COLD_START_URL, headers=headers, json=payload, timeout=http_timeout_s
+            )
+            break
+        except requests.exceptions.RequestException as e:
+            last_exc = e
+            if attempt >= max_attempts:
+                break
+            delay = min(base_delay * (2 ** (attempt - 1)), COLD_START_RETRY_DELAY_CAP_S)
+            logger.warning(
+                "Cold-start POST transport failure for ayoServerKey=%s "
+                "(attempt %d/%d, timeout=%.1fs): %r — retrying in %.1fs",
+                card_id,
+                attempt,
+                max_attempts,
+                http_timeout_s,
+                e,
+                delay,
+            )
+            time.sleep(delay)
+    if r is None:
         raise AyoaiApiError(
-            f"Cold-start request to Collect failed (transport): {e!r}"
-        ) from e
+            f"Cold-start request to Collect failed (transport) after "
+            f"{max_attempts} attempt(s) at timeout={http_timeout_s}s: {last_exc!r}"
+        ) from last_exc
 
     if r.status_code == 200:
         body: dict[str, Any] | None
@@ -232,7 +328,7 @@ def open_ayoai_session(
     *,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     retry_delay_s: float = DEFAULT_RETRY_DELAY_S,
-    http_timeout_s: float = 10.0,
+    http_timeout_s: float | None = None,
     session: requests.Session | None = None,
 ) -> AyoaiSessionInfo:
     """Open an AyoAI Environment Server session and wait for streaming-ready.
@@ -248,7 +344,12 @@ def open_ayoai_session(
             falling back to AYO_OPERATOR_KEY (the fleet's actual value).
         max_attempts: Cap on poll attempts (default 90, Roblox parity).
         retry_delay_s: Seconds between poll attempts (default 1.0, Roblox parity).
-        http_timeout_s: Per-request timeout in seconds.
+        http_timeout_s: Per-request timeout in seconds. None (default) resolves
+            from AYOAI_HTTP_TIMEOUT_S, else DEFAULT_HTTP_TIMEOUT_S (30.0, set
+            above the 14.5s provisioning latency measured 2026-07-28).
+            main.py calls this without the argument, so before g-315-509 the
+            default was unreachable from the outside — the env override is what
+            makes a slow-cold-start box tunable without a code change.
         session: Optional requests.Session for connection reuse / test injection.
 
     Returns:
@@ -265,6 +366,8 @@ def open_ayoai_session(
         raise AyoaiSessionError("card_id is required (use ARC scorecard card_id)")
     if not env_key:
         raise AyoaiSessionError("env_key is required (default 'arc-agi-3')")
+    if http_timeout_s is None:
+        http_timeout_s = _env_float("AYOAI_HTTP_TIMEOUT_S", DEFAULT_HTTP_TIMEOUT_S)
     # AYOAI_API_KEY is a phantom var fleet-wide (g-115-2670); the real value is
     # AYO_OPERATOR_KEY. Fall back so live play needs no manual alias (g-315-471).
     resolved_api_key = api_key if api_key is not None else (

@@ -25,6 +25,8 @@ from ayoai_client import (
     AyoaiSessionError,
     AyoaiSessionInfo,
     AyoaiTimeoutError,
+    COLD_START_MAX_ATTEMPTS,
+    DEFAULT_HTTP_TIMEOUT_S,
     _build_env_server_url,
     _build_streaming_url,
     _classify_response,
@@ -317,8 +319,14 @@ def test_open_session_raises_on_timeout(monkeypatch):
         )
 
 
-def test_open_session_handles_transport_exception():
-    """A requests.exceptions.RequestException surfaces as API_ERROR."""
+def test_open_session_handles_transport_exception(monkeypatch):
+    """A requests.exceptions.RequestException surfaces as API_ERROR.
+
+    The failure lands on the cold-start POST, which since g-315-509 retries
+    with exponential backoff — zero the delay so this stays a fast unit test
+    (it was silently costing 14s of real sleeps otherwise).
+    """
+    monkeypatch.setattr("ayoai_client.COLD_START_RETRY_DELAY_S", 0)
     session = MagicMock(spec=requests.Session)
     session.post.side_effect = requests.exceptions.ConnectionError("DNS failed")
     with pytest.raises(AyoaiApiError, match="transport"):
@@ -385,12 +393,128 @@ def test_initiate_cold_start_500_raises():
         _initiate_cold_start("card-Q", "arc-agi-3", "k", sess, 10.0)
 
 
-def test_initiate_cold_start_transport_error_raises():
-    """Transport-level failure → AyoaiApiError with 'transport' marker."""
+def test_initiate_cold_start_transport_error_raises(monkeypatch):
+    """Persistent transport failure → AyoaiApiError with 'transport' marker.
+
+    g-315-509 added bounded retry, so this now exhausts every attempt before
+    raising. Delay is zeroed for speed (same convention as the polling tests).
+    """
+    monkeypatch.setattr("ayoai_client.COLD_START_RETRY_DELAY_S", 0)
     sess = MagicMock(spec=requests.Session)
     sess.post.side_effect = requests.exceptions.ConnectionError("DNS failed")
     with pytest.raises(AyoaiApiError, match="transport"):
         _initiate_cold_start("card-Q", "arc-agi-3", "k", sess, 10.0)
+    # Exhausted the retry budget rather than giving up after one shot.
+    assert sess.post.call_count == COLD_START_MAX_ATTEMPTS
+
+
+# ---------- g-315-509: cold-start retry asymmetry ---------- #
+
+
+def test_initiate_cold_start_survives_transport_timeouts_then_succeeds(monkeypatch):
+    """THE regression test for g-315-509.
+
+    Three live ls20 runs aborted at session-open on a single ReadTimeout while
+    the readiness poll that FOLLOWS this call had 90 attempts. A transient
+    transport failure must no longer kill the whole session-open.
+    """
+    monkeypatch.setattr("ayoai_client.COLD_START_RETRY_DELAY_S", 0)
+    sess = MagicMock(spec=requests.Session)
+    sess.post.side_effect = [
+        requests.exceptions.ReadTimeout("read timeout=10.0"),
+        requests.exceptions.ReadTimeout("read timeout=10.0"),
+        _mock_response(200, {"status": "starting", "instance_id": "i-recovered"}),
+    ]
+    body = _initiate_cold_start("card-R", "arc-agi-3", "k", sess, 10.0)
+    assert body["instance_id"] == "i-recovered"
+    assert sess.post.call_count == 3
+
+
+def test_initiate_cold_start_does_not_retry_http_status_errors():
+    """An HTTP *response* is a server decision — retrying it would be wrong.
+
+    Only transport exceptions are retried. A 500 is terminal on the first try;
+    retrying could also double-provision on a non-idempotent endpoint.
+    """
+    sess = MagicMock(spec=requests.Session)
+    sess.post.return_value = _mock_response(500, {})
+    with pytest.raises(AyoaiApiError, match="HTTP 500"):
+        _initiate_cold_start("card-S", "arc-agi-3", "k", sess, 10.0)
+    assert sess.post.call_count == 1
+
+
+def test_initiate_cold_start_409_still_short_circuits_without_retry():
+    """409 (already initiated) remains success-with-None, no retry."""
+    sess = MagicMock(spec=requests.Session)
+    sess.post.return_value = _mock_response(409, None)
+    assert _initiate_cold_start("card-T", "arc-agi-3", "k", sess, 10.0) is None
+    assert sess.post.call_count == 1
+
+
+def test_initiate_cold_start_attempts_env_override(monkeypatch):
+    """AYOAI_COLD_START_ATTEMPTS tunes the retry budget without a code change."""
+    monkeypatch.setattr("ayoai_client.COLD_START_RETRY_DELAY_S", 0)
+    monkeypatch.setenv("AYOAI_COLD_START_ATTEMPTS", "2")
+    sess = MagicMock(spec=requests.Session)
+    sess.post.side_effect = requests.exceptions.ConnectionError("nope")
+    with pytest.raises(AyoaiApiError):
+        _initiate_cold_start("card-U", "arc-agi-3", "k", sess, 10.0)
+    assert sess.post.call_count == 2
+
+
+def test_initiate_cold_start_garbage_env_falls_back_to_default(monkeypatch):
+    """A malformed override must never break session-open (fail-safe)."""
+    monkeypatch.setattr("ayoai_client.COLD_START_RETRY_DELAY_S", 0)
+    monkeypatch.setenv("AYOAI_COLD_START_ATTEMPTS", "not-a-number")
+    sess = MagicMock(spec=requests.Session)
+    sess.post.side_effect = requests.exceptions.ConnectionError("nope")
+    with pytest.raises(AyoaiApiError):
+        _initiate_cold_start("card-V", "arc-agi-3", "k", sess, 10.0)
+    assert sess.post.call_count == COLD_START_MAX_ATTEMPTS
+
+
+def test_open_session_http_timeout_defaults_and_env_override(monkeypatch):
+    """main.py never passes http_timeout_s, so the env override is the only knob.
+
+    Before g-315-509 the default was unreachable from outside the module.
+    """
+    monkeypatch.setenv("AYOAI_API_KEY", "test-key")
+    monkeypatch.setattr("ayoai_client.DEFAULT_RETRY_DELAY_S", 0)
+
+    # Default path resolves to DEFAULT_HTTP_TIMEOUT_S.
+    sess = _make_session_mock([_mock_response(200, _success_body())])
+    open_ayoai_session("card-W", session=sess)
+    assert sess.post.call_args_list[0].kwargs["timeout"] == DEFAULT_HTTP_TIMEOUT_S
+
+    # Env override is picked up at call time.
+    monkeypatch.setenv("AYOAI_HTTP_TIMEOUT_S", "42.5")
+    sess2 = _make_session_mock([_mock_response(200, _success_body())])
+    open_ayoai_session("card-X", session=sess2)
+    assert sess2.post.call_args_list[0].kwargs["timeout"] == 42.5
+
+
+def test_default_http_timeout_exceeds_measured_provisioning_latency():
+    """Pin the default above the measured cold-start provisioning latency.
+
+    The sibling test above asserts against the DEFAULT_HTTP_TIMEOUT_S *symbol*,
+    so it passes at any value — including a regression back to the 10.0 that
+    killed three consecutive live runs at `ReadTimeout(read timeout=10.0)`.
+
+    Measured 2026-07-28 on a live ls20 run: session-open 16:14:38.474 ->
+    "Cold-start initiated" 16:14:52.991 = 14.5s on invocation_type=warm_pool.
+    A cold pool has no measurement yet and can only be slower.
+
+    Retry does not substitute for this floor: each attempt inherits the same
+    timeout, so a default below the provisioning latency fails N times rather
+    than once. This asserts the floor, not the exact value — raising 30.0 is
+    fine, dropping below the observed 14.5s is the regression.
+    """
+    measured_warm_pool_latency_s = 14.5
+    assert DEFAULT_HTTP_TIMEOUT_S > measured_warm_pool_latency_s, (
+        f"DEFAULT_HTTP_TIMEOUT_S={DEFAULT_HTTP_TIMEOUT_S} is at or below the "
+        f"measured {measured_warm_pool_latency_s}s warm-pool provisioning "
+        f"latency — cold start will time out on every retry attempt."
+    )
 
 
 def test_initiate_cold_start_payload_shape():
