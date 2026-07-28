@@ -58,6 +58,27 @@ HEADERS = {
     "Accept": "application/json",
 }
 
+# ── Process exit codes (g-315-512) ────────────────────────────────────────────
+# Every abort path in main() used to `return` from a `-> None` function that
+# __main__ called bare, so a run that never played a single tick exited 0 and
+# was indistinguishable from a clean run. That masked three real failures on
+# 2026-07-28. Backgrounded runs have no human reading the log, and the exit code
+# IS the completion signal there, so "check for the OPEN FAILED line instead"
+# was never a sufficient workaround.
+#
+# ALL abort paths are wired, not just the two that motivated the goal. A
+# PARTIALLY truthful exit code is worse than a uniformly untruthful one: a
+# caller that learns to trust it would be silently misled by whichever paths
+# were left behind.
+#
+# 1 is deliberately unused — Python already exits 1 on an uncaught traceback,
+# so leaving it reserved keeps "crashed" distinguishable from "diagnosed a
+# failure and aborted cleanly".
+EXIT_OK = 0
+EXIT_ARC_UPSTREAM = 2       # ARC-AGI-3 side: connect / game list / scorecard
+EXIT_AYOAI_SESSION_OPEN = 3  # AyoAI Collect cold-start or readiness poll failed
+EXIT_AYOAI_STREAMING = 4     # AyoAI session opened but streaming setup failed
+
 
 def choose_random_action(frame: FrameData) -> GameAction:
     """
@@ -347,7 +368,14 @@ def build_v3_refiner_seed_provider(
     return RefinerSeedProvider(inner, library)
 
 
-def main() -> None:
+def main() -> int:
+    """Run one ARC game session. Returns a process exit code (see EXIT_* above).
+
+    Every early return is a FAILURE path and returns a non-zero code; the
+    successful path falls through to `return EXIT_OK` at the end. Note that
+    "successful" means the game loop ran to completion — a score of 0 is a
+    legitimate 0-exit outcome, since losing is not an error.
+    """
     log_level = logging.INFO
     if os.environ.get("DEBUG", "False") == "True":
         log_level = logging.DEBUG
@@ -767,7 +795,7 @@ def main() -> None:
 
     except requests.exceptions.RequestException as e:
         logger.error(f"Failed to connect to API server: {e}")
-        return
+        return EXIT_ARC_UPSTREAM
 
     # Validate the requested game exists
     if args.game not in full_games:
@@ -775,7 +803,7 @@ def main() -> None:
             f"The specified game '{args.game}' does not exist or is not available with your API key."
         )
         logger.info(f"Available games: {', '.join(full_games)}")
-        return
+        return EXIT_ARC_UPSTREAM
 
     logger.info(f"Selected game: {args.game}")
 
@@ -795,7 +823,7 @@ def main() -> None:
 
     if r.status_code != 200:
         logger.error(f"Failed to open scorecard: {r.status_code} - {r.text[:200]}")
-        return
+        return EXIT_ARC_UPSTREAM
 
     try:
         card_data = r.json()
@@ -803,7 +831,7 @@ def main() -> None:
         logger.info(f"Scorecard opened: {card_id}")
     except (ValueError, KeyError) as e:
         logger.error(f"Failed to parse scorecard response: {e}")
-        return
+        return EXIT_ARC_UPSTREAM
 
     # g-315-03: open AyoAI Environment Server session before starting the
     # action loop. The card_id IS the ayoServerKey (per-game scope, mirrors
@@ -886,7 +914,7 @@ def main() -> None:
                 logger.exception(
                     "scorecard close also failed after session-open abort"
                 )
-            return
+            return EXIT_AYOAI_SESSION_OPEN
     elif args.mock_url:
         logger.info(
             f"Mock mode: routing decisions through {args.mock_url} "
@@ -922,7 +950,7 @@ def main() -> None:
                 )
             except requests.exceptions.RequestException:
                 logger.exception("scorecard close also failed after session-open abort")
-            return
+            return EXIT_AYOAI_SESSION_OPEN
 
     # g-315-15 + g-315-17: instantiate the streaming decision client.
     # g-315-115: when --use-solver-v0 is set, swap in SolverV0StreamingAdapter
@@ -1139,7 +1167,7 @@ def main() -> None:
                 "DNS warm-up FAILED — aborting play before first send_add: %s", exc
             )
             streaming_client.close()
-            return
+            return EXIT_AYOAI_STREAMING
 
     # Setup recorder if requested. Prefix encodes game.solver.level so
     # recordings are self-describing — matches recorder.get_prefix
@@ -1335,7 +1363,9 @@ def main() -> None:
     except Exception:
         logger.exception("streaming client close failed (non-fatal)")
 
+    return EXIT_OK
+
 
 if __name__ == "__main__":
     os.environ["TESTING"] = "False"
-    main()
+    sys.exit(main())
