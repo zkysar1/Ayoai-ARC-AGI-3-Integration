@@ -135,3 +135,55 @@ fire-on-nothing.
 - K is a tunable (5-10% from the ls20 data); it may need per-game calibration.
 - The empty-HUD approximation (g-315-466) still applies — if the live A/B
   underperforms, thread the live frozen HUD before abandoning the approach.
+
+## MEASURED LIMIT — this objective cannot reward semantic quality (g-315-513)
+
+The Caveat above assumes the structural and semantic arms "both need this same
+zero-positive objective branch" so CEGIS does not tighten them to fire-on-nothing.
+The first half holds; the second does not follow. Sharing the branch keeps a semantic
+proposal *alive*, but it does not give it a *contest it can win on semantic merit*.
+
+Reproduce: `PYTHONPATH=. .venv/bin/python analysis/g315513_objective_expressiveness.py`
+(deterministic, no recordings needed — the objective depends on `n` and `tail_k` only).
+
+`dist = |fire_count/n − K/100|` reduces every candidate to ONE integer, its fire count.
+At the ls20 operating point (n=1500, K=7):
+
+| fact | value |
+|---|---|
+| unique argmin `m*` | **105** frames (dist = 0) |
+| what the nearest-rank tail constructor produces | **106** frames (dist = 0.000667) |
+| tail constructor attains `m*`? | **no** — it is suboptimal by exactly one frame |
+| fire counts that strictly beat it | **{105}** — 1 of 1501 (0.0666%) |
+| fire counts that exactly tie it | **{104}** — and a tie LOSES (strict `<`, tails enumerated first) |
+
+Two consequences the design did not anticipate:
+
+1. **A win IS reachable** — the arm is not structurally barred, contradicting the
+   simpler "the constructor is optimal by construction" reading. But the winning set is
+   a single integer that nothing about semantic correctness steers toward. The arm
+   loses a lottery, not an argument. This also matches the observed 0.00% over 600
+   grounded thresholds: 600 samples of a target with ~0.07% hit probability.
+
+2. **No tie-break can fix it.** A tie-break is itself a function of fire count, so it
+   can only redistribute among count-equivalent candidates — it would widen the winning
+   set from {105} to {104, 105}, i.e. 1→2 of 1501. Measured directly: two predicates
+   firing on 105 frames each, overlapping in only 5, with longest contiguous run 105 vs
+   1, score **identically** (dist = 0.000000) and the winner flips with list order. The
+   objective carries zero information about WHICH frames fire — and "which frames" is
+   exactly where semantic quality lives.
+
+**Therefore**: rewarding semantic quality requires a term that reads the ARRANGEMENT of
+the firing set, not another function of its size. Of the candidates raised in g-315-513:
+*(a) tie-break* is refuted above; *(b) held-out stability* and *(c) within-episode
+position* both qualify, since both depend on which frames fire. A fourth, not
+originally listed, is the best fit for this regime specifically: **temporal coherence**
+(run-length / burstiness of the firing indicator) — a win condition is a persistent
+STATE and should fire in contiguous runs, whereas a percentile threshold on a noisy
+prior fires scattered. It is orthogonal to fire count by construction and needs no
+positive labels, which matters here because the regime is defined by having none.
+
+Note a wrinkle in (c): this corpus has no wins at all (guard-1352 / rb-4721: ls20 max
+score = 0), so "fires near episode end" is firing near *failure*. Its justification as
+a win-proxy does not transfer cleanly to a zero-positive corpus. Temporal coherence
+carries no such dependency.

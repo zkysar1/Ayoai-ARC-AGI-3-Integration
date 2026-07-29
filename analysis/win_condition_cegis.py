@@ -141,14 +141,28 @@ def _select_zero_positive_candidate(
     ``extra_candidates`` (Increment IV -- LLM arm): additional caller-supplied
     ``PredicateSpec`` proposals (e.g. an LLM hypothesizer's semantic win-proxy)
     added to the candidate pool.  They compete under the SAME target-fraction
-    objective as the structural-tail candidates -- so a non-degenerate LLM
-    proposal that fires near ``tail_k``% can win, while a degenerate one
+    objective as the structural-tail candidates, so a degenerate proposal
     (fire-on-nothing / fire-on-everything) is simply out-competed by a
     tail candidate closer to K%.  This IS g-315-468's protection: the LLM's
     proposal is evaluated by the reframed target-fraction objective, NOT the
     FP-minimization filter that would tighten it back to fire-on-nothing.
     When ``extra_candidates`` is ``None`` the behaviour is byte-identical to
     the prior structural-tail-only selection (backward compatible).
+
+    CAUTION -- "fires near ``tail_k``% can win" is FALSE, and this docstring
+    used to say it (corrected g-315-513).  ``dist`` depends on a candidate ONLY
+    through its integer fire count, so at n=1500 / K=7 exactly ONE fire count
+    (105) strictly beats the tail arm; 104 ties it and LOSES on the strict
+    ``<`` below, because tail candidates are enumerated first.  The tail
+    constructor itself is NOT optimal -- nearest-rank pins it at 106
+    (dist=0.000667) -- so a win is reachable, but only by hitting one integer
+    out of 1501, which nothing about semantic correctness steers toward.  Two
+    predicates firing on the same COUNT score identically no matter WHICH
+    frames they fire on (measured: firing sets overlapping in 5 of 105 frames,
+    longest run 105 vs 1, dist identical, winner decided by list order).  So no
+    tie-break on fire count can express a preference for semantic quality --
+    that requires a term reading the ARRANGEMENT of the firing set.  Measured
+    by ``analysis/g315513_objective_expressiveness.py``.
 
     Returns ``None`` if no candidate (tail OR extra) survives, signaling the
     caller to fall back to the existing CEGIS behavior.
