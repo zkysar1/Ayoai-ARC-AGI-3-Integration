@@ -47,7 +47,9 @@ from analysis.predicate_spec import (
     PriorThresholdConstraint,
 )
 from analysis.win_condition_cegis import (
+    ZERO_POSITIVE_COHERENCE_WEIGHT,
     ZERO_POSITIVE_TAIL_K,
+    _firing_coherence,
     _select_zero_positive_candidate,
 )
 
@@ -156,6 +158,7 @@ def part2() -> None:
     print(f"  identical fire count? {len(f_c) == len(f_s)}")
 
     print("\n  order-swap test:")
+    winners = []
     for label, extras in (
         ("[contiguous, scattered]", [contiguous, scatter]),
         ("[scattered, contiguous]", [scatter, contiguous]),
@@ -167,11 +170,36 @@ def part2() -> None:
         kind = "CONTIGUOUS" if res.spec == contiguous else (
             "SCATTERED" if res.spec == scatter else "tail"
         )
+        winners.append(kind)
         print(f"    extras={label:<24} -> winner={kind:<11} "
               f"fires={res.counterexample_count} dist={dist:.6f}")
 
-    print("\nVERDICT (part 2): the winner flips with list ORDER at identical dist —")
-    print("the objective carries zero information about WHICH frames fire.")
+    # g-315-516: the arrangement term. Scored directly so the two candidates'
+    # scores are visible side by side, not just the winner they produce.
+    coh_c = _firing_coherence([i in f_c for i in range(N)])
+    coh_s = _firing_coherence([i in f_s for i in range(N)])
+    dist_c = abs(len(f_c) / N - K / 100.0)
+    dist_s = abs(len(f_s) / N - K / 100.0)
+    score_c = dist_c - ZERO_POSITIVE_COHERENCE_WEIGHT * coh_c
+    score_s = dist_s - ZERO_POSITIVE_COHERENCE_WEIGHT * coh_s
+
+    print(f"\n  arrangement term (weight={ZERO_POSITIVE_COHERENCE_WEIGHT}):")
+    print(f"    contiguous: dist={dist_c:.6f} coherence={coh_c:.4f} "
+          f"-> score={score_c:.6f}")
+    print(f"    scattered:  dist={dist_s:.6f} coherence={coh_s:.4f} "
+          f"-> score={score_s:.6f}")
+    print(f"    identical dist? {dist_c == dist_s}   "
+          f"different score? {score_c != score_s}   "
+          f"contiguous preferred? {score_c < score_s}")
+
+    order_independent = winners[0] == winners[1] == "CONTIGUOUS"
+    print("\nVERDICT (part 2): the objective now reads WHICH frames fire.")
+    print(f"  order-independent, contiguous wins both orders? {order_independent}")
+    print("  Before g-315-516 the winner flipped with list ORDER at identical")
+    print("  dist; the count-equivalent pair is now separated by arrangement.")
+    print("  NOT yet established: that a semantic proposal beats the tail on")
+    print("  REAL frames -- that needs recordings/ (hypothesis")
+    print("  2026-07-29_tail-firing-set-is-bursty-not-scattered, still open).")
 
 
 if __name__ == "__main__":

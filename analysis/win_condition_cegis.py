@@ -81,6 +81,29 @@ objective and the existing CEGIS refinement loop is more appropriate.
 """
 
 
+ZERO_POSITIVE_COHERENCE_WEIGHT: float = 0.03
+"""How much target-fraction deviation one unit of temporal coherence may buy.
+
+g-315-516.  The selection score is ``dist - WEIGHT * coherence`` (minimised),
+so this constant sets the EXCHANGE RATE between "fires at about K%" and "fires
+in contiguous runs".  0.03 is not a tuned magic number -- it is the half-width
+of the design's sanctioned 5-10% band around K=7 (``design/
+win-condition-zero-positive-objective.md`` L135: "K is a tunable (5-10% from
+the ls20 data)").  So the rate reads exactly as:
+
+    a MAXIMALLY coherent candidate at the far edge of the sanctioned band
+    (10%, dist=0.03) ties a ZERO-coherence candidate sitting exactly on
+    target (7%, dist=0.00).
+
+Arrangement can therefore reorder candidates ANYWHERE INSIDE the band the
+design already calls acceptable, and can NEVER rescue one outside it.  That
+bound is what preserves guard-1397 (non-degeneracy) by construction rather
+than by a separate check: fire-on-nothing scores 0.07 and fire-on-everything
+scores 0.93-0.03 = 0.90, both catastrophically worse than a tail candidate's
+~0.0007, so no amount of coherence makes a degenerate predicate win.
+"""
+
+
 def compute_prior_stats(
     validation_frames: list[tuple[CCSignature, float]],
 ) -> dict[str, dict[str, float]]:
@@ -124,6 +147,46 @@ def compute_prior_stats(
     return stats
 
 
+def _firing_coherence(fires: list[bool]) -> float:
+    """How CONTIGUOUS a firing set is, normalised against its own fire count.
+
+    g-315-516.  Returns 1.0 when every firing frame sits in ONE contiguous run,
+    0.0 when no two firing frames are adjacent, and interpolates between.
+
+    WHY THIS IS NOT ANOTHER FUNCTION OF FIRE COUNT (guard-1872).  The existing
+    objective reduces a candidate to the integer ``fire_count``, so anything
+    derived from that integer -- including a tie-break on it -- can only
+    redistribute among count-equivalent candidates.  This term reads the
+    ARRANGEMENT of the firing set instead: two predicates firing on the same
+    NUMBER of frames score differently here whenever those frames are laid out
+    differently.  That is the property the objective was missing, and it is why
+    a win condition (a persistent STATE, firing in runs) can outscore a
+    percentile threshold on a noisy prior (firing scattered) at equal fire rate.
+
+    WHY NORMALISED, NOT RAW RUN-LENGTH.  Raw longest-run grows with fire count,
+    so it would hand a free advantage to candidates that simply fire more --
+    smuggling fire count back in through the term meant to escape it, and
+    re-creating the inert-lever failure (rb-3214) one level up.  At fire count
+    ``m`` the number of maximal runs ``r`` is bounded to ``[1, m]``, so mapping
+    that ACHIEVABLE range onto [0, 1] makes the term depend on arrangement
+    ALONE.  This is also the form g-315-516 specifies as robust if the open
+    hypothesis 2026-07-29_tail-firing-set-is-bursty-not-scattered resolves
+    BURSTY: if temporally-autocorrelated priors make every candidate fire in
+    runs, a raw term rewards the structural baseline just as much as a semantic
+    proposal, whereas normalising against what is achievable at that count keeps
+    the comparison between candidates rather than against an absolute scale.
+
+    ``m <= 1`` returns 0.0: one isolated frame is not evidence of a persistent
+    state, and scoring it 1.0 (trivially "one run") would let a near-empty
+    predicate collect the maximum arrangement bonus.
+    """
+    m = sum(fires)
+    if m <= 1:
+        return 0.0
+    runs = sum(1 for i, f in enumerate(fires) if f and (i == 0 or not fires[i - 1]))
+    return (m - runs) / (m - 1)
+
+
 def _select_zero_positive_candidate(
     compiler: Callable[[PredicateSpec], Callable[[CCSignature], bool]],
     validation_frames: list[tuple[CCSignature, float]],
@@ -163,6 +226,18 @@ def _select_zero_positive_candidate(
     tie-break on fire count can express a preference for semantic quality --
     that requires a term reading the ARRANGEMENT of the firing set.  Measured
     by ``analysis/g315513_objective_expressiveness.py``.
+
+    THAT TERM NOW EXISTS (g-315-516).  When ``extra_candidates`` is supplied,
+    selection minimises ``dist - ZERO_POSITIVE_COHERENCE_WEIGHT * coherence``
+    rather than ``dist`` alone, where ``coherence`` is ``_firing_coherence``'s
+    count-normalised contiguity of the firing set.  The count-equivalent pair
+    above now scores DIFFERENTLY and the contiguous one wins under both list
+    orders.  ``extra_candidates=None`` is deliberately unchanged -- see the
+    gating comment in the scoring loop.  What this does NOT yet establish is
+    that a semantic proposal beats the structural tail on REAL frames: that
+    depends on whether the tail's firing set is scattered or bursty in time
+    (open hypothesis 2026-07-29_tail-firing-set-is-bursty-not-scattered, which
+    needs a box with ``recordings/`` to measure).
 
     Returns ``None`` if no candidate (tail OR extra) survives, signaling the
     caller to fall back to the existing CEGIS behavior.
@@ -214,7 +289,8 @@ def _select_zero_positive_candidate(
     target_frac = tail_k / 100.0
     best_spec: Optional[PredicateSpec] = None
     best_pred: Optional[Callable[[CCSignature], bool]] = None
-    best_dist = float("inf")
+    best_score = float("inf")
+    best_coherence = 0.0
     best_fire_count = 0
     best_origin = "tail"
 
@@ -226,18 +302,37 @@ def _select_zero_positive_candidate(
     # synthesize_goal_predicate discards at its return. Log the contest instead.
     n_extra = len(extra_candidates) if extra_candidates else 0
     n_tail = len(candidates) - n_extra
+    # g-315-516: the arrangement term applies only when there IS a contest.
+    # With extra_candidates=None the pool is the three structural thresholds
+    # whose selection is pinned by existing tests and by every live run to
+    # date; those candidates fire on data-dependent (NOT necessarily suffix)
+    # frame sets, so an always-on coherence term could silently reorder them.
+    # Gating keeps that path byte-identical, which g-315-516 requires, and
+    # costs nothing: arrangement exists to adjudicate a semantic proposal
+    # against a fire-rate-matched structural one, and with no extras there is
+    # no such proposal to adjudicate.
+    coherence_active = n_extra > 0
     for idx, candidate in enumerate(candidates):
         pred = compiler(candidate)
-        fire_count = sum(1 for sig, _s in validation_frames if pred(sig))
+        fires = [bool(pred(sig)) for sig, _s in validation_frames]
+        fire_count = sum(fires)
         fire_rate = fire_count / n_frames
         dist = abs(fire_rate - target_frac)
+        # Arrangement-aware score. When inactive this is EXACTLY ``dist``, so
+        # the tail-only ranking is unchanged (no float perturbation).
+        coherence = _firing_coherence(fires) if coherence_active else 0.0
+        score = (
+            dist - ZERO_POSITIVE_COHERENCE_WEIGHT * coherence
+            if coherence_active
+            else dist
+        )
         # Provenance: candidates are tail-first, extras appended (see above).
         origin = "extra" if idx >= n_tail else "tail"
         logger.debug(
             "[win-cegis] candidate origin=%s fires=%d/%d (%.4f) "
-            "target=%.4f dist=%.4f spec=%r",
+            "target=%.4f dist=%.4f coherence=%.4f score=%.6f spec=%r",
             origin, fire_count, n_frames, fire_rate, target_frac, dist,
-            candidate,
+            coherence, score, candidate,
         )
         if fire_count == 0:
             logger.info(
@@ -246,8 +341,9 @@ def _select_zero_positive_candidate(
                 "cannot win the target-fraction objective: spec=%r",
                 origin, candidate,
             )
-        if dist < best_dist:
-            best_dist = dist
+        if score < best_score:
+            best_score = score
+            best_coherence = coherence
             best_spec = candidate
             best_pred = pred
             best_fire_count = fire_count
@@ -258,10 +354,11 @@ def _select_zero_positive_candidate(
 
     logger.info(
         "[win-cegis] SELECTED origin=%s from %d candidates "
-        "(%d tail + %d extra) fires=%d/%d (%.4f) target=%.4f spec=%r",
+        "(%d tail + %d extra) fires=%d/%d (%.4f) target=%.4f "
+        "coherence=%.4f score=%.6f spec=%r",
         best_origin, len(candidates), n_tail, n_extra,
         best_fire_count, n_frames, best_fire_count / n_frames, target_frac,
-        best_spec,
+        best_coherence, best_score, best_spec,
     )
     if n_extra and best_origin != "extra":
         logger.info(

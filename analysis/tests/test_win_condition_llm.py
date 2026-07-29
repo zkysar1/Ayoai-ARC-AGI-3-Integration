@@ -34,7 +34,9 @@ from analysis.predicate_spec import (
     PriorThresholdConstraint,
 )
 from analysis.win_condition_cegis import (
+    ZERO_POSITIVE_COHERENCE_WEIGHT,
     CEGISResult,
+    _firing_coherence,
     _select_zero_positive_candidate,
     hypothesize_until_viable,
 )
@@ -457,6 +459,131 @@ class TestCEGISIntegration:
         )
         # The threaded extra won the target-fraction selection.
         assert result.spec == extra
+
+
+# ---------------------------------------------------------------------------
+# g-315-516 -- arrangement-dependent term
+# ---------------------------------------------------------------------------
+
+
+_ARR_N = 200
+_ARR_K = 7.0
+
+
+def _arrangement_frames() -> list[tuple[CCSignature, float]]:
+    """Frames where two tail candidates fire on the SAME count, arranged apart.
+
+    ``compression`` fires on 15 SCATTERED frames, ``orderedness`` on 15
+    CONTIGUOUS ones -- identical fire count, so identical ``dist``.  The
+    compression tail is enumerated FIRST (its threshold-minus-median gap, i.e.
+    sharpness, is larger), which is what makes the pair a discriminating probe
+    rather than a generic one (guard-1419): with the arrangement term inactive
+    the scattered candidate wins on enumeration order alone, and with it active
+    the contiguous one wins on coherence.  A test built on these frames
+    therefore FAILS if the ``extra_candidates=None`` gate is ever removed,
+    instead of passing under both behaviours.
+
+    Both counts are 15, not 14: at 14 the (100-K)th percentile lands on the low
+    plateau and ``_build_tail_candidates`` drops the prior entirely (measured).
+    """
+    block = set(range(15))                       # contiguous
+    scattered = set(list(range(0, _ARR_N, 13))[:15])  # scattered, same count
+
+    def mk(i: int) -> CCSignature:
+        return CCSignature(
+            components=(Component(palette=1, size=5, bbox=(0, 0, 0, 1)),),
+            priors={
+                "orderedness": 0.9 if i in block else 0.1,
+                "compression": 0.95 if i in scattered else 0.1,
+                "symmetry": 0.1,
+            },
+        )
+
+    return [(mk(i), 0.0) for i in range(_ARR_N)]
+
+
+class TestFiringCoherence:
+    def test_contiguous_is_one_scattered_is_zero(self) -> None:
+        n = 100
+        contiguous = [i < 10 for i in range(n)]
+        scattered = [i % 10 == 0 for i in range(n)]  # same count, no adjacency
+        assert sum(contiguous) == sum(scattered) == 10
+        assert _firing_coherence(contiguous) == 1.0
+        assert _firing_coherence(scattered) == 0.0
+
+    def test_partial_arrangement_interpolates(self) -> None:
+        # 10 frames in 2 runs of 5 -> (10-2)/(10-1)
+        fires = [False] * 100
+        for i in list(range(0, 5)) + list(range(50, 55)):
+            fires[i] = True
+        assert _firing_coherence(fires) == pytest.approx(8 / 9)
+
+    def test_degenerate_counts_score_zero(self) -> None:
+        # A single isolated frame is not a persistent state, and must not
+        # collect the maximum bonus for being trivially "one run".
+        assert _firing_coherence([False] * 50) == 0.0
+        assert _firing_coherence([i == 7 for i in range(50)]) == 0.0
+
+    def test_independent_of_fire_count_scale(self) -> None:
+        # Normalisation means a fully-contiguous set scores 1.0 at ANY count,
+        # so the term cannot be gamed by simply firing more (rb-3214).
+        for m in (2, 5, 50, 199):
+            assert _firing_coherence([i < m for i in range(200)]) == 1.0
+
+
+class TestArrangementTerm:
+    def test_contiguous_beats_scattered_at_equal_fire_count(self) -> None:
+        # The g-315-513 finding was that these two score IDENTICALLY and the
+        # winner flips with list order. Both orders must now pick contiguous.
+        frames = _arrangement_frames()
+        contiguous = PriorThresholdConstraint(
+            prior="orderedness", op=">=", value=0.9
+        )
+        scattered = PriorThresholdConstraint(
+            prior="compression", op=">=", value=0.95
+        )
+        for extras in ([contiguous, scattered], [scattered, contiguous]):
+            result = _select_zero_positive_candidate(
+                compile_spec, frames, tail_k=_ARR_K, extra_candidates=extras
+            )
+            assert result is not None
+            assert result.spec == contiguous, (
+                f"arrangement ignored for extras order {extras}"
+            )
+
+    def test_tail_only_path_is_unchanged(self) -> None:
+        # g-315-516 requires extra_candidates=None to stay byte-identical.
+        # On these frames the SCATTERED tail candidate is enumerated first at
+        # equal dist, so dist-only selection picks it; if the coherence gate
+        # were removed the CONTIGUOUS one would win instead and this fails.
+        frames = _arrangement_frames()
+        result = _select_zero_positive_candidate(
+            compile_spec, frames, tail_k=_ARR_K
+        )
+        assert result is not None
+        assert isinstance(result.spec, PriorThresholdConstraint)
+        assert result.spec.prior == "compression"
+
+    def test_degenerate_candidate_cannot_win_on_coherence(self) -> None:
+        # guard-1397: a fire-on-everything predicate is perfectly contiguous
+        # (coherence 1.0) and must STILL lose -- the weight is bounded by the
+        # sanctioned band's half-width, far below its dist penalty.
+        frames = _arrangement_frames()
+        fire_everything = CountConstraint(op=">=", value=1)  # every frame
+        result = _select_zero_positive_candidate(
+            compile_spec, frames, tail_k=_ARR_K,
+            extra_candidates=[fire_everything],
+        )
+        assert result is not None
+        assert result.spec != fire_everything
+        assert result.counterexample_count < _ARR_N
+
+    def test_weight_cannot_rescue_out_of_band_candidate(self) -> None:
+        # The exchange rate is the 5-10% band half-width: max coherence buys
+        # exactly 0.03 of dist and no more, so nothing outside the band wins.
+        assert ZERO_POSITIVE_COHERENCE_WEIGHT == pytest.approx(0.03)
+        out_of_band_dist = abs(1.0 - _ARR_K / 100.0)  # fire-on-everything
+        assert out_of_band_dist - ZERO_POSITIVE_COHERENCE_WEIGHT > 0.005
 
 
 # ---------------------------------------------------------------------------
