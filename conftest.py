@@ -118,6 +118,30 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent
 
+# Machine-readable proof that THIS guard aborted a run, prefixed onto every
+# ``pytest.exit`` reason below (g-315-524).
+#
+# WHY A SENTINEL AND NOT THE MESSAGE PROSE. ``tests/test_default_collection_pin.py``
+# spawns a no-args pytest to measure the default collection. When this guard aborts
+# that subprocess the child exits non-zero, so the pin fails on its rc assertion --
+# and rc alone cannot say WHICH of two opposite things happened: (a) this guard
+# fired, which IS the revert the pin watches for and is fixed by editing testpaths;
+# (b) the suite is genuinely broken, where the revert question is moot until that is
+# fixed. Measured 2026-07-31 (bravo, cc-05/Linux, pytest 9.1.1): case (a) exits
+# rc=1 with the reason on STDERR and stdout empty; a broken run (bad path arg) exits
+# rc=4. The codes differ *here*, but rc is not a contract -- other broken-suite
+# shapes exit 1, 2 or 3 -- so the pin keys on this marker, which is one.
+#
+# Keyed on a deliberate sentinel rather than on the message text (prose drifts) or a
+# goal id (the guard-1685 referent trap: an id survives the correction that retires
+# it). ``tests/test_default_collection_pin.py`` declares its OWN copy of this string
+# and ``test_root_guard_derivation_matches_pin`` asserts the two agree -- an import
+# would compare the constant to itself and pass vacuously. Separately,
+# ``test_guard_abort_is_machine_discriminable`` triggers BOTH exits for real and
+# asserts the marker reaches stderr, because matching constants prove the two files
+# agree on a NAME and not that either exit actually emits it.
+GUARD_ABORT_MARKER = "[ARC-ROOT-COLLECTION-GUARD]"
+
 # Never scanned for tests: VCS/tooling/cache dirs, and virtualenvs, which carry
 # thousands of vendored test files belonging to other projects. Dot-prefixed
 # names (.venv, .git) are skipped separately; 'venv' is listed because the
@@ -170,6 +194,7 @@ def pytest_configure(config: pytest.Config) -> None:
         # for the wrong reason, so refuse to pass rather than assert nothing.
         pytest.exit(
             reason=(
+                f"{GUARD_ABORT_MARKER} "
                 "root collection guard derived an EMPTY expected-tree set and "
                 "refuses to pass vacuously. It scans top-level directories for "
                 "files matching python_files; check that pytest.ini still has a "
@@ -194,6 +219,7 @@ def pytest_configure(config: pytest.Config) -> None:
         suggested = " ".join(sorted(set(listed) | set(trees)))
         pytest.exit(
             reason=(
+                f"{GUARD_ABORT_MARKER} "
                 "pytest.ini testpaths has lost "
                 + ", ".join(repr(t) for t in missing)
                 + ". Those directories contain test files on disk but are not in "

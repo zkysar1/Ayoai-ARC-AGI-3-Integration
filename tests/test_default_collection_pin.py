@@ -200,6 +200,84 @@ def _tree_of(node_id: str) -> str:
 # still catches with room to spare. Measured 1350 at pin time.
 MIN_TOTAL_NODE_IDS = 1200
 
+# The repo-root guard's abort sentinel, DECLARED HERE AS THIS FILE'S OWN LITERAL
+# and deliberately NOT imported from conftest (g-315-524).
+#
+# Importing it would make test_root_guard_derivation_matches_pin compare the
+# constant to itself, which passes no matter what either side does -- a test that
+# cannot fail is not coverage. Two independent literals plus an equality assert is
+# what makes drift RED. This is the same trade the SKIP_DIRS / expected_trees
+# duplication below already pays, for the same reason.
+_EXPECTED_GUARD_MARKER = "[ARC-ROOT-COLLECTION-GUARD]"
+
+
+def _run_default_collection(*extra_args: str) -> subprocess.CompletedProcess:
+    """Spawn a no-path-args pytest collection, optionally with ``-o`` overrides.
+
+    Passing NO path argument is the whole point: it is what makes pytest fall back
+    to ``testpaths``, which is the surface both this pin and the root guard watch.
+    Adding a path here would silently measure something else -- and would also
+    switch ``config.args_source`` to ARGS, which is the branch the root guard
+    deliberately skips, so the guard-abort callers below would stop firing it.
+
+    ``sys.executable`` is deliberate: the suite runs under this repo's ``.venv``
+    and a bare ``python3`` lacks its dependencies (pydantic et al), so hardcoding
+    an interpreter name would make callers fail for the wrong reason.
+
+    ``-qq`` forces the flat ``path::test`` node-id format. It is load-bearing:
+    ``addopts`` already carries ``-v``, so a single ``-q`` nets back to default
+    verbosity and ``--collect-only`` emits the indented tree format instead --
+    under which a naive ``startswith("analysis/")`` scan finds nothing and the
+    pin fails for a formatting reason rather than a real one. ``_collect_default``
+    parses both shapes anyway, so a future verbosity change degrades into a
+    still-correct check rather than a false alarm.
+
+    ``--collect-only`` never executes tests, so the child collecting this very
+    file cannot recurse.
+    """
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-qq", *extra_args],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+
+
+def _collect_failure_message(proc: subprocess.CompletedProcess) -> str:
+    """Explain a failed default collection, naming WHICH of two opposite causes.
+
+    The two causes need opposite responses -- (a) fix pytest.ini, (b) fix the
+    suite -- and until g-315-524 this message could not tell them apart, so it
+    hedged across both. It now branches on the root guard's machine marker in
+    stderr: present means the guard aborted the run, absent means it did not.
+
+    Keyed on the sentinel rather than on the guard's message prose (which drifts)
+    or on the exit code (measured: guard abort exits 1, a bad path arg exits 4 --
+    but other broken-suite shapes exit 1 too, so rc is a hint, not a contract).
+    """
+    if _EXPECTED_GUARD_MARKER in proc.stderr:
+        cause = (
+            "CAUSE: the repo-root conftest.py collection guard ABORTED this run -- "
+            f"its marker {_EXPECTED_GUARD_MARKER} is in the stderr below. THIS IS THE "
+            "REVERT THIS PIN WATCHES FOR, not a broken suite. The guard's own message "
+            "names the missing tree and the minimum testpaths line that satisfies it; "
+            "fix pytest.ini per that message.\n"
+        )
+    else:
+        cause = (
+            "CAUSE: the suite is genuinely broken (import error, syntax error, missing "
+            "dependency). The root collection guard did NOT fire -- its marker "
+            f"{_EXPECTED_GUARD_MARKER} is absent from stderr -- so this is NOT the "
+            "testpaths revert this pin watches for. Fix the breakage; the revert "
+            "question is moot until you do.\n"
+        )
+    return (
+        "default collection could not run.\n" + cause +
+        f"rc={proc.returncode} (rc alone cannot separate these two -- the marker can)\n"
+        f"stdout tail:\n{proc.stdout[-2000:]}\nstderr tail:\n{proc.stderr[-2000:]}"
+    )
+
 
 def _collect_default() -> list[str]:
     """Return collected node ids from a default collection (no path args).
@@ -208,46 +286,10 @@ def _collect_default() -> list[str]:
     the repo root actually collects -- the thing being pinned -- rather than
     whatever the in-process session happens to hold.
 
-    ``sys.executable`` is deliberate: the suite runs under this repo's ``.venv``
-    and a bare ``python3`` lacks its dependencies (pydantic et al), so hardcoding
-    an interpreter name would make this pin fail for the wrong reason.
-
-    ``-qq`` forces the flat ``path::test`` node-id format. It is load-bearing:
-    ``addopts`` already carries ``-v``, so a single ``-q`` nets back to default
-    verbosity and ``--collect-only`` emits the indented tree format instead --
-    under which a naive ``startswith("analysis/")`` scan finds nothing and the
-    pin fails for a formatting reason rather than a real one. The parse below is
-    tolerant of both shapes anyway, so a future verbosity change degrades into a
-    still-correct check rather than a false alarm.
-
-    ``--collect-only`` never executes tests, so the child collecting this very
-    file cannot recurse.
+    The subprocess argv and its rationale live in ``_run_default_collection``.
     """
-    proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-qq"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    assert proc.returncode == 0, (
-        "default collection could not run. READ THE STDERR TAIL BELOW before "
-        "concluding anything -- there are two causes and they need opposite "
-        "responses:\n"
-        "  (a) the repo-root conftest.py collection guard ABORTED the run, in "
-        "which case its message below names the missing tree and this IS the "
-        "revert this pin watches for -- fix testpaths, per that message;\n"
-        "  (b) the suite is genuinely broken (import error, syntax error, "
-        "missing dependency) -- fix that, and the revert question is moot until "
-        "you do.\n"
-        "This assertion cannot yet tell (a) from (b) -- see g-315-524. Until it "
-        "can, it must not claim either one: it said 'this is not the revert this "
-        "pin watches for, it is a broken suite' unconditionally, which was FALSE "
-        "in case (a) and printed directly above the guard message asserting the "
-        "opposite (measured 2026-07-31, bravo, cc-05).\n"
-        f"rc={proc.returncode}\n"
-        f"stdout tail:\n{proc.stdout[-2000:]}\nstderr tail:\n{proc.stderr[-2000:]}"
-    )
+    proc = _run_default_collection()
+    assert proc.returncode == 0, _collect_failure_message(proc)
     return [
         line.strip()
         for line in proc.stdout.splitlines()
@@ -440,4 +482,58 @@ def test_root_guard_derivation_matches_pin() -> None:
         "produce exactly that disagreement.\n"
         f"  root conftest.py: {sorted(root_guard.SKIP_DIRS)}\n"
         f"  this pin:         {sorted(_SKIP_DIRS)}"
+    )
+    assert root_guard.GUARD_ABORT_MARKER == _EXPECTED_GUARD_MARKER, (
+        "the abort marker drifted between the root guard and this pin, so "
+        "_collect_failure_message would silently take the 'suite is broken' "
+        "branch on a run the guard actually aborted -- the exact wrong-cause "
+        "diagnosis g-315-524 removed.\n"
+        f"  root conftest.py emits: {root_guard.GUARD_ABORT_MARKER!r}\n"
+        f"  this pin expects:       {_EXPECTED_GUARD_MARKER!r}"
+    )
+
+
+def test_guard_abort_is_machine_discriminable() -> None:
+    """Both root-guard aborts must actually EMIT the marker, and a healthy run must not.
+
+    Matching constants (asserted above) prove the two files agree on a NAME. They
+    do not prove either ``pytest.exit`` reason carries it, nor that its presence
+    means anything -- a marker printed unconditionally would match every run and
+    discriminate nothing. So this triggers both exits for real and pairs them with
+    a negative control.
+
+    The two triggers are the real reverts, not synthetic stand-ins:
+      ``-o testpaths=analysis``  drops ``tests`` -> the tree-lost exit
+      ``-o python_files=``       empties the patterns -> the vacuity exit
+    Both are cheap: the guard runs at ``pytest_configure``, so each aborts before
+    any collection work happens.
+
+    Asserted on STDERR specifically because that is where ``pytest.exit(reason=...)``
+    writes (measured 2026-07-31, pytest 9.1.1: stdout is empty on both aborts).
+    ``_collect_failure_message`` reads ``proc.stderr``, so a future pytest that moved
+    the reason to stdout would break the branch while leaving a stdout-tolerant test
+    green -- which is why this does not simply search both streams.
+    """
+    for override, what in (
+        ("-o", "testpaths=analysis"),
+        ("-o", "python_files="),
+    ):
+        proc = _run_default_collection(override, what)
+        assert _EXPECTED_GUARD_MARKER in proc.stderr, (
+            f"the root guard did not emit its abort marker under `{override} {what}`, "
+            "so the pin cannot tell this abort from a broken suite.\n"
+            f"rc={proc.returncode}\n"
+            f"stdout tail:\n{proc.stdout[-1500:]}\nstderr tail:\n{proc.stderr[-1500:]}"
+        )
+        # The branch that consumes the marker, exercised on the real output rather
+        # than on a hand-built fake -- a fixture could agree with a broken emitter.
+        assert "REVERT THIS PIN WATCHES FOR" in _collect_failure_message(proc)
+
+    healthy = _run_default_collection()
+    assert healthy.returncode == 0, _collect_failure_message(healthy)
+    assert _EXPECTED_GUARD_MARKER not in healthy.stderr, (
+        "the abort marker appears in a HEALTHY default run, so its presence proves "
+        "nothing and _collect_failure_message would blame testpaths for every real "
+        "breakage.\n"
+        f"stderr tail:\n{healthy.stderr[-1500:]}"
     )
