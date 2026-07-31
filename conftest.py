@@ -11,9 +11,30 @@ blind spot for the identical reason.
 A guard has to sit OUTSIDE every tree it guards. ``conftest.py`` at the repo
 root is that place: measured 2026-07-31 (bravo, cc-05/Linux, pytest 9.1.1),
 this file is imported and its hooks fire under ``-o testpaths=analysis`` -- the
-exact reverted config that hides the pin -- and under BOTH ``python -m pytest``
-and the bare ``pytest`` console script. conftest loading is driven by rootdir,
+exact reverted config that hides the pin. conftest loading is driven by rootdir,
 not by testpaths, which is what makes it reachable when the pin is not.
+
+RUNNER COVERAGE -- ``python -m pytest`` ONLY, and this paragraph is a CORRECTION.
+It said the hooks fire under BOTH that and the bare ``pytest`` console script.
+Re-measured 2026-07-31 (bravo, cc-05, during g-315-523) with stderr probes at
+module scope and inside ``pytest_configure``, testpaths reverted:
+
+    python -m pytest   MODULE-IMPORTED + CONFIGURE-RAN -> guard fires
+    pytest             MODULE-IMPORTED, NO CONFIGURE-RAN -> guard does NOT fire
+
+Under the bare console script the repo root is off ``sys.path``, so
+``tests/conftest.py`` dies on ``ModuleNotFoundError: structs`` while pytest is
+still collecting initial conftests -- which is BEFORE ``pytest_configure`` is
+invoked. This module is imported and its hook is then never called (rc=4).
+
+The original claim came from probing with ``-o testpaths=analysis``, which drops
+``tests/`` from the initial paths and so never loads the conftest that breaks
+that runner: the right binary run with an arg shape production never uses, whose
+branch avoided the exact failure being tested. Not a defect in this guard -- the
+bare runner cannot collect this repo AT ALL today, so there is no green run for a
+revert to hide in. But it is one runner's worth of protection less than claimed,
+and it silently becomes real coverage the day ``tests/conftest.py`` imports
+cleanly. Re-measure before widening this claim again.
 
 WHAT IS COMPARED, AND WHY IT IS NOT READ FROM pytest.ini
 --------------------------------------------------------
@@ -57,7 +78,10 @@ A root conftest.py is loaded for EVERY pytest invocation. An ImportError here
 takes down the entire suite -- including in the degraded environments where a
 guard most needs to still work. (Measured: under the bare ``pytest`` console
 script the repo root is not on ``sys.path`` and this repo's own suite already
-breaks with collection errors; this file still loaded and still ran.) So the
+breaks with collection errors; this file still IMPORTED cleanly there. Its hook
+does not get called on that runner -- see RUNNER COVERAGE above -- but that is
+pytest aborting early, not an import failure in this file, which is the property
+this paragraph is about.) So the
 derivation below is deliberately self-contained and duplicates a few lines of
 ``tests/test_default_collection_pin.py``. That duplication is not left to
 trust: ``test_root_guard_derivation_matches_pin`` in the pin asserts the two

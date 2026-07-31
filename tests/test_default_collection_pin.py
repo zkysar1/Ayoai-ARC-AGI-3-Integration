@@ -231,8 +231,21 @@ def _collect_default() -> list[str]:
         timeout=600,
     )
     assert proc.returncode == 0, (
-        "default collection failed to run at all -- this is not the revert this "
-        f"pin watches for, it is a broken suite.\nrc={proc.returncode}\n"
+        "default collection could not run. READ THE STDERR TAIL BELOW before "
+        "concluding anything -- there are two causes and they need opposite "
+        "responses:\n"
+        "  (a) the repo-root conftest.py collection guard ABORTED the run, in "
+        "which case its message below names the missing tree and this IS the "
+        "revert this pin watches for -- fix testpaths, per that message;\n"
+        "  (b) the suite is genuinely broken (import error, syntax error, "
+        "missing dependency) -- fix that, and the revert question is moot until "
+        "you do.\n"
+        "This assertion cannot yet tell (a) from (b) -- see g-315-524. Until it "
+        "can, it must not claim either one: it said 'this is not the revert this "
+        "pin watches for, it is a broken suite' unconditionally, which was FALSE "
+        "in case (a) and printed directly above the guard message asserting the "
+        "opposite (measured 2026-07-31, bravo, cc-05).\n"
+        f"rc={proc.returncode}\n"
         f"stdout tail:\n{proc.stdout[-2000:]}\nstderr tail:\n{proc.stderr[-2000:]}"
     )
     return [
@@ -309,14 +322,83 @@ def test_default_collection_includes_expected_trees() -> None:
     assert trees, "empty expected-tree set -- see test_expected_tree_set_is_derivable"
     collected = _collect_default()
     present = {_tree_of(nid) for nid in collected} - {""}
+    # What testpaths NAMES right now, reduced to first path segments. Read here
+    # for the repair suggestion only -- never as the source of `trees`, which
+    # stays filesystem-derived so the expectation cannot move with the attack
+    # (_expected_trees docstring; guard-1962).
+    #
+    # The suggestion is DERIVED, never a literal, for the same two reasons as
+    # the root guard's message (conftest.py, g-315-521) -- and the second is why
+    # a literal was actively wrong rather than merely stale. (1) A hardcoded
+    # list inside a guard whose whole purpose is surviving list drift is the
+    # defect g-315-520 removed from _expected_trees, one function over. (2) This
+    # message has TWO audiences: someone who reverted testpaths needs "put it
+    # back", but someone who just added this repo's first test under a NEW
+    # top-level directory needs "add your tree" -- and the literal line told
+    # that second person to delete their own work. Union serves both.
+    #
+    # Computed before the loop rather than lazily inside the assert message
+    # because the cost is one small configparser read, which is noise beside the
+    # _collect_default() subprocess two lines up; keeping the plain `assert`
+    # idiom every other check in this file uses is worth more than saving it.
+    #
+    # Empty segments are dropped so a `testpaths = .` entry cannot inject a bare
+    # "" into the suggested line. The root guard's _arg_tree twin does NOT filter
+    # -- recorded here rather than silently diverging; harmless there today
+    # because nothing in this repo writes that form.
+    listed = {
+        seg
+        for entry in _ini_values("testpaths", ())
+        if (seg := entry.replace("\\", "/").lstrip("./").split("/", 1)[0])
+    }
+    suggested = " ".join(sorted(listed | set(trees)))
     for tree in trees:
+        # The CAUSE line is conditional, because the unconditional one was wrong
+        # in the only case that can still reach it. Measured 2026-07-31 (bravo,
+        # cc-05), both branches constructed and run:
+        #
+        #   testpaths-revert -- does NOT arrive here. _collect_default() spawns a
+        #     no-args pytest, which is exactly the invocation the repo-root
+        #     conftest.py guard aborts at pytest_configure, so the run fails on
+        #     the rc assertion in _collect_default instead. (Verified by dropping
+        #     'analysis' from testpaths: rc=1, guard message, this line unreached.)
+        #
+        #   tree listed but not collected -- DOES arrive here, and is now the only
+        #     way to. Reproduced with a collect_ignore_glob conftest inside the
+        #     tree. pytest resists cruder constructions: --ignore and
+        #     norecursedirs BOTH failed to drop it, because a testpaths entry is
+        #     an explicit initial arg.
+        #
+        # So the old text ("testpaths has almost certainly lost X") accused the
+        # one file this same message then exonerates two lines down, under
+        # `testpaths currently names:`, and offered a suggested line identical to
+        # the one already in the ini. Branch on `listed` -- the data was already
+        # in hand.
+        if tree in listed:
+            cause = (
+                f"testpaths still LISTS '{tree}' and its test files are on disk, "
+                "so this is NOT a testpaths revert -- something else is dropping "
+                "the tree from collection. Look inside it for a conftest.py "
+                "collect_ignore / collect_ignore_glob, a norecursedirs entry, an "
+                "--ignore in addopts, or an import-mode collision.\n"
+            )
+        else:
+            cause = (
+                f"pytest.ini's testpaths line has lost '{tree}' -- that revert is "
+                "SILENT (the suite still reports green on the remaining tests), "
+                "which is the whole reason this pin exists.\n"
+                f"    testpaths = {suggested}\n"
+                "  ^ the MINIMUM that satisfies this check, derived from disk -- not\n"
+                "    necessarily the original line. testpaths may also have listed\n"
+                "    trees that hold no tests yet (a deliberate forward declaration\n"
+                "    neither this pin nor the root guard can see, and which a revert\n"
+                "    destroys); check git history before overwriting the line.\n"
+            )
         assert tree in present, (
-            f"no {tree}/ nodes in the default collection. pytest.ini's testpaths "
-            f"line has almost certainly lost '{tree}' -- that revert is SILENT "
-            "(the suite still reports green on the remaining tests), which is the "
-            "whole reason this pin exists. Restore "
-            "'testpaths = tests analysis primitives adapters'.\n"
-            f"expected trees (derived from testpaths): {list(trees)}\n"
+            f"no {tree}/ nodes in the default collection. " + cause +
+            f"expected trees (derived from the FILESYSTEM, NOT from testpaths -- "
+            f"see _expected_trees): {list(trees)}\n"
+            f"testpaths currently names: {sorted(listed)}\n"
             f"collected {len(collected)} node ids across: {sorted(present)}"
         )
 
