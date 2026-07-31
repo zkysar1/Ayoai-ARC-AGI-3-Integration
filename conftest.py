@@ -158,6 +158,16 @@ def pytest_configure(config: pytest.Config) -> None:
     listed = {_arg_tree(a) for a in config.args}
     missing = [t for t in trees if t not in listed]
     if missing:
+        # The suggested line is DERIVED, never a hardcoded tree list. Two reasons,
+        # and the second is why a literal would have been actively wrong rather
+        # than merely stale: (1) a hardcoded list inside a guard whose whole
+        # purpose is surviving list drift is the same defect g-315-520 removed
+        # from the pin; (2) this message has TWO audiences. Someone who reverted
+        # testpaths needs "put it back", but someone who just ADDED the repo's
+        # first test under a new top-level directory needs "add your new tree" --
+        # and a literal restore line tells that second person to delete their own
+        # work. Union of what is listed now and what has tests serves both.
+        suggested = " ".join(sorted(set(listed) | set(trees)))
         pytest.exit(
             reason=(
                 "pytest.ini testpaths has lost "
@@ -165,10 +175,18 @@ def pytest_configure(config: pytest.Config) -> None:
                 + ". Those directories contain test files on disk but are not in "
                 "the default collection, so a bare `pytest` run silently skips "
                 "them and still reports green -- which is the exact invisible "
-                "failure this guard exists to end. Restore:\n"
-                "    testpaths = tests analysis primitives adapters\n"
+                "failure this guard exists to end.\n"
+                f"    testpaths = {suggested}\n"
+                "  ^ the MINIMUM that satisfies this guard, derived from disk --\n"
+                "    not necessarily the original line. testpaths may also have\n"
+                "    listed trees that hold no tests yet (a deliberate forward\n"
+                "    declaration this guard cannot see, and a revert destroys);\n"
+                "    check git history before overwriting the line wholesale.\n"
                 f"  trees with tests on disk: {list(trees)}\n"
                 f"  testpaths currently names: {sorted(listed)}\n"
+                "  If a listed tree is meant to be excluded from the default run "
+                "on purpose, add an explicit opt-out here rather than deleting "
+                "this check.\n"
                 "  (guard lives in the repo-root conftest.py so it stays "
                 "reachable when the tree holding the in-suite pin is the one "
                 "dropped -- g-315-521)"
