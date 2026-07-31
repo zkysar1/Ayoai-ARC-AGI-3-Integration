@@ -18,6 +18,8 @@ import pathlib
 import sys
 from dataclasses import asdict
 
+import pytest
+
 # Ensure repo root is on sys.path so imports resolve
 _REPO = pathlib.Path(__file__).resolve().parents[2]
 if str(_REPO) not in sys.path:
@@ -64,7 +66,12 @@ class TestTrajectorySummarizer:
     def setup_class(cls):
         """Run summarizer once; reuse results across criteria."""
         cls.recording_paths = sorted(RECORDINGS_DIR.glob("*.recording.jsonl"))
-        assert len(cls.recording_paths) > 0, "No recordings found"
+        if not cls.recording_paths:
+            # Data-dependent suite: these criteria verify the summarizer against
+            # REAL gameplay recordings, which are produced by a recorded run and
+            # are deliberately not committed. Absent data is a skip, not a
+            # failure - an assert here reports 7 errors on every fresh clone.
+            pytest.skip(f"no *.recording.jsonl in {RECORDINGS_DIR}")
         cls.summaries = summarize_all_recordings(str(RECORDINGS_DIR))
 
     # -- Criterion 1: Completeness ------------------------------------------
