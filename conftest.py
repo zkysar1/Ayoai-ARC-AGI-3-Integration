@@ -1,0 +1,177 @@
+"""Repo-root guard: refuse a default run whose ``testpaths`` has lost a tree.
+
+WHY THIS FILE EXISTS (g-315-521, follow-up to g-315-519 / g-315-520)
+--------------------------------------------------------------------
+``tests/test_default_collection_pin.py`` pins the default collection, but it
+CANNOT GUARD ITS OWN TREE. The pin lives in ``tests/``, so the one revert that
+drops ``tests`` from ``testpaths`` stops the pin from being COLLECTED at all --
+it cannot fail a run it is not part of. Its node-id floor had the identical
+blind spot for the identical reason.
+
+A guard has to sit OUTSIDE every tree it guards. ``conftest.py`` at the repo
+root is that place: measured 2026-07-31 (bravo, cc-05/Linux, pytest 9.1.1),
+this file is imported and its hooks fire under ``-o testpaths=analysis`` -- the
+exact reverted config that hides the pin -- and under BOTH ``python -m pytest``
+and the bare ``pytest`` console script. conftest loading is driven by rootdir,
+not by testpaths, which is what makes it reachable when the pin is not.
+
+WHAT IS COMPARED, AND WHY IT IS NOT READ FROM pytest.ini
+--------------------------------------------------------
+guard-1962: whatever guards ``testpaths`` must not read its EXPECTATION from
+pytest.ini, or the expectation moves with the attack and the guard passes on a
+real regression. So the two sides come from different places on purpose:
+
+* EXPECTED -- derived from the FILESYSTEM. Top-level directories that actually
+  contain test files today. pytest.ini cannot influence this.
+* OBSERVED -- ``config.args``, which pytest populates FROM ``testpaths`` when no
+  path arguments were given. This is the guarded surface, and reading it here is
+  correct: it is the measurement, not the expectation.
+
+``config.getini("python_files")`` is read for the FILENAME PATTERNS only, never
+for which trees to expect -- the same split the pin's docstring already draws.
+Using pytest's own resolved value (rather than re-parsing the ini) means a
+malformed ini fails in pytest's own loader, loudly, before this code runs.
+
+WHY ``config.args`` AND NOT THE COLLECTED ITEMS
+-----------------------------------------------
+Inspecting ``items`` in ``pytest_collection_modifyitems`` would false-fire on
+any deselecting run: ``pytest -k some_narrow_name`` passes no path argument, so
+it is a "default" invocation whose item list is legitimately tiny. Whether that
+lands as a false positive would hinge on hook ordering against pytest's own mark
+plugin -- an implementation detail, not a contract.
+
+``config.args`` sidesteps that entirely. Measured 2026-07-31 across four shapes:
+
+    default                       args_source=TESTPATHS args=[all four]
+    -o testpaths=analysis         args_source=TESTPATHS args=['analysis']   <- fires
+    pytest tests/test_x.py        args_source=ARGS                          <- skipped
+    -k narrow_name (no path)      args_source=TESTPATHS args=[all four]     <- passes
+
+``-k`` leaves ``config.args`` untouched, so the guard is immune to deselection
+by construction rather than by hook-order luck. Running at ``pytest_configure``
+also means a revert fails before any collection work happens.
+
+WHY THIS FILE IMPORTS NOTHING FROM THE REPO
+--------------------------------------------
+A root conftest.py is loaded for EVERY pytest invocation. An ImportError here
+takes down the entire suite -- including in the degraded environments where a
+guard most needs to still work. (Measured: under the bare ``pytest`` console
+script the repo root is not on ``sys.path`` and this repo's own suite already
+breaks with collection errors; this file still loaded and still ran.) So the
+derivation below is deliberately self-contained and duplicates a few lines of
+``tests/test_default_collection_pin.py``. That duplication is not left to
+trust: ``test_root_guard_derivation_matches_pin`` in the pin asserts the two
+derivations agree, so drift between them is RED rather than silent. The fragile
+import lives in the test, never in this file.
+
+RELATIONSHIP TO THE PIN -- COMPLEMENTARY, NOT REDUNDANT
+--------------------------------------------------------
+This guard fires only on DEFAULT invocations, and skips when explicit paths are
+given. The pin does the opposite: it runs a subprocess default collection, so it
+still checks the default even when the suite was invoked as ``pytest tests/``.
+Neither covers the other's case. Keep both.
+
+The pin's node-id floor is not mirrored here, deliberately. The floor's blind
+spot was the ``tests``-dropped revert, and this guard aborts that run before any
+test executes -- so for the failure the floor could not see, the floor is no
+longer the thing that has to see it. For collapses WITHIN a still-listed tree
+the floor is collected normally and remains the right check.
+
+KNOWN LIMIT: deleting the ``testpaths`` line outright is not caught. pytest then
+collects from rootdir, which is a superset, not the tree-losing revert guarded
+here. A top-level directory that holds test files but is DELIBERATELY excluded
+from the default collection would make this guard permanently red; the honest
+fix if one ever appears is an explicit opt-out list here -- not deleting the
+check.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parent
+
+# Never scanned for tests: VCS/tooling/cache dirs, and virtualenvs, which carry
+# thousands of vendored test files belonging to other projects. Dot-prefixed
+# names (.venv, .git) are skipped separately; 'venv' is listed because the
+# undotted spelling is common and would otherwise pull in site-packages.
+# Kept in sync with _SKIP_DIRS in tests/test_default_collection_pin.py -- the
+# consistency test named in the docstring above is what enforces that.
+SKIP_DIRS = {"venv", "__pycache__", "node_modules", "site-packages", "build", "dist"}
+
+
+def expected_trees(python_files) -> tuple[str, ...]:
+    """Top-level directories that contain test files, derived from the FILESYSTEM.
+
+    Imported by tests/test_default_collection_pin.py's consistency test. Takes
+    the filename patterns as an argument rather than reading them, so the caller
+    owns that read and this stays free of pytest-config coupling.
+    """
+    patterns = tuple(python_files)
+    if not patterns:
+        return ()
+    trees = []
+    for child in sorted(ROOT.iterdir()):
+        if not child.is_dir():
+            continue
+        if child.name.startswith(".") or child.name in SKIP_DIRS:
+            continue
+        if any(next(child.rglob(pat), None) is not None for pat in patterns):
+            trees.append(child.name)
+    return tuple(trees)
+
+
+def _arg_tree(arg: str) -> str:
+    """First path segment of a testpaths entry ('analysis/tests' -> 'analysis')."""
+    text = str(arg).strip().replace(os.sep, "/").lstrip("./")
+    return text.split("/", 1)[0]
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    # Only DEFAULT invocations are guarded. args_source is TESTPATHS exactly when
+    # pytest fell back to the ini because no path argument was given -- which is
+    # the run this guard is about. Compared by NAME so a future relocation of the
+    # enum degrades into skipping rather than into an AttributeError that would
+    # break every invocation of the suite.
+    source = getattr(getattr(config, "args_source", None), "name", "")
+    if source != "TESTPATHS":
+        return
+
+    trees = expected_trees(config.getini("python_files"))
+    if not trees:
+        # Vacuity guard. Every check below is satisfied by an empty expected set
+        # for the wrong reason, so refuse to pass rather than assert nothing.
+        pytest.exit(
+            reason=(
+                "root collection guard derived an EMPTY expected-tree set and "
+                "refuses to pass vacuously. It scans top-level directories for "
+                "files matching python_files; check that pytest.ini still has a "
+                "[pytest] section and a sane python_files, and that at least one "
+                f"such directory exists under {ROOT}."
+            ),
+            returncode=1,
+        )
+
+    listed = {_arg_tree(a) for a in config.args}
+    missing = [t for t in trees if t not in listed]
+    if missing:
+        pytest.exit(
+            reason=(
+                "pytest.ini testpaths has lost "
+                + ", ".join(repr(t) for t in missing)
+                + ". Those directories contain test files on disk but are not in "
+                "the default collection, so a bare `pytest` run silently skips "
+                "them and still reports green -- which is the exact invisible "
+                "failure this guard exists to end. Restore:\n"
+                "    testpaths = tests analysis primitives adapters\n"
+                f"  trees with tests on disk: {list(trees)}\n"
+                f"  testpaths currently names: {sorted(listed)}\n"
+                "  (guard lives in the repo-root conftest.py so it stays "
+                "reachable when the tree holding the in-suite pin is the one "
+                "dropped -- g-315-521)"
+            ),
+            returncode=1,
+        )

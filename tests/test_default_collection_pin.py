@@ -49,15 +49,28 @@ TOTAL 1352. Derived set is therefore ``("analysis", "tests")`` -- a strict
 superset of the old tuple, and it will extend itself the day either empty tree
 gains a test file.
 
-TWO LIMITS, both deliberate and neither closed by this change:
+TWO LIMITS. The first is now CLOSED; the second remains deliberate:
 
 * ``tests`` is in the derived set but is NOT self-enforcing. This file lives in
   ``tests/``, so a revert dropping ``tests`` from testpaths stops the pin from
   being COLLECTED at all -- it cannot fail a run it is not part of. The node-id
   floor has the same blind spot. Both still fire under an explicit
   ``pytest tests/test_default_collection_pin.py``, which is how a no-CI repo is
-  usually checked, so including it is worth more than excluding it. Catching the
-  bare-``pytest`` case would need a guard outside ``tests/``.
+  usually checked, so including it is worth more than excluding it.
+
+  CLOSED 2026-07-31 (g-315-521) by a guard OUTSIDE every tree it guards: the
+  repo-root ``conftest.py``. conftest loading is driven by rootdir, not by
+  testpaths, so it stays reachable under the exact revert that hides this file
+  -- measured, under both ``python -m pytest`` and the bare ``pytest`` console
+  script. It compares filesystem-derived trees against ``config.args`` at
+  ``pytest_configure`` and aborts the run, so for the ``tests``-dropped revert
+  the node-id floor is no longer the thing that has to notice.
+
+  The two are COMPLEMENTARY, not redundant -- do not delete either as duplicate.
+  The root guard fires only on DEFAULT invocations and skips when explicit paths
+  are given; this pin does the opposite, subprocess-collecting the default even
+  when the suite was invoked as ``pytest tests/``. Neither covers the other's
+  case.
 * Emptiness is judged by FILENAME (the ini's ``python_files`` pattern), not by
   collection. A tree holding only files that match the pattern but collect zero
   tests would enter the expected set and fail the assertion -- loudly and
@@ -306,3 +319,43 @@ def test_default_collection_includes_expected_trees() -> None:
             f"expected trees (derived from testpaths): {list(trees)}\n"
             f"collected {len(collected)} node ids across: {sorted(present)}"
         )
+
+
+def test_root_guard_derivation_matches_pin() -> None:
+    """The repo-root guard and this pin must derive the SAME expected-tree set.
+
+    g-315-521 put a second copy of the derivation in the repo-root
+    ``conftest.py``. That copy is deliberate: a root conftest is loaded on EVERY
+    pytest invocation, so an ImportError there takes down the whole suite, and a
+    guard must not carry that risk just to share code. The duplication is paid
+    for HERE instead -- if the two derivations ever disagree, this goes RED
+    rather than the two guards silently protecting different tree sets.
+
+    Note which side carries the fragile import: this test. The root conftest
+    imports nothing from the repo, so a failure here degrades to one red test,
+    never to a suite that cannot start.
+    """
+    import conftest as root_guard
+
+    # Assert WHICH module was imported rather than trusting the name to resolve
+    # to the root file -- ``tests/conftest.py`` also exists, and a future import
+    # -mode change could plausibly shadow one with the other.
+    assert Path(root_guard.__file__).resolve() == (REPO_ROOT / "conftest.py").resolve(), (
+        "imported the wrong conftest -- expected the repo-root guard at "
+        f"{REPO_ROOT / 'conftest.py'}, got {root_guard.__file__}"
+    )
+
+    patterns = _ini_values("python_files", DEFAULT_PYTHON_FILES)
+    assert root_guard.expected_trees(patterns) == _expected_trees(), (
+        "the root collection guard and this pin derive DIFFERENT expected-tree "
+        "sets, so they are guarding different things and one of them is wrong.\n"
+        f"  root conftest.py: {list(root_guard.expected_trees(patterns))}\n"
+        f"  this pin:         {list(_expected_trees())}"
+    )
+    assert root_guard.SKIP_DIRS == _SKIP_DIRS, (
+        "skip-dir sets drifted between the root guard and this pin -- a "
+        "directory excluded by one and scanned by the other will eventually "
+        "produce exactly that disagreement.\n"
+        f"  root conftest.py: {sorted(root_guard.SKIP_DIRS)}\n"
+        f"  this pin:         {sorted(_SKIP_DIRS)}"
+    )
