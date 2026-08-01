@@ -195,6 +195,16 @@ def measure_one(path, max_h=3, split=0.8, min_dominance=0.5, terrain_top_n=2):
     reach = {"v0": [0] * max_h, "v2": [0] * max_h, "v3": [0] * max_h}
     firstok = {"v0": [0] * max_h, "v2": [0] * max_h, "v3": [0] * max_h}
     denom = [0] * max_h
+    # SAME-POPULATION per-step accuracy (g-315-503). The hypothesis compares a relative
+    # per-step gain against a relative reach gain, and its own PRE-MORTEM discounted it to
+    # 0.55 because those two numbers came from harnesses whose denominators differed —
+    # measure_boundary_real_ls20.py splits on VALID transitions only, this one splits on all
+    # (M-1) and further requires max_h consecutive valid transitions, so the test populations
+    # are genuinely not the same set. Computing per-step accuracy HERE, over exactly the
+    # windows counted in denom[0], removes that confound: both ratios then share one
+    # population, one split, one set of starts. Uses the recording's ACTUAL action (that is
+    # what per-step accuracy means) while reach quantifies over the whole action set.
+    perstep = {"v0": 0, "v2": 0, "v3": 0}
 
     # Test-portion windows: transitions i..i+max_h-1 all valid.
     for i in range(k, (M - 1) - max_h + 1):
@@ -235,6 +245,14 @@ def measure_one(path, max_h=3, split=0.8, min_dominance=0.5, terrain_top_n=2):
                 reach["v3"][h - 1] += 1
                 if p3 and p3[0] == actions[i]:
                     firstok["v3"][h - 1] += 1
+            if h == 1:
+                # Same start, same population as denom[0]; actual action, one step.
+                if v0.predict(states[i], actions[i]) == states[i + 1]:
+                    perstep["v0"] += 1
+                if v2.predict(states[i], actions[i]) == states[i + 1]:
+                    perstep["v2"] += 1
+                if positions(v3.predict(states3[i], actions[i])) == states[i + 1]:
+                    perstep["v3"] += 1
 
     if all(d == 0 for d in denom):
         return None
@@ -249,6 +267,10 @@ def measure_one(path, max_h=3, split=0.8, min_dominance=0.5, terrain_top_n=2):
         "reach_v0": rate(reach["v0"]),
         "reach_v2": rate(reach["v2"]),
         "reach_v3": rate(reach["v3"]),
+        # Scalars over the denom[0] population — one number, not a per-horizon list.
+        "perstep_v0": perstep["v0"],
+        "perstep_v2": perstep["v2"],
+        "perstep_v3": perstep["v3"],
         "firstok_v0": rate(firstok["v0"]),
         "firstok_v2": rate(firstok["v2"]),
         "firstok_v3": rate(firstok["v3"]),
@@ -395,21 +417,49 @@ def main(argv):
     print(f"    v3 reach > v0 reach: {v3_gt_v0}/{len(rows)}   |  v3 >= v0: {v3_ge_v0}/{len(rows)}")
     print(f"    v3 reach > v2 reach: {v3_gt_v2}/{len(rows)}   |  v3 >= v2: {v3_ge_v2}/{len(rows)}")
 
-    print(f"\n  AMPLIFICATION (relative gain over the v0 floor, reach@H={max_h}):")
-    r0 = mean("reach_v0", last)
-    for name in ("reach_v2", "reach_v3"):
-        rv = mean(name, last)
-        if r0 > 0:
-            rel = f"{(rv / r0 - 1) * 100:+.1f}%"
-        else:
-            # v0 reach is 0 → relative gain is undefined (division by zero), NOT infinite
-            # and NOT 0. Say so rather than printing a number that reads as measured.
-            rel = "UNDEFINED (v0 floor is 0.0 — no ratio exists)"
-        print(f"    {name[-2:]}: mean reach {rv} vs v0 {r0}  →  relative gain {rel}")
-    print("    Compare against the per-step relative gain from "
-          "analysis/measure_boundary_real_ls20.py:")
-    print("      reach-gain > per-step-gain ⇒ hypothesis CONFIRMED (planner amplifies)")
-    print("      otherwise                  ⇒ hypothesis CORRECTED (planner does not amplify)")
+    # THE AMPLIFICATION TEST — both sides measured over the SAME window population
+    # (denom[0]), so the hypothesis's pre-mortem denominator confound does not apply.
+    win0 = sum(r["denom"][0] for r in rows)
+    ps = {a: (sum(r["perstep_" + a] for r in rows) / win0 if win0 else 0.0)
+          for a in ("v0", "v2", "v3")}
+
+    def relgain(value, floor):
+        if floor <= 0:
+            # A zero floor makes the ratio UNDEFINED — not infinite, not zero. Say so
+            # rather than printing a number that would read as measured (rb-245).
+            return None
+        return (value / floor - 1) * 100
+
+    print(f"\n  SAME-POPULATION per-step accuracy (actual action, 1 step, over the "
+          f"{win0} windows counted at H=1):")
+    print(f"    v0={ps['v0']:.3f}  v2={ps['v2']:.3f}  v3={ps['v3']:.3f}")
+
+    print("\n  AMPLIFICATION — relative gain over the v0 floor, per-step vs reach:")
+    print(f"    {'arm':>4} {'per-step':>10} " + " ".join(f"{'reach@'+str(t+1):>10}" for t in range(max_h)))
+    for arm in ("v2", "v3"):
+        g_ps = relgain(ps[arm], ps["v0"])
+        cells = []
+        for t in range(max_h):
+            g_r = relgain(mean("reach_" + arm, t), mean("reach_v0", t))
+            cells.append(f"{g_r:>+9.1f}%" if g_r is not None else f"{'undef':>10}")
+        ps_cell = f"{g_ps:>+9.1f}%" if g_ps is not None else f"{'undef':>10}"
+        print(f"    {arm:>4} {ps_cell} " + " ".join(cells))
+
+    g_ps3 = relgain(ps["v3"], ps["v0"])
+    print("\n  THE HYPOTHESIS (2026-07-25_planner-amplifies-synthesizer-edge) — v3 is the "
+          "next synthesizer variant measured on ls20:")
+    if g_ps3 is None:
+        print("    UNRESOLVABLE: v0 per-step floor is 0.0 — the relative gain has no ratio.")
+    else:
+        for t in range(max_h):
+            g_r3 = relgain(mean("reach_v3", t), mean("reach_v0", t))
+            if g_r3 is None:
+                print(f"    H={t+1}: UNRESOLVABLE (v0 reach floor is 0.0)")
+                continue
+            verdict = "CONFIRMED" if g_r3 > g_ps3 else "CORRECTED"
+            print(f"    H={t+1}: reach-gain {g_r3:+.1f}% vs per-step-gain {g_ps3:+.1f}%"
+                  f"   margin {g_r3-g_ps3:+.1f}pp   amplification {g_r3/g_ps3:.2f}x"
+                  f"   -> {verdict}")
 
     # Nail the check: drive the ACTUAL V4Arm.step() on a differing window (first recording
     # that has one) — confirms the reach delta is what the deployed arm does, not just its
