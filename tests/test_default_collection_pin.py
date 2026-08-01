@@ -211,6 +211,32 @@ MIN_TOTAL_NODE_IDS = 1200
 _EXPECTED_GUARD_MARKER = "[ARC-ROOT-COLLECTION-GUARD]"
 
 
+def _run_collection(*argv_tail: str) -> subprocess.CompletedProcess:
+    """Spawn a pytest collection with an arbitrary argv tail. Owns the shared argv.
+
+    Split out of ``_run_default_collection`` by g-315-522, which needed the one
+    shape that function documents itself as refusing: an invocation WITH a path
+    argument. That shape is not a violation of the contract below -- it is the
+    branch the root guard deliberately skips, and pinning the skip requires
+    producing it.
+
+    The argv lives here once rather than being duplicated, because the
+    false-positive test below is a controlled experiment: it runs the same revert
+    with and without a path argument and attributes the difference to that
+    argument. If the two callers could drift in interpreter, cwd, or flags, the
+    comparison would silently start measuring more than the one variable it
+    isolates. Every individual flag's rationale is in ``_run_default_collection``;
+    this function owns the argv, not the no-path-args contract.
+    """
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-qq", *argv_tail],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+
+
 def _run_default_collection(*extra_args: str) -> subprocess.CompletedProcess:
     """Spawn a no-path-args pytest collection, optionally with ``-o`` overrides.
 
@@ -235,13 +261,7 @@ def _run_default_collection(*extra_args: str) -> subprocess.CompletedProcess:
     ``--collect-only`` never executes tests, so the child collecting this very
     file cannot recurse.
     """
-    return subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-qq", *extra_args],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
+    return _run_collection(*extra_args)
 
 
 def _collect_failure_message(proc: subprocess.CompletedProcess) -> str:
@@ -536,4 +556,95 @@ def test_guard_abort_is_machine_discriminable() -> None:
         "nothing and _collect_failure_message would blame testpaths for every real "
         "breakage.\n"
         f"stderr tail:\n{healthy.stderr[-1500:]}"
+    )
+
+
+def test_guard_does_not_fire_on_non_default_invocations() -> None:
+    """The guard must stay SILENT on the two shapes it does not govern (g-315-522).
+
+    THE ASYMMETRY THIS CLOSES. ``test_guard_abort_is_machine_discriminable`` above
+    pins that the guard FIRES -- the tree-lost exit and the vacuity exit, both
+    triggered for real. Nothing pinned that it does NOT fire. A guard that aborts
+    runs it has no business aborting is not a stricter guard, it is a broken one:
+    it would abort every ``pytest tests/test_x.py`` in a repo whose usual check IS
+    an explicit-path invocation (this repo has no CI), and the fix people reach for
+    when a guard cries wolf is deleting the guard.
+
+    Both shapes were hand-measured in the root conftest's docstring when it was
+    written, and a hand measurement is not a regression guard -- invert the
+    ``args_source`` check, key it on the wrong field, and only these assertions go
+    red. That is the same "who guards the guard" gap this lane has now closed at
+    three levels (pin -> root guard -> this).
+
+    CASE 1 IS A CONTROLLED EXPERIMENT, not a bare negative. Both runs carry the
+    IDENTICAL ``-o testpaths=analysis`` revert; they differ ONLY by the path
+    argument. So a green here attributes the silence to ``args_source`` being ARGS
+    -- the actual mechanism -- rather than to the run having happened not to fire.
+    Without the paired control this test would still pass if the guard were
+    disabled outright, which is precisely the regression it exists to catch.
+
+    EACH NEGATIVE IS PAIRED WITH PROOF IT IS NON-VACUOUS. "No marker in stderr" is
+    also what a run that crashed, collected nothing, or never reached
+    ``pytest_configure`` produces, so an unqualified absence assertion would pass
+    for the wrong reason forever. Case 1 asserts nodes were actually collected;
+    case 2 asserts pytest actually reported a deselection.
+
+    Measured 2026-08-01 (echo, cc-03 / Linux 6.8.0-136-generic, pytest 9.1.1):
+        -o testpaths=analysis <path>   rc=0, no marker, 5 nodes collected
+        -k <one test name>             rc=0, no marker, 1/1355 (1354 deselected)
+        -o testpaths=analysis          rc=1, MARKER, 0 collected   <- the control
+    """
+    # Derived, never hardcoded: a rename of this file must not silently turn case 1
+    # into a no-such-path run, which exits 4 with no marker and would keep passing.
+    pin_path = Path(__file__).resolve().relative_to(REPO_ROOT).as_posix()
+
+    # --- Case 1: an explicit path argument suppresses the guard, revert and all ---
+    with_path = _run_collection("-o", "testpaths=analysis", pin_path)
+    control = _run_collection("-o", "testpaths=analysis")
+
+    assert _EXPECTED_GUARD_MARKER in control.stderr, (
+        "the paired control did NOT fire the guard, so case 1 proves nothing -- an "
+        "absence of the marker cannot be attributed to the path argument when the "
+        "same revert without one is also silent. Either the guard regressed (see "
+        "test_guard_abort_is_machine_discriminable) or 'analysis' now legitimately "
+        f"satisfies it.\nrc={control.returncode}\nstderr tail:\n{control.stderr[-1500:]}"
+    )
+    assert _EXPECTED_GUARD_MARKER not in with_path.stderr, (
+        "the root guard FIRED on an explicit-path invocation. It governs DEFAULT "
+        "runs only -- when a path argument is given, pytest sets args_source=ARGS "
+        "and pytest_configure returns early. Firing here makes every "
+        f"`pytest {pin_path}` abort, which in a repo with no CI is the primary way "
+        "the suite is run at all.\n"
+        f"rc={with_path.returncode}\nstderr tail:\n{with_path.stderr[-1500:]}"
+    )
+    assert with_path.returncode == 0, _collect_failure_message(with_path)
+    collected = [ln for ln in with_path.stdout.splitlines() if "::" in ln]
+    assert collected, (
+        "the explicit-path run collected NO nodes, so its silence is vacuous -- a "
+        "run that collapsed before collection emits no marker either, and this "
+        "assertion would then pass on a guard that had been disabled entirely.\n"
+        f"stdout tail:\n{with_path.stdout[-1500:]}"
+    )
+
+    # --- Case 2: -k deselects without a path arg; args_source stays TESTPATHS ---
+    # The guard reads config.args, which -k leaves untouched, so it is immune to
+    # deselection by construction. Inspecting collected ITEMS instead -- the
+    # implementation the root conftest rejected -- would false-fire exactly here,
+    # on a legitimately tiny item list. This is the assertion that keeps that
+    # rejected design from being reintroduced as a "simplification".
+    deselecting = _run_collection("-k", "test_root_guard_derivation_matches_pin")
+
+    assert _EXPECTED_GUARD_MARKER not in deselecting.stderr, (
+        "the root guard FIRED on a `-k` run that passed no path argument. -k does "
+        "not touch config.args, so testpaths is still fully listed and nothing is "
+        "missing -- firing here means the guard is reading the COLLECTED ITEMS "
+        "rather than config.args, and will abort every narrow -k invocation.\n"
+        f"rc={deselecting.returncode}\nstderr tail:\n{deselecting.stderr[-1500:]}"
+    )
+    assert deselecting.returncode == 0, _collect_failure_message(deselecting)
+    assert "deselected" in deselecting.stdout, (
+        "pytest reported no deselection, so this run never exercised the "
+        "narrow-selection shape and its silence proves nothing about it. The -k "
+        "expression most likely no longer matches any test.\n"
+        f"stdout tail:\n{deselecting.stdout[-1500:]}"
     )
