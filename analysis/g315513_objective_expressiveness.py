@@ -31,13 +31,25 @@ threshold value and any win/loss is attributable to the objective alone.
     Two extras with IDENTICAL fire counts but near-disjoint firing sets and opposite
     arrangement (one contiguous, one scattered).
 
+  Part 3 — g-315-518: is the tail candidate's firing set BURSTY or SCATTERED on REAL
+    ls20 frames?  Parts 1-2 run on synthetic frames whose ``_mk_sig`` priors are
+    monotonic in frame index, so their ``contiguous`` candidate is contiguous BY
+    CONSTRUCTION -- an artifact, not evidence about real frames.  Part 3 loads real
+    recordings and measures the tail arm's actual arrangement.  REQUIRES recordings/;
+    it self-skips with a loud SKIPPED line when none are present (cc-04 has none).
+
 Run:
   PYTHONPATH=. .venv/bin/python analysis/g315513_objective_expressiveness.py
+  (Windows: PYTHONPATH=. .venv/Scripts/python.exe analysis/g315513_objective_expressiveness.py)
 """
 
 from __future__ import annotations
 
+import glob
+import json
 import math
+import os
+import random
 
 from analysis.predicate_compiler import compile_spec
 from analysis.predicate_spec import (
@@ -52,6 +64,7 @@ from analysis.win_condition_cegis import (
     _firing_coherence,
     _select_zero_positive_candidate,
 )
+from analysis.win_condition_extractor import state_to_cc_signature
 
 N = 1500
 K = ZERO_POSITIVE_TAIL_K
@@ -202,6 +215,216 @@ def part2() -> None:
     print("  2026-07-29_tail-firing-set-is-bursty-not-scattered, still open).")
 
 
+def _runs_and_longest(fires: list[bool]) -> tuple[int, int]:
+    """``(number of maximal runs, longest run)`` over a boolean firing mask."""
+    runs = best = cur = 0
+    for i, f in enumerate(fires):
+        if f:
+            if i == 0 or not fires[i - 1]:
+                runs += 1
+            cur += 1
+            best = max(best, cur)
+        else:
+            cur = 0
+    return runs, best
+
+
+def _load_real_ls20_frames(
+    recordings_dir: str = "recordings",
+    max_frames: int = 1500,
+    history_k: int = 3,
+    glob_pat: str = "ls20-*.recording.jsonl",
+) -> tuple[list[tuple[CCSignature, float]], list[tuple[str, int, int]]]:
+    """Real ls20 frames as ``(CCSignature, score)``, plus per-recording spans.
+
+    This replicates the LOADING half of
+    ``ls20_exploration.build_ls20_exploration_predicate`` -- same glob, same
+    ``_freeze``, same ``max_frames`` cap, same k-wrapping -- because that
+    function returns a synthesized PREDICATE and discards the frames, which are
+    what an arrangement measurement needs.  ``_freeze`` is IMPORTED from that
+    module rather than re-implemented so the frame encoding cannot drift apart
+    from the path this measurement is meant to characterise.
+
+    The second return value is ``(path, start, end)`` per recording.  It exists
+    because concatenating N recordings creates ADJACENCY THAT IS NOT TEMPORAL at
+    every file boundary: the last frame of one episode sits next to the first
+    frame of an unrelated one.  A run spanning a boundary is an artifact of
+    concatenation, so part 3 reports within-recording coherence alongside the
+    concatenated figure rather than trusting the latter alone.
+    """
+    from analysis.ls20_exploration import _freeze
+
+    frames: list[tuple[CCSignature, float]] = []
+    segments: list[tuple[str, int, int]] = []
+    pattern = os.path.join(recordings_dir, glob_pat)
+    for path in sorted(glob.glob(pattern)):
+        start = len(frames)
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                rec = json.loads(line)
+                data = rec.get("data", {})
+                if "frame" not in data or "score" not in data:
+                    continue
+                frozen = _freeze(data["frame"])
+                if history_k >= 1:
+                    state: object = tuple([frozen] + [None] * history_k)
+                else:
+                    state = frozen
+                frames.append(
+                    (state_to_cc_signature(state, history_k=history_k),
+                     float(data["score"]))
+                )
+                if len(frames) >= max_frames:
+                    break
+        if len(frames) > start:
+            segments.append((os.path.basename(path), start, len(frames)))
+        if len(frames) >= max_frames:
+            break
+    return frames, segments
+
+
+def part3() -> None:
+    """g-315-518 — measure the tail candidate's arrangement on REAL frames."""
+    print("\n\nPART 3 — tail firing-set arrangement on REAL ls20 frames "
+          "(g-315-518)")
+
+    frames, segments = _load_real_ls20_frames()
+    if not frames:
+        print("  SKIPPED: no recordings/ls20-*.recording.jsonl on this box. "
+              "This measurement REQUIRES real recordings; the synthetic "
+              "harness cannot substitute (that is the whole point of g-315-518).")
+        return
+
+    n = len(frames)
+    scores = {s for _sig, s in frames}
+    print(f"  loaded {n} frames from {len(segments)} recording(s); "
+          f"distinct scores={sorted(scores)[:5]}"
+          f"{' ...' if len(scores) > 5 else ''}")
+    if scores != {0.0}:
+        print("  NOTE: not all scores are 0.0 — the zero-positive regime is "
+              "defined for an all-zero validation set; treating as such for "
+              "the arrangement measurement only.")
+
+    # The LIVE path: extra_candidates=None, exactly as the deterministic
+    # heuristic arm runs. Coherence is GATED OFF in selection here (n_extra==0),
+    # so this is the tail winner chosen by dist alone — the candidate the
+    # hypothesis is about. Its coherence is then measured post-hoc.
+    res = _select_zero_positive_candidate(compile_spec, frames)
+    if res is None:
+        print("  SKIPPED: no tail candidate survived on these frames.")
+        return
+
+    pred = compile_spec(res.spec)
+    fires = [bool(pred(sig)) for sig, _s in frames]
+    m = sum(fires)
+    runs, longest = _runs_and_longest(fires)
+    coh = _firing_coherence(fires)
+    dist = abs(m / n - K / 100.0)
+
+    print(f"\n  tail winner: {res.spec!r}")
+    print(f"    fires={m}/{n} ({m / n:.4f})  target={K / 100.0}  "
+          f"dist={dist:.6f}")
+    print(f"    maximal runs={runs}   LONGEST CONTIGUOUS RUN={longest}")
+    print(f"    normalised coherence (m-runs)/(m-1) = {coh:.4f}")
+
+    # DISCRIMINATING CONTROL (guard-1419). A high coherence has two readings
+    # with OPPOSITE consequences: the tail is genuinely persistent, or these
+    # frames are so autocorrelated that ANY count-matched predicate fires in
+    # runs (in which case the term rewards the structural baseline as much as a
+    # semantic proposal and is inert one level up — the rb-3214 failure).
+    # A count-matched RANDOM firing set is the null: it has the same m and no
+    # temporal structure whatsoever.
+    rng = random.Random(315518)
+    trials = 200
+    null = []
+    for _ in range(trials):
+        mask = [False] * n
+        for i in rng.sample(range(n), m):
+            mask[i] = True
+        null.append(_firing_coherence(mask))
+    null_mean = sum(null) / len(null)
+    null_max = max(null)
+    print(f"\n  count-matched RANDOM null (m={m}, {trials} trials, seed=315518):")
+    print(f"    mean coherence={null_mean:.4f}   max={null_max:.4f}")
+    print(f"    tail exceeds every random trial? {coh > null_max}")
+
+    # Within-recording coherence — concatenation boundaries are not temporal.
+    print("\n  within-recording coherence (concatenation boundaries excluded):")
+    per_rec = []
+    for name, start, end in segments:
+        seg = fires[start:end]
+        seg_m = sum(seg)
+        if seg_m <= 1:
+            continue
+        seg_runs, seg_longest = _runs_and_longest(seg)
+        per_rec.append((name, end - start, seg_m, seg_runs, seg_longest,
+                        _firing_coherence(seg)))
+    if per_rec:
+        for name, seg_n, seg_m, seg_runs, seg_longest, seg_coh in per_rec[:10]:
+            print(f"    {name[:46]:<46} n={seg_n:>4} m={seg_m:>3} "
+                  f"runs={seg_runs:>3} longest={seg_longest:>3} "
+                  f"coh={seg_coh:.4f}")
+        if len(per_rec) > 10:
+            print(f"    ... {len(per_rec) - 10} more recording(s)")
+        mean_coh = sum(r[5] for r in per_rec) / len(per_rec)
+        print(f"    mean within-recording coherence = {mean_coh:.4f} "
+              f"over {len(per_rec)} recording(s) with m>1")
+    else:
+        print("    (no single recording carries more than one firing frame)")
+
+    # Thresholds are the goal's own: scattered => longest run 1-2 / coherence
+    # near 0; bursty => longest run >= 5 / coherence well above 0.
+    #
+    # Classify each signal INDEPENDENTLY and require AGREEMENT. An `or` across
+    # the two (the first form of this code) lets ONE signal force a verdict
+    # while the other contradicts it -- measured, `longest=2, coh=0.90` and
+    # `longest=6, coh=0.05` BOTH reported a confident BURSTY. A firing set the
+    # two signals disagree about is exactly the case a reader must not be handed
+    # a definite label for, so name the disagreement rather than collapse to the
+    # more alarming side. (This did not change the g-315-518 result -- there the
+    # signals agree overwhelmingly, 77 vs threshold 5 and 0.9707 vs 0.5.)
+    def _classify(bursty: bool, scattered: bool) -> str:
+        return "BURSTY" if bursty else ("SCATTERED" if scattered else "MIDDLING")
+
+    run_says = _classify(longest >= 5, longest <= 2)
+    coh_says = _classify(coh > 0.5, coh < 0.1)
+    if run_says == coh_says and run_says != "MIDDLING":
+        verdict = run_says
+    elif {"BURSTY", "SCATTERED"} <= {run_says, coh_says}:
+        verdict = "CONFLICTED"
+    else:
+        verdict = "INTERMEDIATE"
+
+    print(f"\nVERDICT (part 3): tail firing set is {verdict} on real frames.")
+    print(f"  longest run={longest} (scattered<=2, bursty>=5) -> {run_says}")
+    print(f"  coherence={coh:.4f} (scattered<0.1, bursty>0.5) -> {coh_says}")
+    print(f"  signals agree? {run_says == coh_says}")
+    if verdict == "SCATTERED":
+        print("  => the shipped g-315-516 coherence term DISCRIMINATES as designed:")
+        print("     a run-firing semantic proposal outscores this tail at equal count.")
+    elif verdict == "BURSTY":
+        print("  => the shipped normalisation is NECESSARY BUT MAY NOT BE SUFFICIENT.")
+        print("     Compare against the count-matched null above: if the tail's")
+        print("     coherence is near the RANDOM null the burstiness is chance at this")
+        print("     count; if it is far above, real frames are autocorrelated and the")
+        print("     term must be normalised against what a count-matched STRUCTURAL")
+        print("     baseline achieves on these frames, not against [0,1].")
+    elif verdict == "CONFLICTED":
+        print("  => the two signals DISAGREE. Do NOT report a binary verdict from")
+        print("     this run. Longest-run and coherence measure different things")
+        print("     (one long run vs contiguity spread over the whole set), so a")
+        print("     split means the firing set is neither cleanly persistent nor")
+        print("     cleanly scattered. The count-matched null above is the decisive")
+        print("     read; widen max_frames or segment the corpus before concluding.")
+    else:
+        print("  => neither threshold cleanly met; report the numbers, do not force")
+        print("     a binary. See the null comparison above for the decisive read.")
+
+
 if __name__ == "__main__":
     part1()
     part2()
+    part3()
