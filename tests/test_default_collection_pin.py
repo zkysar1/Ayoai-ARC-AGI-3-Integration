@@ -123,7 +123,11 @@ def _ini_values(key: str, fallback: tuple[str, ...]) -> tuple[str, ...]:
 # thousands of vendored test files belonging to other projects. Dot-prefixed
 # names (.venv, .git) are skipped separately; 'venv' is listed because the
 # undotted spelling is common and would otherwise pull in site-packages.
-_SKIP_DIRS = {"venv", "__pycache__", "node_modules", "site-packages", "build", "dist"}
+# 'vendor' mirrors the opt-out in the repo-root conftest.py (g-315-529): the
+# vendored third-party arcprize/ARC-AGI-3-Agents tree carries its own tests/,
+# which exercise that project and not this one. Both copies must agree --
+# test_root_guard_derivation_matches_pin is what enforces it.
+_SKIP_DIRS = {"venv", "__pycache__", "node_modules", "site-packages", "build", "dist", "vendor"}
 
 
 def _expected_trees() -> tuple[str, ...]:

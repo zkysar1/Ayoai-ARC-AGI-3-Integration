@@ -5,7 +5,7 @@ Random rollout on qualifying pure-ACTION6 games (ft09, lp85), saving
 for the torch-venv training phase (goose_cnn_train_g315366.py).
 
 Usage:
-    /opt/ARC-AGI-3-Kaggle-Starter/.venv/bin/python \
+    .venv/bin/python \
         analysis/goose_cnn_collect_g315366.py [N_ACTIONS] [game1,game2]
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-KIT = Path("/opt/ARC-AGI-3-Kaggle-Starter")
+KIT = Path(__file__).resolve().parents[1]  # repo-local since g-315-529 (Kaggle clone dependency cut)
 sys.path.insert(0, str(KIT))
 sys.path.insert(0, str(KIT / "vendor" / "ARC-AGI-3-Agents"))
 

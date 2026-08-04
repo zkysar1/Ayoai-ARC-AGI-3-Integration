@@ -148,7 +148,18 @@ GUARD_ABORT_MARKER = "[ARC-ROOT-COLLECTION-GUARD]"
 # undotted spelling is common and would otherwise pull in site-packages.
 # Kept in sync with _SKIP_DIRS in tests/test_default_collection_pin.py -- the
 # consistency test named in the docstring above is what enforces that.
-SKIP_DIRS = {"venv", "__pycache__", "node_modules", "site-packages", "build", "dist"}
+#
+# 'vendor' is the explicit opt-out the KNOWN LIMIT above calls for (g-315-529).
+# vendor/ARC-AGI-3-Agents is a verbatim copy of the third-party upstream
+# https://github.com/arcprize/ARC-AGI-3-Agents.git, tracked here so this repo is
+# self-contained after the Kaggle clone is retired. Its tests/ exercises THAT
+# project, not this one: a red there is an upstream regression we neither caused
+# nor can fix from here, and folding it into the default run would make our green
+# depend on someone else's tree. This is the "DELIBERATELY excluded" case the
+# docstring anticipates -- recorded as an opt-out rather than by deleting the
+# check, exactly as it instructs. Note the guard caught this the moment vendor/
+# landed, before any commit; that is the guard working, not a false positive.
+SKIP_DIRS = {"venv", "__pycache__", "node_modules", "site-packages", "build", "dist", "vendor"}
 
 
 def expected_trees(python_files) -> tuple[str, ...]:

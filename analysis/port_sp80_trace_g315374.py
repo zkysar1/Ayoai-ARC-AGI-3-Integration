@@ -14,7 +14,7 @@ Logs every tick: action name, click coords, levels_completed, state, plus
 level-completion and GAME_OVER/RESET boundary markers.
 
 Run in the kit venv (no torch dependency):
-    /opt/ARC-AGI-3-Kaggle-Starter/.venv/bin/python \
+    .venv/bin/python \
         analysis/port_sp80_trace_g315374.py [game_short_id=sp80]
 """
 from __future__ import annotations
@@ -24,14 +24,14 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-KIT = Path("/opt/ARC-AGI-3-Kaggle-Starter")
+KIT = Path(__file__).resolve().parents[1]  # repo-local since g-315-529 (Kaggle clone dependency cut)
 sys.path.insert(0, str(KIT))
 sys.path.insert(0, str(KIT / "vendor" / "ARC-AGI-3-Agents"))
 
 import arc_agi  # noqa: E402
 from arc_agi import OperationMode  # noqa: E402
 
-sys.path.insert(0, str(KIT / "agent"))
+sys.path.insert(0, str(KIT / "kaggle_salvage"))
 from my_agent import MyAgent  # noqa: E402
 
 MAX_STEPS = 200

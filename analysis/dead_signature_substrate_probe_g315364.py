@@ -26,7 +26,7 @@ Metrics per game:
   dead_action_ids   action ids whose EVERY occurrence no-oped (the subset
                     the existing per-action-id suppression axis covers)
 
-Run: /opt/ARC-AGI-3-Kaggle-Starter/.venv/bin/python analysis/dead_signature_substrate_probe_g315364.py [game ...]
+Run: .venv/bin/python analysis/dead_signature_substrate_probe_g315364.py [game ...]
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ from pathlib import Path
 
 import numpy as np
 
-KIT = Path("/opt/ARC-AGI-3-Kaggle-Starter")
+KIT = Path(__file__).resolve().parents[1]  # repo-local since g-315-529 (Kaggle clone dependency cut)
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(KIT))
 sys.path.insert(0, str(KIT / "vendor" / "ARC-AGI-3-Agents"))

@@ -12,7 +12,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-KIT = Path("/opt/ARC-AGI-3-Kaggle-Starter")
+KIT = Path(__file__).resolve().parents[1]  # repo-local since g-315-529 (Kaggle clone dependency cut)
 sys.path.insert(0, str(KIT))
 sys.path.insert(0, str(KIT / "vendor" / "ARC-AGI-3-Agents"))
 sys.path.append(str(KIT / ".venv" / "lib" / "python3.12" / "site-packages"))
@@ -20,7 +20,7 @@ sys.path.append(str(KIT / ".venv" / "lib" / "python3.12" / "site-packages"))
 import arc_agi  # noqa: E402
 from arc_agi import OperationMode  # noqa: E402
 
-sys.path.insert(0, str(KIT / "agent"))
+sys.path.insert(0, str(KIT / "kaggle_salvage"))
 import my_agent as MA  # noqa: E402
 from my_agent import MyAgent  # noqa: E402
 

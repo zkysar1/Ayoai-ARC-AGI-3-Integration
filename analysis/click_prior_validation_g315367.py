@@ -30,7 +30,7 @@ import sys
 import time
 from pathlib import Path
 
-KIT = Path("/opt/ARC-AGI-3-Kaggle-Starter")
+KIT = Path(__file__).resolve().parents[1]  # repo-local since g-315-529 (Kaggle clone dependency cut)
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(KIT))
 sys.path.insert(0, str(KIT / "vendor" / "ARC-AGI-3-Agents"))

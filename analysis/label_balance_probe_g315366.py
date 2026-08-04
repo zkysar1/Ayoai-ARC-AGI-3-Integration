@@ -6,11 +6,11 @@ frame_changed label balance that a Goose-style action-effect CNN would train
 on. A game whose labels are ~all-positive (or ~all-negative) is DEGENERATE
 for that learner and is gated OUT of the training experiment.
 
-Mirrors ARC-AGI-3-Kaggle-Starter/scripts/play_local.py wiring exactly
+Mirrors the Kaggle starter's scripts/play_local.py wiring exactly
 (in-process arc_agi Arcade + vendored ARC-AGI-3-Agents framework).
 
 Usage:
-    /opt/ARC-AGI-3-Kaggle-Starter/.venv/bin/python \
+    .venv/bin/python \
         analysis/label_balance_probe_g315366.py [N_ACTIONS] [game1,game2]
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ import sys
 import time
 from pathlib import Path
 
-KIT = Path("/opt/ARC-AGI-3-Kaggle-Starter")
+KIT = Path(__file__).resolve().parents[1]  # repo-local since g-315-529 (Kaggle clone dependency cut)
 sys.path.insert(0, str(KIT))
 sys.path.insert(0, str(KIT / "vendor" / "ARC-AGI-3-Agents"))
 

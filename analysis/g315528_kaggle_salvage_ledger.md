@@ -134,3 +134,75 @@ repointing the 13 scripts — and only then may the clone be retired.
 This is a finding, not a deferral: the archive is complete and verified, so the
 retirement is safe to perform the moment the dependency is cut, and nothing is
 time-pressured in the meantime.
+
+---
+
+## g-315-529 — dependency CUT, and the "archive complete" claim CORRECTED
+
+Executed 2026-08-04 by echo (hostname cc-03, `uname -r` 6.8.0-136-generic).
+
+### The archive was NOT complete. That is the load-bearing correction.
+
+The section above closes with *"the archive is complete and verified, so the
+retirement is safe to perform the moment the dependency is cut."* **False.** The
+archive is a `git bundle` (35 commits) plus a tarball of 4 untracked logs, so it
+carries exactly the **30 git-tracked files**. The clone's own `.gitignore`
+excludes — with the comment *"Vendored framework + downloaded game source + agent
+recordings"* —
+
+| surface | size | tracked | in archive |
+|---|---|---|---|
+| `environment_files/` | 4.2 MB, 25 games | 0 | **NO** |
+| `vendor/ARC-AGI-3-Agents/` | 1.2 MB | 0 | **NO** |
+| `.venv/` | 447 MB | 0 | NO |
+
+`environment_files/` is the offline benchmark data root that **every** probe
+passes as `environments_dir`. Retiring the clone on the strength of the
+"complete and verified" claim would have destroyed it. The reads-enumeration
+behind that claim was scoped to git-tracked content, so the gitignored surfaces
+were invisible to it — the same invisibility that hid the dependency itself.
+
+Recovery layers, **verified rather than assumed** (`archive-before-delete.md`
+rule 2 — an unverifiable layer counts as absent):
+
+- `arc-agi==0.9.9` / `arcengine==0.9.3` — on **public PyPI** (`pip index
+  versions`), installed by plain pip with no `direct_url`. Replaceable. Also
+  confirms installing them is not a competition submission.
+- `vendor/ARC-AGI-3-Agents` — a nested git repo whose `origin` reads
+  `https://github.com/arcprize/ARC-AGI-3-Agents.git`. Replaceable from upstream.
+- `environment_files/` — **no verified recovery layer.** Now tracked in THIS
+  repo, which is what closes the gap.
+
+### What changed here
+
+- `arc-agi==0.9.9` + `arcengine==0.9.3` installed into this repo's `.venv`.
+- `environment_files/` (4.2 MB) and `vendor/ARC-AGI-3-Agents/` (824 KB) copied
+  in and **tracked** — deliberately not gitignored. Mirroring the clone's
+  gitignore would reproduce the exact defect: a repo that looks self-contained
+  while depending on untracked, unarchived trees.
+- `agent/my_agent.py` (1,151 lines, MIT-0, © AyoAI — our own solver-v2 port)
+  salvaged to `kaggle_salvage/` with its LICENSE and a provenance README.
+- 12 probes repointed: `KIT = Path(__file__).resolve().parents[1]`.
+
+### Correction to this ledger's own dependency analysis
+
+It calls the interpreter coupling load-bearing. Measured, **all five
+`/opt/ARC-AGI-3-Kaggle-Starter/.venv/bin/python` mentions are docstring usage
+lines** — no shebang, no `subprocess` invokes that path. The real code-level
+coupling was `sys.path.insert(0, str(KIT))` plus `KIT/vendor/ARC-AGI-3-Agents`
+and `KIT/agent`. Relatedly `structs` was never a KIT dependency: this repo has
+its own `structs.py`, and since each probe inserts `REPO` last it already won
+`sys.path`. Count: 12 `.py` bindings, not 13 — the 13th was this ledger.
+
+### Verification
+
+- `grep -rl ARC-AGI-3-Kaggle-Starter` over the repo → **0 live `.py` bindings**
+  (remaining hits are `.git` metadata, a historical `.log`, and this ledger).
+- `bank_timing_probe_g315373.py` re-run end-to-end under a `sys.addaudithook`
+  that raises on ANY filesystem access to the clone: **completed, 0 accesses**,
+  loading `environment_files/tn36/ef4dde99/tn36.py` from this repo and emitting
+  `tn36: banks(tick, clicks_before)=[(22, 23)] total_clicks=199`.
+
+**Retirement is now genuinely unblocked** — the dependency is cut AND the
+previously-unarchived data is preserved here. The standing constraint is
+unchanged: never push, fork, or publish the clone.
