@@ -86,11 +86,51 @@ been ported, and every remaining code artifact is bound to the competition's
 packages or its submission interface. The salvage is therefore the 7 analysis
 documents plus this ledger.
 
-## Remaining step (not done here)
+## Clone retirement: ARCHIVE COMPLETE, but BLOCKED by a live dependency
 
-Retiring the `/opt/ARC-AGI-3-Kaggle-Starter` clone is deliberately NOT part of
-this commit. Per `archive-before-delete.md`, deletion is the last step of a
-retirement and requires the archive to be verified first. A restore-verified
-off-box archive already exists at `arc-handoff/g-115-4185/` (RECEIPT.md beside
-it), so nothing is time-pressured. The clone should be retired only after this
-salvage is confirmed merged on origin.
+The archive half is finished and double-verified. `arc-handoff/g-115-4185/` now
+holds four objects:
+
+| object | bytes | covers |
+|---|---|---|
+| `kaggle-starter-main-20260731.bundle` | 116092 | committed history (35 commits, tip `868365d`) |
+| `RECEIPT.md` | 5764 | receipt for the bundle |
+| `kaggle-starter-untracked-20260804.tar.gz` | 68034 | the 4 UNTRACKED logs (671268 bytes raw) |
+| `RECEIPT-untracked-20260804.md` | 2573 | receipt for the tarball |
+
+The tarball was added by this goal because a git bundle cannot contain untracked
+files: deleting the clone with only the 2026-07-31 bundle in hand would have
+destroyed 671268 bytes no archive held. Enumeration re-checked immediately
+before the delete gate and matches exactly (tip `868365d`, 35 commits, 4
+untracked, 28 unpushed).
+
+**The deletion did NOT proceed.** `archive-before-delete.md` step 7 — "enumerate
+what READS this data" — found that **13 files in THIS repo carry live bindings to
+the clone path**, none of them comments:
+
+```
+analysis/click_prior_sweep_g315368.py:34:KIT = Path("/opt/ARC-AGI-3-Kaggle-Starter")
+analysis/port_r11l_pool_trace_g315378.py:15:KIT = Path("/opt/ARC-AGI-3-Kaggle-Starter")
+analysis/bank_timing_probe_g315373.py:14:KIT = Path("/opt/ARC-AGI-3-Kaggle-Starter")
+...
+```
+
+Two distinct couplings, and the second is the load-bearing one:
+
+1. `KIT = Path(...)` — the clone is a **data/module root** for these probes.
+2. `/opt/ARC-AGI-3-Kaggle-Starter/.venv/bin/python` is invoked as the
+   **interpreter** (e.g. `goose_cnn_collect_g315366.py:8`,
+   `port_sp80_trace_g315374.py:17`, `port_scorecard_decomp_g315372.py:13`) —
+   because that venv is the only place on this box with the competition's
+   `arc_agi` / `arcengine` packages. This repo's own `.venv` does not have them.
+
+So the official estate silently depends on the repo the directive calls
+throwaway, for its offline-benchmark analysis tooling. Deleting the clone today
+would break 13 official scripts, which is precisely the outcome the
+blast-radius step exists to prevent. That dependency must be resolved first —
+either by provisioning `arc_agi`/`arcengine` into this repo's own venv, or by
+repointing the 13 scripts — and only then may the clone be retired.
+
+This is a finding, not a deferral: the archive is complete and verified, so the
+retirement is safe to perform the moment the dependency is cut, and nothing is
+time-pressured in the meantime.
