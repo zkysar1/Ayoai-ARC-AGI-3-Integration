@@ -2,6 +2,15 @@
 .DS_Store
 *.log
 *.env
+# `*.env` is exact-suffix: it matches `.env` but NOT `.env.local`, which this
+# repo's own design doc / pyproject / main.py name as the credential file.
+.env.*
+# Re-include the template family, not just the one template that exists today:
+# `.env.*` would otherwise silently make a new .env.sample/.env.template
+# un-addable, which is the inverse of the leak this block prevents.
+!.env.example
+!.env.sample
+!.env.template
 !.env-example
 
 # Cache
