@@ -210,9 +210,9 @@ def part2() -> None:
     print(f"  order-independent, contiguous wins both orders? {order_independent}")
     print("  Before g-315-516 the winner flipped with list ORDER at identical")
     print("  dist; the count-equivalent pair is now separated by arrangement.")
-    print("  NOT yet established: that a semantic proposal beats the tail on")
-    print("  REAL frames -- that needs recordings/ (hypothesis")
-    print("  2026-07-29_tail-firing-set-is-bursty-not-scattered, still open).")
+    print("  Part 3 below settles what this part cannot -- on REAL frames:")
+    print("  hypothesis 2026-07-29_tail-firing-set-is-bursty-not-scattered is")
+    print("  CONFIRMED (g-315-518), so this separation does NOT transfer.")
 
 
 def _runs_and_longest(fires: list[bool]) -> tuple[int, int]:
@@ -245,28 +245,53 @@ def _load_real_ls20_frames(
     module rather than re-implemented so the frame encoding cannot drift apart
     from the path this measurement is meant to characterise.
 
-    The second return value is ``(path, start, end)`` per recording.  It exists
-    because concatenating N recordings creates ADJACENCY THAT IS NOT TEMPORAL at
-    every file boundary: the last frame of one episode sits next to the first
-    frame of an unrelated one.  A run spanning a boundary is an artifact of
+    Returns ``(frames, segments, files_seen, skipped)``.
+
+    ``segments`` is ``(path, start, end)`` per recording.  It exists because
+    concatenating N recordings creates ADJACENCY THAT IS NOT TEMPORAL at every
+    file boundary: the last frame of one episode sits next to the first frame of
+    an unrelated one.  A run spanning a boundary is an artifact of
     concatenation, so part 3 reports within-recording coherence alongside the
     concatenated figure rather than trusting the latter alone.
+
+    ``files_seen`` / ``skipped`` exist so a zero-frame result can name its own
+    cause.  Zero frames with ``files_seen == 0`` means this box has no
+    recordings; zero frames with ``files_seen > 0`` means the files were read
+    and nothing in them parsed, which is a schema or corruption failure.  Both
+    used to print the same "no recordings" line.
     """
     from analysis.ls20_exploration import _freeze
 
     frames: list[tuple[CCSignature, float]] = []
     segments: list[tuple[str, int, int]] = []
+    # Counted, not silently dropped: with a bare `continue`, a SCHEMA rename
+    # ("frame" -> something else) yields zero frames and part3 then reports
+    # "no recordings on this box" -- an ENVIRONMENT cause for a SCHEMA failure,
+    # which is the rb-245 class. files_seen separates "glob matched nothing"
+    # from "glob matched but nothing was usable"; the two need opposite fixes.
+    files_seen = 0
+    skipped = 0
     pattern = os.path.join(recordings_dir, glob_pat)
     for path in sorted(glob.glob(pattern)):
+        files_seen += 1
         start = len(frames)
-        with open(path) as f:
+        # encoding pinned: Windows `open()` defaults to the locale codec
+        # (cp1252 here), so a non-ASCII byte would decode-error on one platform
+        # and not another.
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
-                rec = json.loads(line)
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    # One corrupt line must not abort a 92-recording sweep.
+                    skipped += 1
+                    continue
                 data = rec.get("data", {})
                 if "frame" not in data or "score" not in data:
+                    skipped += 1
                     continue
                 frozen = _freeze(data["frame"])
                 if history_k >= 1:
@@ -283,7 +308,7 @@ def _load_real_ls20_frames(
             segments.append((os.path.basename(path), start, len(frames)))
         if len(frames) >= max_frames:
             break
-    return frames, segments
+    return frames, segments, files_seen, skipped
 
 
 def part3() -> None:
@@ -291,16 +316,26 @@ def part3() -> None:
     print("\n\nPART 3 — tail firing-set arrangement on REAL ls20 frames "
           "(g-315-518)")
 
-    frames, segments = _load_real_ls20_frames()
+    frames, segments, files_seen, skipped = _load_real_ls20_frames()
     if not frames:
-        print("  SKIPPED: no recordings/ls20-*.recording.jsonl on this box. "
-              "This measurement REQUIRES real recordings; the synthetic "
-              "harness cannot substitute (that is the whole point of g-315-518).")
+        if files_seen == 0:
+            print("  SKIPPED: no recordings/ls20-*.recording.jsonl on this box. "
+                  "This measurement REQUIRES real recordings; the synthetic "
+                  "harness cannot substitute (that is the whole point of "
+                  "g-315-518).")
+        else:
+            # NOT an environment problem: the files are here and were read.
+            print(f"  FAILED: matched {files_seen} recording file(s) but "
+                  f"extracted 0 usable frames ({skipped} line(s) skipped as "
+                  f"unparseable or missing data.frame/data.score). This is a "
+                  f"SCHEMA or corruption failure, NOT a missing-recordings box "
+                  f"-- do not read it as 'no recordings'.")
         return
 
     n = len(frames)
     scores = {s for _sig, s in frames}
-    print(f"  loaded {n} frames from {len(segments)} recording(s); "
+    print(f"  loaded {n} frames from {len(segments)} recording(s) "
+          f"({files_seen} file(s) matched, {skipped} line(s) skipped); "
           f"distinct scores={sorted(scores)[:5]}"
           f"{' ...' if len(scores) > 5 else ''}")
     if scores != {0.0}:
