@@ -208,13 +208,28 @@ def _initiate_cold_start(
         "Content-Type": "application/json",
         "AYOAI-API-KEY": api_key,
     }
-    # Bounded retry on TRANSPORT failures only (g-315-509). An HTTP *response* —
-    # any status — is a decision from the server and is handled below verbatim:
-    # 200 success, 409 already-initiated, everything else terminal. Retrying a
-    # 4xx would be wrong (it will not change) and retrying a non-idempotent write
-    # is only safe here because Collect is idempotent per ayoServerKey — a repeat
-    # POST returns 409 rather than provisioning twice, which is exactly what the
-    # 409 branch below already treats as success.
+    # Bounded retry on TRANSPORT failures only (g-315-509). MOST HTTP responses
+    # are decisions from the server and are handled below verbatim: 200 success,
+    # 409 already-initiated, everything else terminal. Retrying a 4xx would be
+    # wrong (it will not change) and retrying a non-idempotent write is only safe
+    # here because Collect is idempotent per ayoServerKey — a repeat POST returns
+    # 409 rather than provisioning twice, which is exactly what the 409 branch
+    # below already treats as success.
+    #
+    # 504 IS THE EXCEPTION, AND IT IS NOT A DECISION FROM THE SERVER (g-335-911).
+    # This comment previously said "an HTTP *response* — ANY status — is a
+    # decision from the server", and that generalization is what made the 504
+    # terminal. API Gateway SYNTHESIZES a 504 when the integration outlives the
+    # gateway's own timeout — it is the CALLER giving up, not the server
+    # answering. The Lambda behind it most likely SUCCEEDED and is still
+    # provisioning. Structurally this is "poll budget exhausted" wearing the
+    # clothes of "observed a terminal state" (guard-2539, read from the consumer
+    # side), so it gets 409's handling below: return None and let the readiness
+    # poll — which has its own far longer budget — adjudicate the real state.
+    # It is deliberately NOT retried: a retry would re-POST into a provisioning
+    # already under way, and the retry loop here bounds transport failures only
+    # (guard-2839 — a per-request timeout cannot bound what a caller upstream
+    # already abandoned).
     max_attempts = _env_int("AYOAI_COLD_START_ATTEMPTS", COLD_START_MAX_ATTEMPTS)
     base_delay = _env_float("AYOAI_COLD_START_RETRY_DELAY_S", COLD_START_RETRY_DELAY_S)
     r = None
@@ -268,6 +283,20 @@ def _initiate_cold_start(
         logger.info(
             "Cold-start already initiated for ayoServerKey=%s (HTTP 409); "
             "proceeding to readiness poll",
+            card_id,
+        )
+        return None
+
+    if r.status_code == 504:
+        # Gateway-synthesized timeout — the caller gave up, the server did not
+        # answer (g-335-911). Same adjudication as 409: the readiness poll
+        # reveals whether the cold start actually took. WARNING rather than INFO
+        # because, unlike 409, this leaves us genuinely not knowing what the
+        # backend did.
+        logger.warning(
+            "Cold-start POST for ayoServerKey=%s returned HTTP 504 (gateway "
+            "timeout, not a server decision) — the cold start may well have "
+            "succeeded and still be provisioning; proceeding to readiness poll",
             card_id,
         )
         return None

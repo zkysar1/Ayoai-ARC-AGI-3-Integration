@@ -431,10 +431,12 @@ def test_initiate_cold_start_survives_transport_timeouts_then_succeeds(monkeypat
 
 
 def test_initiate_cold_start_does_not_retry_http_status_errors():
-    """An HTTP *response* is a server decision — retrying it would be wrong.
+    """A 500 is a server decision — retrying it would be wrong.
 
     Only transport exceptions are retried. A 500 is terminal on the first try;
-    retrying could also double-provision on a non-idempotent endpoint.
+    retrying could also double-provision on a non-idempotent endpoint. (Note
+    the narrower claim: not EVERY status is a server decision — see the 504
+    block below, g-335-911.)
     """
     sess = MagicMock(spec=requests.Session)
     sess.post.return_value = _mock_response(500, {})
@@ -448,6 +450,52 @@ def test_initiate_cold_start_409_still_short_circuits_without_retry():
     sess = MagicMock(spec=requests.Session)
     sess.post.return_value = _mock_response(409, None)
     assert _initiate_cold_start("card-T", "arc-agi-3", "k", sess, 10.0) is None
+    assert sess.post.call_count == 1
+
+
+# ---------- g-335-911: 504 is not a server decision ---------- #
+
+
+def test_initiate_cold_start_504_returns_none_and_defers_to_poll():
+    """THE regression test for g-335-911.
+
+    A 504 is SYNTHESIZED by API Gateway when the integration outlives the
+    gateway's timeout — the caller gave up, the server never answered. The
+    Lambda most likely succeeded and is still provisioning, so this must join
+    409's equivalence class (return None, let the readiness poll adjudicate)
+    rather than raising as though the server had refused.
+    """
+    sess = MagicMock(spec=requests.Session)
+    sess.post.return_value = _mock_response(
+        504, {"message": "Endpoint request timed out"}
+    )
+    assert _initiate_cold_start("card-W", "arc-agi-3", "k", sess, 10.0) is None
+
+
+def test_initiate_cold_start_504_does_not_retry():
+    """Deferring to the poll is not retrying (guard-2839).
+
+    A re-POST would land on a provisioning already under way. One attempt, then
+    hand the question to the readiness poll — which owns the long budget.
+    """
+    sess = MagicMock(spec=requests.Session)
+    sess.post.return_value = _mock_response(504, None)
+    assert _initiate_cold_start("card-X", "arc-agi-3", "k", sess, 10.0) is None
+    assert sess.post.call_count == 1
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 422, 500, 502, 503])
+def test_initiate_cold_start_other_statuses_stay_terminal(status):
+    """504's carve-out must not leak into its neighbours.
+
+    Every one of these IS a decision from the server (including 502/503, which
+    report an upstream the gateway actually reached). Only 504 — the gateway
+    reporting on ITSELF — is non-terminal.
+    """
+    sess = MagicMock(spec=requests.Session)
+    sess.post.return_value = _mock_response(status, {})
+    with pytest.raises(AyoaiApiError, match=f"HTTP {status}"):
+        _initiate_cold_start("card-Y", "arc-agi-3", "k", sess, 10.0)
     assert sess.post.call_count == 1
 
 
@@ -558,6 +606,23 @@ def test_open_session_cold_start_409_proceeds_to_poll():
     assert info.ayoai_hostname == "host-warm"
     assert session.post.call_count == 2
     # The INITIATED entry still appears; invocation_type is None on 409
+    assert info.status_log[0]["status"] == "INITIATED"
+    assert info.status_log[0].get("invocation_type") is None
+
+
+def test_open_session_cold_start_504_proceeds_to_poll():
+    """End-to-end shape of g-335-911: a gateway 504 no longer kills session-open.
+
+    Before this, a 504 raised out of _initiate_cold_start and the session died
+    at open — while the cold start it reported on had most likely SUCCEEDED.
+    """
+    session = _make_session_mock(
+        [_mock_response(200, _success_body("host-after-504"))],
+        cold_start=_mock_response(504, {"message": "Endpoint request timed out"}),
+    )
+    info = open_ayoai_session("card-M", api_key="k", session=session)
+    assert info.ayoai_hostname == "host-after-504"
+    assert session.post.call_count == 2
     assert info.status_log[0]["status"] == "INITIATED"
     assert info.status_log[0].get("invocation_type") is None
 
