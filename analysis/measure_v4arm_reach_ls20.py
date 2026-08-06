@@ -77,7 +77,7 @@ Note the context-passthrough is a genuine PROPERTY of v3 under multi-step planni
 harness limitation to design around: its per-step edge need not compound, and measuring
 whether it does is exactly what this harness is for. A CORRECTED outcome is a real result.
 
-Run: PYTHONPATH=/opt/Ayoai-ARC-AGI-3-Integration .venv/bin/python analysis/measure_v4arm_reach_ls20.py 12 3
+Run: PYTHONPATH=/opt/GitHub/Ayoai/Ayoai-ARC-AGI-3-Integration .venv/bin/python analysis/measure_v4arm_reach_ls20.py 12 3
 """
 from __future__ import annotations
 

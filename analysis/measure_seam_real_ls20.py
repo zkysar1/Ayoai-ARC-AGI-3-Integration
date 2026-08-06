@@ -18,7 +18,7 @@ recordings (recordings/*.recording.jsonl) and reports:
                           discriminating comparison, since the table falls back to identity on unseen
                           states (correct only on no-op transitions, which inflate a naive overall %).
 
-Run:  PYTHONPATH=/opt/Ayoai-ARC-AGI-3-Integration .venv/bin/python analysis/measure_seam_real_ls20.py
+Run:  PYTHONPATH=/opt/GitHub/Ayoai/Ayoai-ARC-AGI-3-Integration .venv/bin/python analysis/measure_seam_real_ls20.py
 """
 from __future__ import annotations
 
