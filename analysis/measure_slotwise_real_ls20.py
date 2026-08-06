@@ -17,7 +17,7 @@ subset:
 THE GATE: does slotwise beat the table floor on the MOVING subset (state !=
 next_state -- identity is trivially right on no-op transitions) where v1 tied it?
 
-Run: PYTHONPATH=/opt/Ayoai-ARC-AGI-3-Integration .venv/bin/python analysis/measure_slotwise_real_ls20.py 12
+Run: PYTHONPATH=/opt/GitHub/Ayoai/Ayoai-ARC-AGI-3-Integration .venv/bin/python analysis/measure_slotwise_real_ls20.py 12
 """
 from __future__ import annotations
 

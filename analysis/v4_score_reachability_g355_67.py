@@ -37,7 +37,7 @@ Env-agnostic: states are frozen frame grids, actions are (name, x, y) tuples --
 opaque hashables, exactly as the runtime encodes them. No env constant leaks
 into the primitives; this is a caller-side analysis harness.
 
-Run: cd /opt/Ayoai-ARC-AGI-3-Integration && .venv/bin/python analysis/v4_score_reachability_g355_67.py
+Run: cd /opt/GitHub/Ayoai/Ayoai-ARC-AGI-3-Integration && .venv/bin/python analysis/v4_score_reachability_g355_67.py
 """
 
 from __future__ import annotations

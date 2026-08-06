@@ -17,7 +17,7 @@ unpredicted, so both are scored on object POSITIONS only -- a fair, identical me
 
 THE GATE: does v3 (boundary-aware) beat v2 (context-free) on the moving-subset mean?
 
-Run: PYTHONPATH=/opt/Ayoai-ARC-AGI-3-Integration .venv/bin/python analysis/measure_boundary_real_ls20.py 12
+Run: PYTHONPATH=/opt/GitHub/Ayoai/Ayoai-ARC-AGI-3-Integration .venv/bin/python analysis/measure_boundary_real_ls20.py 12
 """
 from __future__ import annotations
 

@@ -38,7 +38,7 @@ shifted rigidly each step (`translate_footprints`) — see those functions for t
 Step 1 of the rollout is the 1-step boundary measurement and should reproduce
 g-315-496 (v2 ~0.191, v3 ~0.283 on the moving subset) -- a built-in harness sanity check.
 
-Run: PYTHONPATH=/opt/Ayoai-ARC-AGI-3-Integration .venv/bin/python analysis/measure_rollout_ls20.py 12 3
+Run: PYTHONPATH=/opt/GitHub/Ayoai/Ayoai-ARC-AGI-3-Integration .venv/bin/python analysis/measure_rollout_ls20.py 12 3
 """
 from __future__ import annotations
 

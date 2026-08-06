@@ -29,7 +29,7 @@ primitives/ UNCHANGED: the delta synthesizer is INLINE here (adapter/analysis la
 V4Arm / WorldModel / TransitionBuffer / plan are imported read-only (echo PRIMARY:
 env-agnostic purity, cognitive-load cost stays in the adapter).
 
-Run: cd /opt/Ayoai-ARC-AGI-3-Integration && \
+Run: cd /opt/GitHub/Ayoai/Ayoai-ARC-AGI-3-Integration && \
      .venv/bin/python analysis/v4_parametric_ab_g315_478.py
 """
 from __future__ import annotations
@@ -40,7 +40,7 @@ import os
 import sys
 from collections import Counter, deque
 
-_ARC = "/opt/Ayoai-ARC-AGI-3-Integration"
+_ARC = "/opt/GitHub/Ayoai/Ayoai-ARC-AGI-3-Integration"
 sys.path.insert(0, _ARC)
 
 from primitives.synthesized_world_model import TransitionBuffer, WorldModel  # noqa: E402
