@@ -9,9 +9,9 @@ Two things are proven here:
      (adapters/vinheim.py) ALSO runs on a 2-D grid puzzle:
        - WorldBuilder does connected-component segmentation of the grid into the
          env-agnostic UnitSet (the "ARC cc_segment" the other adapters name as canonical).
-       - ProximityModel.distance is GRID-MANHATTAN over segment centroids -- a THIRD metric,
-         NOT roblox's Dijkstra path NOR vinheim's BFS graph-hop; plus the learned-
-         displacement projection seam feeds FrontierCoverage.select.
+       - ProximityModel's learned-displacement projection seam feeds
+         FrontierCoverage.select. (The GRID-MANHATTAN metric this file used to pin was
+         retired with ProximityModel.distance in g-315-534.)
        - Executor declares the ARC action space and returns Result{outcome, reason,
          retrySafe}; every Decision exits through it.
        - The shared primitive core is COMPOSED, never modified (no ARC knowledge leaks in).
@@ -28,7 +28,6 @@ no network. The provisioner's default transport is the offline simulation.
 
 from __future__ import annotations
 
-import math
 
 import pytest
 
@@ -85,33 +84,13 @@ def test_worldbuilder_empty_frame_yields_no_units() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Slot 2 -- ProximityModel: GRID-MANHATTAN distance + projection seam.          #
+# Slot 2 -- ProximityModel: projection seam.                                    #
+#                                                                              #
+# The two grid-Manhattan distance tests that lived here were removed with the   #
+# metric itself in g-315-534 (ProximityModel.distance had zero non-test         #
+# consumers; the IAUS scorer it was declared for was built on frame cells in    #
+# solver_v0/policy.py rule 4.6 and does not call it).                           #
 # --------------------------------------------------------------------------- #
-def test_distance_is_grid_manhattan_not_euclidean() -> None:
-    wb = ArcWorldBuilder()
-    units = wb.build_units(SimulatedArcGrid().world_state())
-    by_id = {u.id: u for u in units}
-    pm = ArcProximityModel()
-    pm.set_units(units)
-
-    a, b = by_id["seg-0"], by_id["seg-1"]
-    manhattan = pm.distance(a, b)
-    euclidean = math.hypot(a.centroid[0] - b.centroid[0], a.centroid[1] - b.centroid[1])
-
-    # centroids (0,0) and (2,2): Manhattan = |0-2| + |0-2| = 4; Euclidean = sqrt(8).
-    assert manhattan == 4.0
-    assert euclidean == pytest.approx(math.sqrt(8))
-    assert manhattan != euclidean
-
-
-def test_distance_same_unit_is_zero() -> None:
-    wb = ArcWorldBuilder()
-    units = wb.build_units(SimulatedArcGrid().world_state())
-    pm = ArcProximityModel()
-    pm.set_units(units)
-    assert pm.distance(units[0], units[0]) == 0.0
-
-
 def test_projection_seam_uses_learned_displacement() -> None:
     pm = ArcProximityModel()
     project = pm.project_from((5, 5))

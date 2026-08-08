@@ -9,10 +9,13 @@ BYTE-IDENTICAL-portable across roblox (delta, ``adapters/roblox.py``) and vinhei
 SAME unmodified primitive. The shared core is COMPOSED, never modified; no ARC literal
 leaks into ``primitives/`` (generalization gate 3).
 
-ARC is a THIRD environment shape: not 3-D spatial navigation (roblox, weighted-Dijkstra
-PATH distance) nor a semantic entity graph (vinheim, BFS graph-hop distance), but a 2-D
-GRID puzzle. Its slots therefore differ in exactly the cross-env-variance dimensions the
-catalog predicts:
+ARC is a THIRD environment shape: not 3-D spatial navigation (roblox) nor a semantic
+entity graph (vinheim), but a 2-D GRID puzzle. Its slots therefore differ in exactly the
+cross-env-variance dimensions the catalog predicts. (Each env used to ALSO supply its own
+``ProximityModel.distance`` metric -- ARC grid-Manhattan, roblox weighted Dijkstra,
+vinheim BFS hop count. That member was retired in g-315-534: zero non-test consumers, and
+the IAUS scorer it was declared for was built on frame cells in solver_v0/policy.py rule
+4.6 and does not call it.)
 
   ArcWorldBuilder    CONNECTED-COMPONENT segmentation of the grid -> one Unit per
                      same-colour region, in the {id, size, centroid, bbox, adjacency,
@@ -20,10 +23,9 @@ catalog predicts:
                      also produce. This is the "ARC cc_segment" perception the roblox.py
                      / vinheim.py docstrings both name as the canonical UnitSet source.
 
-  ArcProximityModel  GRID-MANHATTAN distance over segment centroids (a THIRD metric --
-                     neither Dijkstra nor graph-hop), PLUS the injected learned-
-                     displacement projection seam project(action) -> Cell|None that
-                     FrontierCoverage.select consumes.
+  ArcProximityModel  the injected learned-displacement projection seam
+                     project(action) -> Cell|None that FrontierCoverage.select
+                     consumes.
 
   ArcExecutor        the ARC action space (RESET=0, ACTION1-5/7 simple, ACTION6 a click
                      at (x, y) in [0, 63]^2) + execute(decision) routed through an
@@ -265,13 +267,15 @@ class ArcWorldBuilder:
 # Slot 2 -- ProximityModel (variance-absorbing action adapter).                 #
 # --------------------------------------------------------------------------- #
 class ArcProximityModel(LearnedDisplacementModel):
-    """GRID-MANHATTAN distance + the learned-displacement projection seam (ProximityModel).
+    """The learned-displacement projection seam (Plan 7.2.A ProximityModel).
 
-    distance(a, b) is the L1 / Manhattan distance between two segment centroids on the
-    grid -- a THIRD env metric, deliberately NEITHER roblox's weighted Dijkstra PATH
-    distance NOR vinheim's BFS semantic graph-hop count. A 2-D grid is fully connected in
-    coordinate space (no obstacle routing at v0), so the metric is the raw cell distance;
-    obstacle-aware routing is a future Idea, not a v0 requirement.
+    An L1 / Manhattan distance(a, b) over segment centroids lived here until g-315-534
+    retired ProximityModel.distance: zero non-test consumers, and the IAUS scorer it was
+    declared for was built on frame cells in solver_v0/policy.py rule 4.6 and does not
+    call it. Note the ARC solver DOES do proximity scoring -- rule 4.6 computes its own
+    Manhattan distance on frame cells with an online-learned displacement model, and its
+    comments say "no adapter wire needed". That is the sharpest evidence for the retire:
+    this env built the declared consumer and routed around the slot.
 
     project(action) is the seam FrontierCoverage.select consumes; it is backed by a
     LEARNED displacement model (action -> cursor cell delta) observed from Executor
@@ -295,19 +299,15 @@ class ArcProximityModel(LearnedDisplacementModel):
     #      inherited from primitives.learned_displacement.LearnedDisplacementModel
     #      (g-315-449; byte-identical across all 4 adapters, hoisted per g-315-448/rb-4880) ----
 
-    # ---- grid-Manhattan distance (Plan 7.2.A signature: distance(unitA, unitB)) ----
+    # ---- unit store (ProximityModel.set_units; called by adapters/episode.py) ----
     def set_units(self, units: Sequence[Unit]) -> None:
-        """Load the current segment set (API parity with roblox/vinheim; v0 distance
-        reads the passed units' own centroids, so this store is for future obstacle
-        routing rather than the current metric)."""
+        """Load the current segment set. NOTE: this store has NO READER in this
+        adapter. It never had one for the grid-Manhattan metric (that read the
+        passed units' own centroids), and g-315-534 retired that metric entirely,
+        so the only remaining reason to keep it is that ``set_units`` is a
+        ProximityModel member the episode driver calls. Whether the slot should
+        still carry it is the next contract question, not this one."""
         self._units_by_id = {u.id: u for u in units}
-
-    def distance(self, unit_a: Unit, unit_b: Unit) -> float:
-        """Grid-Manhattan distance between segment centroids. NOT Dijkstra, NOT graph-hop."""
-        if unit_a.id == unit_b.id:
-            return 0.0
-        (ax, ay), (bx, by) = unit_a.centroid, unit_b.centroid
-        return float(abs(ax - bx) + abs(ay - by))
 
 
 # --------------------------------------------------------------------------- #

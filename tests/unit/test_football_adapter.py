@@ -9,9 +9,10 @@ episode:
 
   - WorldBuilder derives the passing-lane adjacency from where the OPPONENTS are
     standing this tick, so the same players yield a different graph as opponents move.
-  - ProximityModel.distance is pressure-adjusted euclidean -- two players the same
-    metres apart are FURTHER apart when an opponent is between them. Neither
-    roblox's weighted Dijkstra nor vinheim's hop count nor raw geometry.
+  - ProximityModel's learned-displacement projection seam feeds FrontierCoverage.
+    (Its pressure-adjusted euclidean distance -- two players the same metres apart
+    reading FURTHER when an opponent stands between them -- was retired with
+    ProximityModel.distance in g-315-534.)
   - Executor declares the action space and returns Result{outcome, reason,
     retry_safe}; every Decision exits through it.
   - The shared primitive core is COMPOSED, never modified (no football knowledge
@@ -21,7 +22,6 @@ episode:
 from __future__ import annotations
 
 import math
-from typing import Mapping
 
 from adapters.football import (
     Decision,
@@ -112,59 +112,17 @@ def test_opponents_are_never_teammates_in_the_lane_graph() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Slot 2 -- ProximityModel: pressure-adjusted distance.                         #
+# Slot 2 -- ProximityModel: projection seam.                                    #
+#                                                                              #
+# The four pressure-adjusted-distance tests that lived here (and their          #
+# _model_over helper) were removed with the metric itself in g-315-534:         #
+# ProximityModel.distance had zero non-test consumers, and the IAUS scorer it   #
+# was declared for was built on frame cells in solver_v0/policy.py rule 4.6,    #
+# which does not call it. Football's adversarial-pressure term was the most     #
+# distinctive of the four env metrics and is the clearest illustration of the   #
+# cost being paid: it is recoverable from git history if a genuine unit-pair    #
+# consumer ever appears.                                                        #
 # --------------------------------------------------------------------------- #
-def _model_over(state: Mapping[str, object]) -> tuple[FootballProximityModel, dict[str, Unit]]:
-    model = FootballProximityModel(pressure_radius=6.0, pressure_weight=1.0)
-    units = FootballWorldBuilder().build_units(state)
-    model.set_units(units)
-    return model, {u.id: u for u in units}
-
-
-def test_distance_is_plain_geometry_on_an_uncontested_line() -> None:
-    """With no opponent in range the adversarial term vanishes -- additive, not a different metric."""
-    model, by_id = _model_over(_open_pitch())
-    assert model.distance(by_id["H1"], by_id["H2"]) == 10.0
-    assert model.distance(by_id["H1"], by_id["H1"]) == 0.0
-
-
-def test_an_opponent_in_the_lane_makes_the_same_gap_longer() -> None:
-    """The property no sibling adapter's metric can express."""
-    open_model, open_units = _model_over(_open_pitch())
-    contested_model, contested_units = _model_over(_contested_pitch())
-
-    clear = open_model.distance(open_units["H1"], open_units["H2"])
-    contested = contested_model.distance(contested_units["H1"], contested_units["H2"])
-
-    # Identical euclidean separation in both worlds...
-    assert open_units["H1"].centroid == contested_units["H1"].centroid
-    assert open_units["H2"].centroid == contested_units["H2"].centroid
-    # ...but the contested one reads as further.
-    assert contested > clear
-    # A1 sits exactly on the segment (gap 0), so pressure is the full 1.0 -> 2x.
-    assert contested == 20.0
-
-
-def test_pressure_decays_with_distance_from_the_lane() -> None:
-    state = _open_pitch()
-    players = state["players"]
-    assert isinstance(players, list)
-    # Half the pressure radius off the line -> half the pressure -> 1.5x.
-    players[2] = {"id": "A1", "team": "away", "pos": [5.0, 3.0], "size": 2.0}
-    model, by_id = _model_over(state)
-    assert model.distance(by_id["H1"], by_id["H2"]) == 15.0
-
-
-def test_untagged_units_never_contest_a_lane() -> None:
-    """The ball sits exactly between the two players and must not read as pressure."""
-    state = _open_pitch()
-    ball = state["ball"]
-    assert isinstance(ball, dict)
-    assert ball["pos"] == [5.0, 0.0]  # dead on the H1-H2 segment
-    model, by_id = _model_over(state)
-    assert model.distance(by_id["H1"], by_id["H2"]) == 10.0
-
-
 def test_projection_seam_is_learned_not_hardcoded() -> None:
     model = FootballProximityModel()
     project = model.project_from((0, 0))

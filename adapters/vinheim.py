@@ -38,11 +38,7 @@ literal leaks into the agnostic core -- generalization gate 3):
       dropped from navigation, exactly as roblox drops wall-occluded edges.
 
   VinheimProximityModel  (action adapter, variance-absorbing = ProximityModel)
-      distance(a, b) -> SEMANTIC graph-hop distance (BFS edge count over the
-      declared link graph), inf if unreachable -- NOT Euclidean and NOT roblox's
-      weighted Dijkstra: a different env supplies a different metric, which is the
-      whole point of the slot (rb-1690 / guard-689: the primitive trusts the slot's
-      distance, never a hardcoded geometry). PLUS the injected projection seam
+      The injected projection seam
       project(action) -> Cell|None that FrontierCoverage.select consumes, backed by
       a LEARNED displacement model (primitive-side memory observed from Executor
       results -- never a hardcoded lattice).
@@ -70,7 +66,6 @@ both.
 from __future__ import annotations
 
 import math
-from collections import deque
 from dataclasses import dataclass
 from typing import Mapping, Optional, Sequence, cast
 
@@ -216,13 +211,15 @@ class VinheimWorldBuilder:
 # Slot 2 -- ProximityModel (variance-absorbing action adapter).                 #
 # --------------------------------------------------------------------------- #
 class VinheimProximityModel(LearnedDisplacementModel):
-    """SEMANTIC graph-hop distance + the learned-displacement projection seam.
+    """The learned-displacement projection seam (Plan 7.2.A ProximityModel).
 
-    distance(a, b) is the BFS edge count over the WorldBuilder link graph -- a pure
-    SEMANTIC / topological metric, inf if unreachable. It is deliberately NEITHER
-    Euclidean NOR roblox's weighted Dijkstra: the ProximityModel slot is exactly
-    where each environment supplies its own notion of nearness (Plan 7.2.A Q9b),
-    and FrontierCoverage trusts it without ever computing geometry itself.
+    A SEMANTIC graph-hop distance(a, b) (BFS edge count over the WorldBuilder link
+    graph, inf if unreachable) lived here until g-315-534 retired
+    ProximityModel.distance: zero non-test consumers, and the IAUS scorer it was
+    declared for was built on frame cells in solver_v0/policy.py rule 4.6 and does
+    not call it. The slot is still where each env supplies its own spatial model
+    (Plan 7.2.A Q9b) -- that now runs entirely through project_from, which
+    FrontierCoverage trusts without ever computing geometry itself.
 
     project(action) is the seam FrontierCoverage.select consumes; it is backed by a
     LEARNED displacement model (action -> cell delta) observed from Executor results
@@ -250,36 +247,13 @@ class VinheimProximityModel(LearnedDisplacementModel):
     #      inherited from primitives.learned_displacement.LearnedDisplacementModel
     #      (g-315-449; byte-identical across all 4 adapters, hoisted per g-315-448/rb-4880) ----
 
-    # ---- semantic graph-hop distance (Plan 7.2.A signature: distance(unitA, unitB)) ----
+    # ---- unit store (ProximityModel.set_units; called by adapters/episode.py) ----
     def set_units(self, units: Sequence[Unit]) -> None:
-        """Load the current navigation graph so distance(a, b) can route over it."""
+        """Load the current navigation graph. Its only reader was the semantic
+        graph-hop distance retired in g-315-534, so this store now has NO READER
+        in this adapter -- ``set_units`` survives because it is a ProximityModel
+        member the episode driver calls."""
         self._units_by_id = {u.id: u for u in units}
-
-    def distance(self, unit_a: Unit, unit_b: Unit) -> float:
-        """SEMANTIC graph-hop distance (BFS edge count), inf if unreachable.
-
-        NOT Euclidean and NOT a weighted path -- the number of declared links
-        between the two units. This is the env-supplied metric; a maze with no
-        link route returns inf exactly as roblox's path distance does.
-        """
-        if unit_a.id == unit_b.id:
-            return 0.0
-        graph = self._units_by_id or {unit_a.id: unit_a, unit_b.id: unit_b}
-        seen = {unit_a.id}
-        queue: deque[tuple[str, int]] = deque([(unit_a.id, 0)])
-        while queue:
-            uid, hops = queue.popleft()
-            cur = graph.get(uid)
-            if cur is None:
-                continue
-            for nid in cur.adjacency:
-                if nid == unit_b.id:
-                    return float(hops + 1)
-                if nid in seen or nid not in graph:
-                    continue
-                seen.add(nid)
-                queue.append((nid, hops + 1))
-        return math.inf
 
 
 # --------------------------------------------------------------------------- #

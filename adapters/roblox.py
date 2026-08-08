@@ -24,10 +24,8 @@ The 3 slots (the ones that absorb the most cross-env variance):
       segmentation produces: {id, size, centroid, bbox, adjacency, kind}.
 
   RobloxProximityModel  (action adapter, variance-absorbing = ProximityModel)
-      distance(a, b) -> PATH-distance over the unit navigation graph (Dijkstra
-      that routes AROUND obstacle units), NEVER Euclidean (rb-1690 / guard-689:
-      greedy Euclidean fails maze/obstacle topology). PLUS the injected
-      projection seam project(action) -> Cell|None that FrontierCoverage.select
+      The injected projection seam project(action) -> Cell|None that
+      FrontierCoverage.select
       consumes, backed by a LEARNED displacement model (primitive-side memory,
       observed from Executor results -- never a hardcoded lattice).
 
@@ -53,7 +51,6 @@ transport-agnostic, so the same code drives both.
 
 from __future__ import annotations
 
-import heapq
 import math
 from dataclasses import dataclass
 from typing import Mapping, Optional, Sequence, cast
@@ -297,11 +294,14 @@ class RobloxWorldBuilder:
 # Slot 2 -- ProximityModel (variance-absorbing action adapter).                 #
 # --------------------------------------------------------------------------- #
 class RobloxProximityModel(LearnedDisplacementModel):
-    """PATH-distance + the learned-displacement projection seam (Plan 7.2.A ProximityModel).
+    """The learned-displacement projection seam (Plan 7.2.A ProximityModel).
 
-    distance(a, b) is Dijkstra over the WorldBuilder navigation graph (edges already
-    routed around obstacles), so it is a PATH-distance -- NEVER Euclidean (rb-1690 /
-    guard-689). project(action) is the seam FrontierCoverage.select consumes; it is
+    A Dijkstra PATH-distance over the WorldBuilder navigation graph lived here until
+    g-315-534 retired ProximityModel.distance: it had zero non-test consumers, and the
+    IAUS scorer it was declared for was built on frame cells in solver_v0/policy.py
+    rule 4.6 and does not call it. rb-1690 / guard-689 (never let the primitive compute
+    its own geometry) still binds -- it now attaches to project_from, the seam that
+    survived. project(action) is the seam FrontierCoverage.select consumes; it is
     backed by a LEARNED displacement model (action -> cell delta) observed from
     Executor results over ticks -- primitive-side memory, never a hardcoded lattice.
     An action with no observed effect projects to None (skipped until calibrated).
@@ -325,37 +325,13 @@ class RobloxProximityModel(LearnedDisplacementModel):
     #      inherited from primitives.learned_displacement.LearnedDisplacementModel
     #      (g-315-449; byte-identical across all 4 adapters, hoisted per g-315-448/rb-4880) ----
 
-    # ---- path-distance (Plan 7.2.A signature: distance(unitA, unitB)) ----
+    # ---- unit store (ProximityModel.set_units; called by adapters/episode.py) ----
     def set_units(self, units: Sequence[Unit]) -> None:
-        """Load the current navigation graph so distance(a, b) can route over it."""
+        """Load the current navigation graph. Its only reader was the Dijkstra
+        path-distance retired in g-315-534, so this store now has NO READER in
+        this adapter -- ``set_units`` survives because it is a ProximityModel
+        member the episode driver calls."""
         self._units_by_id = {u.id: u for u in units}
-
-    def distance(self, unit_a: Unit, unit_b: Unit) -> float:
-        """PATH-distance (Dijkstra over adjacency), inf if unreachable. NOT Euclidean."""
-        if unit_a.id == unit_b.id:
-            return 0.0
-        graph = self._units_by_id or {unit_a.id: unit_a, unit_b.id: unit_b}
-        # Dijkstra; edge weight = Euclidean XZ step between adjacent (linked) units.
-        best: dict[str, float] = {unit_a.id: 0.0}
-        pq: list[tuple[float, str]] = [(0.0, unit_a.id)]
-        while pq:
-            d, uid = heapq.heappop(pq)
-            if uid == unit_b.id:
-                return d
-            if d > best.get(uid, math.inf):
-                continue
-            cur = graph.get(uid)
-            if cur is None:
-                continue
-            for nid in cur.adjacency:
-                nxt = graph.get(nid)
-                if nxt is None:
-                    continue
-                nd = d + _xz_dist(cur.centroid, nxt.centroid)
-                if nd < best.get(nid, math.inf):
-                    best[nid] = nd
-                    heapq.heappush(pq, (nd, nid))
-        return math.inf
 
 
 # --------------------------------------------------------------------------- #
