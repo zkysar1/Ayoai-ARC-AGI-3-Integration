@@ -18,7 +18,7 @@ The six slots (Plan 7.2.A / Plan section 3):
 
   WorldBuilder    units in     build_units(world_state) -> [Unit]
   Executor        actions out  declare_actions() -> [int]; execute(decision) -> Result
-  ProximityModel  spatial      distance(a, b) -> float  AND  project_from(cell) -> (action -> Cell|None)
+  ProximityModel  spatial      project_from(cell) -> (action -> Cell|None)  (distance(a,b) retired, g-315-534)
   Clock           cadence      on_heartbeat(tick) -> None        (forward; not yet built)
   KnowledgePolicy commons      contribution_mode() -> "auto"|"ask"  (forward; not yet built)
   Vocabulary      verbs        declare_tasks()/declare_tools()      (forward; not yet built)
@@ -42,10 +42,20 @@ Design decisions (logged for review per self.md Decision Authority):
     slots are new ... once those two slots absorb the last hardcoded
     assumptions"). An env registers what it has built and adds the rest later.
 
-  * ``ProximityModel`` carries BOTH facets the plan section E resolved:
-    ``distance(a, b)`` for IAUS proximity scoring AND ``project_from(cell)`` for
-    the frontier-coverage forward model -- one env's spatial model, not two
-    slots (the rejected 7th-slot alternative over-fragments).
+  * ``ProximityModel`` carries the frontier-coverage forward model,
+    ``project_from(cell)`` plus the members that feed it from observed Executor
+    effects -- one env's spatial model, not two slots (the rejected 7th-slot
+    alternative over-fragments).
+
+    It NO LONGER carries ``distance(a, b)``. Plan section E declared that member
+    for "IAUS proximity scoring"; that scorer was subsequently BUILT, in
+    ``solver_v0/policy.py`` rule 4.6 (g-315-132), and it was built to work on
+    frame CELLS with an online-learned displacement model rather than on adapter
+    units -- its own comments say "no adapter wire needed" and "no adapter change
+    needed". So the slot's declared consumer exists and does not want it.
+    Retired in g-315-534; the reasoning is in the knowledge tree, and the four
+    per-env metrics are recoverable from git history if a genuine unit-pair
+    consumer ever appears.
 """
 
 from __future__ import annotations
@@ -225,15 +235,19 @@ class Executor(Protocol):
 
 @runtime_checkable
 class ProximityModel(Protocol):
-    """Slot 4 -- the env's spatial model (both facets, Plan section E).
+    """Slot 4 -- the env's spatial model (Plan section E, minus ``distance``).
 
-    ``distance`` answers IAUS proximity scoring; ``project_from`` yields the
-    forward model the frontier-coverage core consumes (where would this action
-    land me). The supporting members let the env feed its LEARNED displacement
-    model from observed Executor effects -- never a hardcoded lattice.
+    ``project_from`` yields the forward model the frontier-coverage core consumes
+    (where would this action land me). The supporting members let the env feed
+    its LEARNED displacement model from observed Executor effects -- never a
+    hardcoded lattice.
+
+    ``distance(unit_a, unit_b)`` was retired here in g-315-534. See the module
+    docstring above for why: the IAUS scorer it was declared for was built on a
+    different substrate and does not consume it. If a unit-pair metric is ever
+    genuinely needed, re-add it deliberately with its consumer in the same
+    change -- do not restore it speculatively.
     """
-
-    def distance(self, unit_a: UnitLike, unit_b: UnitLike) -> float: ...
 
     def project_from(self, cell: Cell) -> Callable[[int], Optional[Cell]]: ...
 

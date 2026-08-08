@@ -42,12 +42,11 @@ The slots (mapped onto Plan 7.2.A):
       from vinheim's declared, static ``links``.
 
   FootballProximityModel (variance-absorbing action adapter = ProximityModel)
-      distance(a, b) -> PRESSURE-ADJUSTED euclidean: the straight-line distance
-      inflated by the opposing players near the line between a and b. Neither
-      roblox's weighted Dijkstra nor vinheim's hop count nor raw geometry
-      (rb-1690 / guard-689: the primitive trusts the slot's distance and never
-      computes its own). Same LEARNED displacement projection seam the siblings
-      use -- observed from Executor results, never a hardcoded lattice (rb-1489).
+      The LEARNED displacement projection seam the siblings use -- observed from
+      Executor results, never a hardcoded lattice (rb-1489). rb-1690 / guard-689
+      (the primitive trusts the slot and never computes its own geometry) still
+      binds, now via project_from. A PRESSURE-ADJUSTED euclidean distance(a, b)
+      lived here until g-315-534 retired the member.
 
   FootballExecutor       (action adapter = Executor + Vocabulary)
       declare_actions() -> the move action space; execute(decision) ->
@@ -329,15 +328,14 @@ class FootballWorldBuilder:
 # Slot 2 -- ProximityModel (variance-absorbing action adapter).                 #
 # --------------------------------------------------------------------------- #
 class FootballProximityModel(LearnedDisplacementModel):
-    """PRESSURE-ADJUSTED distance + the learned-displacement projection seam.
+    """The learned-displacement projection seam (Plan 7.2.A ProximityModel).
 
-    ``distance(a, b)`` is the straight-line distance between two units inflated
-    by the opposing players contesting the line between them::
-
-        distance = euclid(a, b) * (1 + pressure_weight * sum_of_opponent_pressure)
-
-    where each opponent within ``pressure_radius`` of the segment contributes
-    pressure that falls off linearly to zero at that radius. Two players the same
+    A PRESSURE-ADJUSTED euclidean ``distance(a, b)`` lived here -- straight-line
+    distance inflated by the opponents contesting the a-b line -- until g-315-534
+    retired ProximityModel.distance across all four adapters. It was the most
+    distinctive of the four env metrics and had zero non-test consumers; it is
+    recoverable from git history if a genuine unit-pair consumer appears. What the
+    docstring below described, and what remains: two players the same
     metres apart are therefore FURTHER apart when someone is standing between
     them -- which is what "near" means on a pitch, and what no sibling adapter's
     metric can express: roblox's walls and vinheim's declared links are fixed for
@@ -352,19 +350,15 @@ class FootballProximityModel(LearnedDisplacementModel):
         self,
         *,
         cell_size: float = 1.0,
-        pressure_radius: float = 6.0,
-        pressure_weight: float = 1.0,
     ) -> None:
+        # pressure_radius / pressure_weight were removed with distance() in
+        # g-315-534. They configured the adversarial inflation term and had no
+        # other reader; no production call site ever passed them (the sole caller
+        # is football.py's own provisioner, which constructs bare).
         if cell_size <= 0.0:
             raise ValueError("cell_size must be positive")
-        if pressure_radius <= 0.0:
-            raise ValueError("pressure_radius must be positive")
-        if pressure_weight < 0.0:
-            raise ValueError("pressure_weight must be non-negative")
         super().__init__()  # seeds self._displacement (the shared learned-displacement seam)
         self._cell_size = cell_size
-        self._pressure_radius = pressure_radius
-        self._pressure_weight = pressure_weight
         self._units_by_id: dict[str, Unit] = {}
 
     # ---- cell quantization (pitch coord -> integer Cell) ----
@@ -378,40 +372,13 @@ class FootballProximityModel(LearnedDisplacementModel):
     #      inherited from primitives.learned_displacement.LearnedDisplacementModel
     #      (g-315-449; byte-identical across all 4 adapters, hoisted per g-315-448/rb-4880) ----
 
-    # ---- pressure-adjusted distance (Plan 7.2.A signature: distance(unitA, unitB)) ----
+    # ---- unit store (ProximityModel.set_units; called by adapters/episode.py) ----
     def set_units(self, units: Sequence[Unit]) -> None:
-        """Load this tick's units so distance() knows where the opponents are."""
+        """Load this tick's units. Its only reader was the adversarial-pressure
+        term inside distance(), retired in g-315-534, so this store now has NO
+        READER in this adapter -- ``set_units`` survives because it is a
+        ProximityModel member the episode driver calls."""
         self._units_by_id = {u.id: u for u in units}
-
-    def _pressure(self, a: Unit, b: Unit) -> float:
-        """Total opposing pressure on the a-b line, 0.0 when the lane is clear."""
-        total = 0.0
-        for other in self._units_by_id.values():
-            if not other.is_character:
-                continue
-            if other.id in (a.id, b.id):
-                continue
-            # Only players opposing `a` contest a's line. A unit with no team
-            # contests nothing -- pressure is an adversarial notion, and treating
-            # untagged units as hostile would make the ball an obstacle.
-            if not other.team or not a.team or other.team == a.team:
-                continue
-            gap = _point_segment_distance(other.centroid, a.centroid, b.centroid)
-            if gap < self._pressure_radius:
-                total += 1.0 - (gap / self._pressure_radius)
-        return total
-
-    def distance(self, unit_a: Unit, unit_b: Unit) -> float:
-        """Euclidean distance inflated by the opponents contesting the line.
-
-        Returns 0.0 for a unit to itself. With no opponents in range this is
-        exactly the straight-line distance, so an empty pitch degrades to plain
-        geometry -- the adversarial term is additive, never a different metric.
-        """
-        if unit_a.id == unit_b.id:
-            return 0.0
-        base = _euclid(unit_a.centroid, unit_b.centroid)
-        return base * (1.0 + self._pressure_weight * self._pressure(unit_a, unit_b))
 
 
 # --------------------------------------------------------------------------- #

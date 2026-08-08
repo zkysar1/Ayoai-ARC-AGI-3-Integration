@@ -6,9 +6,9 @@ through a Roblox NPC exploration episode, with decided_by routing preserved:
 
   - WorldBuilder flattens a Roblox instance tree into the env-agnostic UnitSet and
     drops navigation edges blocked by obstacle units.
-  - ProximityModel.distance is PATH-distance (routes around a wall) -- NOT Euclidean
-    (rb-1690 / guard-689); and the learned-displacement projection seam feeds
-    FrontierCoverage.select.
+  - ProximityModel's learned-displacement projection seam feeds
+    FrontierCoverage.select. (The PATH-distance metric this file used to pin was
+    retired with ProximityModel.distance in g-315-534.)
   - Executor declares the move-toward space and returns Result{outcome, reason,
     retrySafe}; every Decision exits through it.
   - The shared primitive core is COMPOSED, never modified (no Roblox knowledge leaks
@@ -17,7 +17,6 @@ through a Roblox NPC exploration episode, with decided_by routing preserved:
 
 from __future__ import annotations
 
-import math
 from typing import Mapping
 
 from adapters.roblox import (
@@ -161,36 +160,13 @@ def test_npc_classified_as_character() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Slot 2 -- ProximityModel: PATH-distance (NOT Euclidean) + projection seam.    #
+# Slot 2 -- ProximityModel: projection seam.                                    #
+#                                                                              #
+# The two Dijkstra path-distance tests that lived here were removed with the    #
+# metric itself in g-315-534 (ProximityModel.distance had zero non-test         #
+# consumers; the IAUS scorer it was declared for was built on frame cells in    #
+# solver_v0/policy.py rule 4.6 and does not call it).                           #
 # --------------------------------------------------------------------------- #
-def test_distance_is_path_not_euclidean() -> None:
-    wb = RobloxWorldBuilder(adjacency_radius=9.0)
-    units = wb.build_units(_maze_tree())
-    by_name = {u.id.rsplit("/", 1)[-1]: u for u in units}
-    pm = RobloxProximityModel(cell_size=4.0)
-    pm.set_units(units)
-
-    a, b = by_name["A"], by_name["B"]
-    euclidean = math.hypot(a.centroid[0] - b.centroid[0], a.centroid[2] - b.centroid[2])
-    path = pm.distance(a, b)
-
-    assert euclidean == 8.0
-    assert math.isfinite(path)
-    # The wall forces the A -> C -> B detour: path distance is strictly greater
-    # than the straight-line distance Euclidean would have reported.
-    assert path > euclidean
-    assert path == 2.0 * math.hypot(4.0, 8.0)
-
-
-def test_distance_unreachable_is_inf() -> None:
-    wb = RobloxWorldBuilder(adjacency_radius=9.0)
-    units = wb.build_units(_maze_tree(with_bridge=False))  # no C -> no route around
-    by_name = {u.id.rsplit("/", 1)[-1]: u for u in units}
-    pm = RobloxProximityModel(cell_size=4.0)
-    pm.set_units(units)
-    assert pm.distance(by_name["A"], by_name["B"]) == math.inf
-
-
 def test_projection_seam_uses_learned_displacement() -> None:
     pm = RobloxProximityModel(cell_size=4.0)
     project = pm.project_from((5, 5))

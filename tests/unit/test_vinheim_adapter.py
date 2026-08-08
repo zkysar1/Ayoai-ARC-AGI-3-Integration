@@ -8,10 +8,9 @@ the cross-env soundness proof that the SAME primitive delta runs on Roblox
 
   - WorldBuilder reads a flat declarative entity list (the "API / entity-lister"
     shape) into the env-agnostic UnitSet and drops links to obstacle units.
-  - ProximityModel.distance is a SEMANTIC graph-hop count (BFS over declared links)
-    -- NOT Euclidean and NOT roblox's weighted Dijkstra (the slot is where each env
-    supplies its own metric); and the learned-displacement projection seam feeds
-    FrontierCoverage.select.
+  - ProximityModel's learned-displacement projection seam feeds
+    FrontierCoverage.select. (The SEMANTIC graph-hop metric this file used to pin was
+    retired with ProximityModel.distance in g-315-534.)
   - Executor declares the action space and returns Result{outcome, reason,
     retrySafe}; every Decision exits through it.
   - The shared primitive core is COMPOSED, never modified (no vinheim knowledge
@@ -20,7 +19,6 @@ the cross-env soundness proof that the SAME primitive delta runs on Roblox
 
 from __future__ import annotations
 
-import math
 from typing import Mapping
 
 from adapters.vinheim import (
@@ -134,36 +132,13 @@ def test_agent_classified_as_character() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Slot 2 -- ProximityModel: SEMANTIC graph-hop (NOT Euclidean) + projection seam.#
+# Slot 2 -- ProximityModel: projection seam.                                    #
+#                                                                              #
+# The two semantic graph-hop distance tests that lived here were removed with   #
+# the metric itself in g-315-534 (ProximityModel.distance had zero non-test     #
+# consumers; the IAUS scorer it was declared for was built on frame cells in    #
+# solver_v0/policy.py rule 4.6 and does not call it).                           #
 # --------------------------------------------------------------------------- #
-def test_distance_is_graph_hop_not_euclidean() -> None:
-    wb = VinheimWorldBuilder()
-    units = wb.build_units(_entity_graph())
-    by_id = {u.id: u for u in units}
-    pm = VinheimProximityModel()
-    pm.set_units(units)
-
-    a, c = by_id["A"], by_id["C"]
-    euclidean = math.hypot(a.centroid[0] - c.centroid[0], a.centroid[1] - c.centroid[1])
-    hops = pm.distance(a, c)
-
-    # Euclidean coord distance is 4.0; the SEMANTIC distance is the 2-hop A->B->C
-    # path. The slot reports topology, not geometry.
-    assert euclidean == 4.0
-    assert hops == 2.0
-    assert hops != euclidean
-
-
-def test_distance_unreachable_is_inf() -> None:
-    wb = VinheimWorldBuilder()
-    units = wb.build_units(_entity_graph())
-    by_id = {u.id: u for u in units}
-    pm = VinheimProximityModel()
-    pm.set_units(units)
-    # D is unlinked -> no route from A.
-    assert pm.distance(by_id["A"], by_id["D"]) == math.inf
-
-
 def test_projection_seam_uses_learned_displacement() -> None:
     pm = VinheimProximityModel()
     project = pm.project_from((5, 5))
