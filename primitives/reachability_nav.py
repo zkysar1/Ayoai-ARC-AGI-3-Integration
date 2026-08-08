@@ -45,6 +45,42 @@ the injected seams. External behavior is byte-identical to the previously-
 inlined form: the BFS key, greedy qualification, and exhaustion re-lock
 gate are preserved exactly, so the existing explorer test-suite is the
 regression gate.
+
+KNOWN AND DELIBERATE EXCEPTION TO "ENV-AGNOSTIC" ABOVE -- read this before
+re-deriving it (g-315-535, 2026-08-08, zeta). The two claims above --
+"knows nothing about ARC grids" and "the core never computes geometry" --
+are NOT true of the DISTANCE METRIC. This module hardcodes 2D-grid
+Manhattan at FIVE sites (lines ~125, ~172, ~192, ~231, ~240), and the
+sibling core primitives/cluster_commitment.py does the same at two more.
+That is a real violation of gate 3 of the env-agnostic-primitive-interface
+contract ("params carry NO env literals").
+
+It is LEFT IN PLACE ON PURPOSE, and the reason is a measurement, not
+inertia. Measured repo-wide the same day: reachability_nav and
+cluster_commitment have exactly ONE production consumer each --
+solver_v2/frontier_explorer.py, the ARC solver -- and NO adapter imports
+either module. The env-agnostic primitives the four adapters (arc,
+football, roblox, vinheim) actually reach are frontier_coverage (zero
+coordinate literals, zero [0]/[1] index sites) and learned_displacement
+(zero metric literals; its two index sites are component arithmetic on the
+declared Cell contract, not a choice of metric). So gate 3 is being honored
+exactly where it currently binds, and the violation here is LATENT: no
+non-2D-grid environment reaches this code today, and on the one that does,
+Manhattan is correct.
+
+THE TRIGGER TO FIX IT, stated so it is checkable rather than remembered: a
+SECOND production consumer of plan_route that is not a 2D grid -- i.e. any
+adapter or non-ARC solver importing this module. At that point inject a
+Callable[[Cell, Cell], float] the way project_from and is_blocked already
+are, defaulting to the current Manhattan so 2D-grid behaviour stays
+byte-identical, and fix all five sites here plus the two in
+cluster_commitment -- not just the one line most often cited. Do NOT
+restore ProximityModel.distance: it took UNITS, the primitive holds CELLS,
+and the slot exposes no cell->unit inverse (retired in g-315-534).
+
+Full reasoning, measurements and lineage: knowledge-tree node
+env-agnostic-primitive-interface, sections 7 (the finding), 8 (the
+distance retirement) and 9 (this decision).
 """
 
 from __future__ import annotations
