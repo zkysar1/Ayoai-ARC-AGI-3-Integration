@@ -1130,10 +1130,35 @@ def main() -> int:
                 dynamic=(0, 1),
                 context=(2, 3, 4, 5),
             )
+            v4_horizon = int(os.environ.get("SOLVER_V2_V4_HORIZON", "4"))
+            # g-315-538: UNCONDITIONAL construction marker. Before this line the
+            # whole SOLVER_V2_V4_ARM block emitted exactly ONE logger call -- the
+            # [v4-exploration] line above -- and that one sits inside the NESTED
+            # exploration opt-in. So enabling the arm ALONE produced a run with
+            # zero markers: decided_by reads solver-v2 for every action and
+            # nothing in the log, the metrics line, or the recording separates
+            # arm-on from arm-off. That is not merely a thin log; it makes any
+            # arm-on/arm-off A/B UNFALSIFIABLE, because --solver-name writes its
+            # value into the recording FILENAME whether or not the arm did
+            # anything, so the artifact asserts provenance the run cannot
+            # support (measured g-315-537: two live ls20-9607627b sessions, the
+            # arm-on run indistinguishable from arm-off).
+            # guard-1208: log WHICH arm answered -- names and selectors only,
+            # never an env VALUE that could carry a secret.
+            logger.info(
+                "[v4-arm] enabled: synth=%s horizon=%d history_k=%d "
+                "goal_predicate=%s",
+                os.environ.get("SOLVER_V2_V4_SYNTH", "v0"),
+                v4_horizon,
+                v4_history_k,
+                "synthesized-exploration"
+                if v4_goal_predicate is not None
+                else "adapter-internal-reward-recognizer",
+            )
             streaming_client.set_v4_arm(
                 V4Arm(
                     v4_synth,
-                    horizon=int(os.environ.get("SOLVER_V2_V4_HORIZON", "4")),
+                    horizon=v4_horizon,
                 ),
                 goal_predicate=v4_goal_predicate,
                 history_k=v4_history_k,
