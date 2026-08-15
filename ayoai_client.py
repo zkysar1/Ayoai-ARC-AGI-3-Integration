@@ -350,6 +350,34 @@ def _classify_response(
     return "WARMING", None
 
 
+def resolve_api_key(api_key: str | None = None) -> str:
+    """Resolve the AYOAI-API-KEY value for every outbound AyoAI call.
+
+    AYOAI_API_KEY is a phantom var fleet-wide (g-115-2670); the real value is
+    AYO_OPERATOR_KEY. Falling back means live play needs no manual alias
+    (g-315-471).
+
+    ABSENT AND EMPTY ARE DIFFERENT, and that distinction is the whole point
+    (g-315-540). `None` means "nobody chose a key, resolve one from the env".
+    `""` means "the caller deliberately chose no key" -- mock mode, where the
+    mock ignores the header -- and is returned unchanged so a mock run can
+    never reach for a real operator key.
+
+    This exists as a shared function because it previously lived INLINE in
+    open_ayoai_session, which is the one caller that already passed None. The
+    two consumers that carry the actual play -- the v2 seed provider and the
+    streaming client -- are typed `api_key: str` and were handed
+    os.getenv("AYOAI_API_KEY", ""), so with the env var unset they ran the
+    whole session UNAUTHENTICATED while the session-open itself succeeded.
+    Nothing raised: ayoai_streaming_client omits the header when empty, and
+    the seed provider degrades to its in-process oracle, which
+    --seed-oracle-fallback then makes silent.
+    """
+    if api_key is not None:
+        return api_key
+    return os.getenv("AYOAI_API_KEY") or os.getenv("AYO_OPERATOR_KEY", "")
+
+
 def open_ayoai_session(
     card_id: str,
     env_key: str = DEFAULT_ENV_KEY,
@@ -397,11 +425,7 @@ def open_ayoai_session(
         raise AyoaiSessionError("env_key is required (default 'arc-agi-3')")
     if http_timeout_s is None:
         http_timeout_s = _env_float("AYOAI_HTTP_TIMEOUT_S", DEFAULT_HTTP_TIMEOUT_S)
-    # AYOAI_API_KEY is a phantom var fleet-wide (g-115-2670); the real value is
-    # AYO_OPERATOR_KEY. Fall back so live play needs no manual alias (g-315-471).
-    resolved_api_key = api_key if api_key is not None else (
-        os.getenv("AYOAI_API_KEY") or os.getenv("AYO_OPERATOR_KEY", "")
-    )
+    resolved_api_key = resolve_api_key(api_key)
     if not resolved_api_key:
         raise AyoaiSessionError(
             "Neither AYOAI_API_KEY nor AYO_OPERATOR_KEY set — pass api_key= "

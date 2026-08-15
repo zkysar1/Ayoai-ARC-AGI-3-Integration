@@ -17,7 +17,12 @@ from typing import Any, Callable
 import requests
 from pydantic import ValidationError
 
-from ayoai_client import AyoaiSessionError, AyoaiSessionInfo, open_ayoai_session
+from ayoai_client import (
+    AyoaiSessionError,
+    AyoaiSessionInfo,
+    open_ayoai_session,
+    resolve_api_key,
+)
 from ayoai_streaming_client import (
     AyoaiStreamingClient,
     AyoaiStreamingDnsError,
@@ -990,7 +995,7 @@ def main() -> int:
         # fallback rather than crashing on an unexpected None.
         v2_seed_provider: SeedProvider | None = build_v2_seed_provider(
             ayoai_session,
-            os.getenv("AYOAI_API_KEY", ""),
+            resolve_api_key(),
             oracle_fallback=args.seed_oracle_fallback,
         )
         if v2_seed_provider is not None:
@@ -1173,7 +1178,7 @@ def main() -> int:
             streaming_url=streaming_url,
             ayo_server_key=card_id,
             arc_game_id=args.game,
-            api_key=os.getenv("AYOAI_API_KEY", "") if not args.mock_url else "",
+            api_key=resolve_api_key() if not args.mock_url else "",
         )
 
     # g-315-96: warm DNS for live mode only. Closes the CNAME-propagation
