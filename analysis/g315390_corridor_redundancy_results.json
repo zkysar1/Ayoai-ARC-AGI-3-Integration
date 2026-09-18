@@ -1,0 +1,3133 @@
+{
+ "region_size": 8,
+ "concentration_threshold": 0.5,
+ "top_n": 3,
+ "runs": {
+  "run1-303": {
+   "on": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 129,
+      "cross_redundant_ticks": 0
+     },
+     {
+      "ep": 2,
+      "ticks": 130,
+      "cross_redundant_ticks": 12
+     },
+     {
+      "ep": 3,
+      "ticks": 129,
+      "cross_redundant_ticks": 31
+     },
+     {
+      "ep": 4,
+      "ticks": 129,
+      "cross_redundant_ticks": 19
+     },
+     {
+      "ep": 5,
+      "ticks": 129,
+      "cross_redundant_ticks": 40
+     },
+     {
+      "ep": 6,
+      "ticks": 129,
+      "cross_redundant_ticks": 53
+     },
+     {
+      "ep": 7,
+      "ticks": 129,
+      "cross_redundant_ticks": 49
+     },
+     {
+      "ep": 8,
+      "ticks": 129,
+      "cross_redundant_ticks": 62
+     },
+     {
+      "ep": 9,
+      "ticks": 129,
+      "cross_redundant_ticks": 37
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "cross_redundant_ticks": 44
+     },
+     {
+      "ep": 11,
+      "ticks": 129,
+      "cross_redundant_ticks": 42
+     },
+     {
+      "ep": 12,
+      "ticks": 129,
+      "cross_redundant_ticks": 67
+     }
+    ],
+    "n_episodes": 12,
+    "first_half": {
+     "redundant_ticks": 155,
+     "attributed": 136,
+     "unattributed": 19,
+     "distinct_corridors": 6,
+     "top3_corridors": [
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 57
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 47
+      },
+      {
+       "corridor": [
+        5,
+        6
+       ],
+       "ticks": 14
+      }
+     ],
+     "top3_ticks": 118,
+     "top3_share_of_all": 0.7613,
+     "top3_share_of_attributed": 0.8676,
+     "all_corridors": [
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 57
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 47
+      },
+      {
+       "corridor": [
+        5,
+        6
+       ],
+       "ticks": 14
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 8
+      },
+      {
+       "corridor": [
+        4,
+        5
+       ],
+       "ticks": 7
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 3
+      }
+     ]
+    },
+    "second_half": {
+     "redundant_ticks": 301,
+     "attributed": 266,
+     "unattributed": 35,
+     "distinct_corridors": 10,
+     "top3_corridors": [
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 83
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 79
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 38
+      }
+     ],
+     "top3_ticks": 200,
+     "top3_share_of_all": 0.6645,
+     "top3_share_of_attributed": 0.7519,
+     "all_corridors": [
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 83
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 79
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 38
+      },
+      {
+       "corridor": [
+        5,
+        6
+       ],
+       "ticks": 35
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 13
+      },
+      {
+       "corridor": [
+        3,
+        5
+       ],
+       "ticks": 7
+      },
+      {
+       "corridor": [
+        4,
+        5
+       ],
+       "ticks": 6
+      },
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        4,
+        4
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "recording": "ab44587c",
+    "verdict": {
+     "concentrated": true,
+     "label": "CONCENTRATED",
+     "top3_share_of_all": 0.6645,
+     "cursor_coverage": 0.8837,
+     "caveat": null
+    }
+   },
+   "off": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 134,
+      "cross_redundant_ticks": 0
+     },
+     {
+      "ep": 2,
+      "ticks": 134,
+      "cross_redundant_ticks": 5
+     },
+     {
+      "ep": 3,
+      "ticks": 131,
+      "cross_redundant_ticks": 42
+     },
+     {
+      "ep": 4,
+      "ticks": 136,
+      "cross_redundant_ticks": 23
+     },
+     {
+      "ep": 5,
+      "ticks": 134,
+      "cross_redundant_ticks": 5
+     },
+     {
+      "ep": 6,
+      "ticks": 129,
+      "cross_redundant_ticks": 45
+     },
+     {
+      "ep": 7,
+      "ticks": 134,
+      "cross_redundant_ticks": 47
+     },
+     {
+      "ep": 8,
+      "ticks": 140,
+      "cross_redundant_ticks": 8
+     },
+     {
+      "ep": 9,
+      "ticks": 144,
+      "cross_redundant_ticks": 13
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "cross_redundant_ticks": 46
+     },
+     {
+      "ep": 11,
+      "ticks": 135,
+      "cross_redundant_ticks": 32
+     },
+     {
+      "ep": 12,
+      "ticks": 134,
+      "cross_redundant_ticks": 13
+     }
+    ],
+    "n_episodes": 12,
+    "first_half": {
+     "redundant_ticks": 120,
+     "attributed": 102,
+     "unattributed": 18,
+     "distinct_corridors": 8,
+     "top3_corridors": [
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 81
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 10
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 3
+      }
+     ],
+     "top3_ticks": 94,
+     "top3_share_of_all": 0.7833,
+     "top3_share_of_attributed": 0.9216,
+     "all_corridors": [
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 81
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 10
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        3,
+        4
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        4,
+        4
+       ],
+       "ticks": 1
+      },
+      {
+       "corridor": [
+        3,
+        5
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "second_half": {
+     "redundant_ticks": 159,
+     "attributed": 137,
+     "unattributed": 22,
+     "distinct_corridors": 10,
+     "top3_corridors": [
+      {
+       "corridor": [
+        3,
+        4
+       ],
+       "ticks": 47
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 18
+      }
+     ],
+     "top3_ticks": 83,
+     "top3_share_of_all": 0.522,
+     "top3_share_of_attributed": 0.6058,
+     "all_corridors": [
+      {
+       "corridor": [
+        3,
+        4
+       ],
+       "ticks": 47
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        3,
+        5
+       ],
+       "ticks": 17
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 15
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 9
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 6
+      },
+      {
+       "corridor": [
+        3,
+        2
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "recording": "8fdca4f5",
+    "verdict": {
+     "concentrated": true,
+     "label": "CONCENTRATED",
+     "top3_share_of_all": 0.522,
+     "cursor_coverage": 0.8616,
+     "caveat": null
+    }
+   }
+  },
+  "run2-380": {
+   "on": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 129,
+      "cross_redundant_ticks": 0
+     },
+     {
+      "ep": 2,
+      "ticks": 129,
+      "cross_redundant_ticks": 5
+     },
+     {
+      "ep": 3,
+      "ticks": 129,
+      "cross_redundant_ticks": 7
+     },
+     {
+      "ep": 4,
+      "ticks": 129,
+      "cross_redundant_ticks": 9
+     },
+     {
+      "ep": 5,
+      "ticks": 129,
+      "cross_redundant_ticks": 48
+     },
+     {
+      "ep": 6,
+      "ticks": 129,
+      "cross_redundant_ticks": 45
+     },
+     {
+      "ep": 7,
+      "ticks": 129,
+      "cross_redundant_ticks": 29
+     },
+     {
+      "ep": 8,
+      "ticks": 130,
+      "cross_redundant_ticks": 49
+     },
+     {
+      "ep": 9,
+      "ticks": 129,
+      "cross_redundant_ticks": 31
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "cross_redundant_ticks": 29
+     },
+     {
+      "ep": 11,
+      "ticks": 129,
+      "cross_redundant_ticks": 70
+     },
+     {
+      "ep": 12,
+      "ticks": 129,
+      "cross_redundant_ticks": 50
+     }
+    ],
+    "n_episodes": 12,
+    "first_half": {
+     "redundant_ticks": 114,
+     "attributed": 95,
+     "unattributed": 19,
+     "distinct_corridors": 5,
+     "top3_corridors": [
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 63
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 17
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 13
+      }
+     ],
+     "top3_ticks": 93,
+     "top3_share_of_all": 0.8158,
+     "top3_share_of_attributed": 0.9789,
+     "all_corridors": [
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 63
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 17
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 13
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 1
+      },
+      {
+       "corridor": [
+        4,
+        4
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "second_half": {
+     "redundant_ticks": 258,
+     "attributed": 234,
+     "unattributed": 24,
+     "distinct_corridors": 7,
+     "top3_corridors": [
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 81
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 54
+      },
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 52
+      }
+     ],
+     "top3_ticks": 187,
+     "top3_share_of_all": 0.7248,
+     "top3_share_of_attributed": 0.7991,
+     "all_corridors": [
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 81
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 54
+      },
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 52
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 26
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 16
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        3,
+        5
+       ],
+       "ticks": 2
+      }
+     ]
+    },
+    "recording": "c148735d",
+    "verdict": {
+     "concentrated": true,
+     "label": "CONCENTRATED",
+     "top3_share_of_all": 0.7248,
+     "cursor_coverage": 0.907,
+     "caveat": null
+    }
+   },
+   "off": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 134,
+      "cross_redundant_ticks": 0
+     },
+     {
+      "ep": 2,
+      "ticks": 134,
+      "cross_redundant_ticks": 5
+     },
+     {
+      "ep": 3,
+      "ticks": 131,
+      "cross_redundant_ticks": 42
+     },
+     {
+      "ep": 4,
+      "ticks": 136,
+      "cross_redundant_ticks": 23
+     },
+     {
+      "ep": 5,
+      "ticks": 134,
+      "cross_redundant_ticks": 5
+     },
+     {
+      "ep": 6,
+      "ticks": 129,
+      "cross_redundant_ticks": 45
+     },
+     {
+      "ep": 7,
+      "ticks": 134,
+      "cross_redundant_ticks": 47
+     },
+     {
+      "ep": 8,
+      "ticks": 140,
+      "cross_redundant_ticks": 8
+     },
+     {
+      "ep": 9,
+      "ticks": 144,
+      "cross_redundant_ticks": 13
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "cross_redundant_ticks": 46
+     },
+     {
+      "ep": 11,
+      "ticks": 135,
+      "cross_redundant_ticks": 32
+     },
+     {
+      "ep": 12,
+      "ticks": 134,
+      "cross_redundant_ticks": 13
+     }
+    ],
+    "n_episodes": 12,
+    "first_half": {
+     "redundant_ticks": 120,
+     "attributed": 102,
+     "unattributed": 18,
+     "distinct_corridors": 8,
+     "top3_corridors": [
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 81
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 10
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 3
+      }
+     ],
+     "top3_ticks": 94,
+     "top3_share_of_all": 0.7833,
+     "top3_share_of_attributed": 0.9216,
+     "all_corridors": [
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 81
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 10
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        3,
+        4
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        4,
+        4
+       ],
+       "ticks": 1
+      },
+      {
+       "corridor": [
+        3,
+        5
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "second_half": {
+     "redundant_ticks": 159,
+     "attributed": 137,
+     "unattributed": 22,
+     "distinct_corridors": 10,
+     "top3_corridors": [
+      {
+       "corridor": [
+        3,
+        4
+       ],
+       "ticks": 47
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 18
+      }
+     ],
+     "top3_ticks": 83,
+     "top3_share_of_all": 0.522,
+     "top3_share_of_attributed": 0.6058,
+     "all_corridors": [
+      {
+       "corridor": [
+        3,
+        4
+       ],
+       "ticks": 47
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        3,
+        5
+       ],
+       "ticks": 17
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 15
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 9
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 6
+      },
+      {
+       "corridor": [
+        3,
+        2
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "recording": "19978136",
+    "verdict": {
+     "concentrated": true,
+     "label": "CONCENTRATED",
+     "top3_share_of_all": 0.522,
+     "cursor_coverage": 0.8616,
+     "caveat": null
+    }
+   }
+  },
+  "run3-381": {
+   "on": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 129,
+      "cross_redundant_ticks": 0
+     },
+     {
+      "ep": 2,
+      "ticks": 129,
+      "cross_redundant_ticks": 5
+     },
+     {
+      "ep": 3,
+      "ticks": 129,
+      "cross_redundant_ticks": 23
+     },
+     {
+      "ep": 4,
+      "ticks": 129,
+      "cross_redundant_ticks": 24
+     },
+     {
+      "ep": 5,
+      "ticks": 129,
+      "cross_redundant_ticks": 26
+     },
+     {
+      "ep": 6,
+      "ticks": 129,
+      "cross_redundant_ticks": 58
+     },
+     {
+      "ep": 7,
+      "ticks": 129,
+      "cross_redundant_ticks": 11
+     },
+     {
+      "ep": 8,
+      "ticks": 129,
+      "cross_redundant_ticks": 9
+     },
+     {
+      "ep": 9,
+      "ticks": 129,
+      "cross_redundant_ticks": 88
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "cross_redundant_ticks": 73
+     },
+     {
+      "ep": 11,
+      "ticks": 129,
+      "cross_redundant_ticks": 46
+     },
+     {
+      "ep": 12,
+      "ticks": 129,
+      "cross_redundant_ticks": 35
+     }
+    ],
+    "n_episodes": 12,
+    "first_half": {
+     "redundant_ticks": 136,
+     "attributed": 117,
+     "unattributed": 19,
+     "distinct_corridors": 4,
+     "top3_corridors": [
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 80
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 19
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 16
+      }
+     ],
+     "top3_ticks": 115,
+     "top3_share_of_all": 0.8456,
+     "top3_share_of_attributed": 0.9829,
+     "all_corridors": [
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 80
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 19
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 16
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 2
+      }
+     ]
+    },
+    "second_half": {
+     "redundant_ticks": 262,
+     "attributed": 237,
+     "unattributed": 25,
+     "distinct_corridors": 7,
+     "top3_corridors": [
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 113
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 64
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 29
+      }
+     ],
+     "top3_ticks": 206,
+     "top3_share_of_all": 0.7863,
+     "top3_share_of_attributed": 0.8692,
+     "all_corridors": [
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 113
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 64
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 29
+      },
+      {
+       "corridor": [
+        4,
+        4
+       ],
+       "ticks": 19
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 10
+      },
+      {
+       "corridor": [
+        5,
+        6
+       ],
+       "ticks": 1
+      },
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "recording": "065586b4",
+    "verdict": {
+     "concentrated": true,
+     "label": "CONCENTRATED",
+     "top3_share_of_all": 0.7863,
+     "cursor_coverage": 0.9046,
+     "caveat": null
+    }
+   },
+   "off": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 134,
+      "cross_redundant_ticks": 0
+     },
+     {
+      "ep": 2,
+      "ticks": 134,
+      "cross_redundant_ticks": 5
+     },
+     {
+      "ep": 3,
+      "ticks": 131,
+      "cross_redundant_ticks": 42
+     },
+     {
+      "ep": 4,
+      "ticks": 136,
+      "cross_redundant_ticks": 23
+     },
+     {
+      "ep": 5,
+      "ticks": 134,
+      "cross_redundant_ticks": 5
+     },
+     {
+      "ep": 6,
+      "ticks": 129,
+      "cross_redundant_ticks": 45
+     },
+     {
+      "ep": 7,
+      "ticks": 134,
+      "cross_redundant_ticks": 47
+     },
+     {
+      "ep": 8,
+      "ticks": 140,
+      "cross_redundant_ticks": 8
+     },
+     {
+      "ep": 9,
+      "ticks": 144,
+      "cross_redundant_ticks": 13
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "cross_redundant_ticks": 46
+     },
+     {
+      "ep": 11,
+      "ticks": 135,
+      "cross_redundant_ticks": 32
+     },
+     {
+      "ep": 12,
+      "ticks": 134,
+      "cross_redundant_ticks": 13
+     }
+    ],
+    "n_episodes": 12,
+    "first_half": {
+     "redundant_ticks": 120,
+     "attributed": 102,
+     "unattributed": 18,
+     "distinct_corridors": 8,
+     "top3_corridors": [
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 81
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 10
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 3
+      }
+     ],
+     "top3_ticks": 94,
+     "top3_share_of_all": 0.7833,
+     "top3_share_of_attributed": 0.9216,
+     "all_corridors": [
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 81
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 10
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        3,
+        4
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        4,
+        4
+       ],
+       "ticks": 1
+      },
+      {
+       "corridor": [
+        3,
+        5
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "second_half": {
+     "redundant_ticks": 159,
+     "attributed": 137,
+     "unattributed": 22,
+     "distinct_corridors": 10,
+     "top3_corridors": [
+      {
+       "corridor": [
+        3,
+        4
+       ],
+       "ticks": 47
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 18
+      }
+     ],
+     "top3_ticks": 83,
+     "top3_share_of_all": 0.522,
+     "top3_share_of_attributed": 0.6058,
+     "all_corridors": [
+      {
+       "corridor": [
+        3,
+        4
+       ],
+       "ticks": 47
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        3,
+        5
+       ],
+       "ticks": 17
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 15
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 9
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 6
+      },
+      {
+       "corridor": [
+        3,
+        2
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "recording": "b4d98fb3",
+    "verdict": {
+     "concentrated": true,
+     "label": "CONCENTRATED",
+     "top3_share_of_all": 0.522,
+     "cursor_coverage": 0.8616,
+     "caveat": null
+    }
+   }
+  },
+  "run4-384": {
+   "on": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 131,
+      "cross_redundant_ticks": 0
+     },
+     {
+      "ep": 2,
+      "ticks": 129,
+      "cross_redundant_ticks": 7
+     },
+     {
+      "ep": 3,
+      "ticks": 139,
+      "cross_redundant_ticks": 4
+     },
+     {
+      "ep": 4,
+      "ticks": 129,
+      "cross_redundant_ticks": 5
+     },
+     {
+      "ep": 5,
+      "ticks": 131,
+      "cross_redundant_ticks": 8
+     },
+     {
+      "ep": 6,
+      "ticks": 130,
+      "cross_redundant_ticks": 14
+     },
+     {
+      "ep": 7,
+      "ticks": 129,
+      "cross_redundant_ticks": 9
+     },
+     {
+      "ep": 8,
+      "ticks": 130,
+      "cross_redundant_ticks": 30
+     },
+     {
+      "ep": 9,
+      "ticks": 129,
+      "cross_redundant_ticks": 46
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "cross_redundant_ticks": 33
+     },
+     {
+      "ep": 11,
+      "ticks": 129,
+      "cross_redundant_ticks": 28
+     },
+     {
+      "ep": 12,
+      "ticks": 129,
+      "cross_redundant_ticks": 37
+     }
+    ],
+    "n_episodes": 12,
+    "first_half": {
+     "redundant_ticks": 38,
+     "attributed": 28,
+     "unattributed": 10,
+     "distinct_corridors": 7,
+     "top3_corridors": [
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 8
+      },
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 6
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 5
+      }
+     ],
+     "top3_ticks": 19,
+     "top3_share_of_all": 0.5,
+     "top3_share_of_attributed": 0.6786,
+     "all_corridors": [
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 8
+      },
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 6
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 5
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        5,
+        6
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "second_half": {
+     "redundant_ticks": 183,
+     "attributed": 157,
+     "unattributed": 26,
+     "distinct_corridors": 9,
+     "top3_corridors": [
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 76
+      },
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 32
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 28
+      }
+     ],
+     "top3_ticks": 136,
+     "top3_share_of_all": 0.7432,
+     "top3_share_of_attributed": 0.8662,
+     "all_corridors": [
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 76
+      },
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 32
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 28
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 10
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 6
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        3,
+        2
+       ],
+       "ticks": 1
+      },
+      {
+       "corridor": [
+        5,
+        6
+       ],
+       "ticks": 1
+      },
+      {
+       "corridor": [
+        4,
+        4
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "recording": "5b751730",
+    "verdict": {
+     "concentrated": true,
+     "label": "CONCENTRATED",
+     "top3_share_of_all": 0.7432,
+     "cursor_coverage": 0.8579,
+     "caveat": null
+    }
+   },
+   "off": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 134,
+      "cross_redundant_ticks": 0
+     },
+     {
+      "ep": 2,
+      "ticks": 134,
+      "cross_redundant_ticks": 5
+     },
+     {
+      "ep": 3,
+      "ticks": 131,
+      "cross_redundant_ticks": 42
+     },
+     {
+      "ep": 4,
+      "ticks": 136,
+      "cross_redundant_ticks": 23
+     },
+     {
+      "ep": 5,
+      "ticks": 134,
+      "cross_redundant_ticks": 5
+     },
+     {
+      "ep": 6,
+      "ticks": 129,
+      "cross_redundant_ticks": 45
+     },
+     {
+      "ep": 7,
+      "ticks": 134,
+      "cross_redundant_ticks": 47
+     },
+     {
+      "ep": 8,
+      "ticks": 140,
+      "cross_redundant_ticks": 8
+     },
+     {
+      "ep": 9,
+      "ticks": 144,
+      "cross_redundant_ticks": 13
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "cross_redundant_ticks": 46
+     },
+     {
+      "ep": 11,
+      "ticks": 135,
+      "cross_redundant_ticks": 32
+     },
+     {
+      "ep": 12,
+      "ticks": 134,
+      "cross_redundant_ticks": 13
+     }
+    ],
+    "n_episodes": 12,
+    "first_half": {
+     "redundant_ticks": 120,
+     "attributed": 102,
+     "unattributed": 18,
+     "distinct_corridors": 8,
+     "top3_corridors": [
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 81
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 10
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 3
+      }
+     ],
+     "top3_ticks": 94,
+     "top3_share_of_all": 0.7833,
+     "top3_share_of_attributed": 0.9216,
+     "all_corridors": [
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 81
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 10
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        3,
+        4
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        4,
+        4
+       ],
+       "ticks": 1
+      },
+      {
+       "corridor": [
+        3,
+        5
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "second_half": {
+     "redundant_ticks": 159,
+     "attributed": 137,
+     "unattributed": 22,
+     "distinct_corridors": 10,
+     "top3_corridors": [
+      {
+       "corridor": [
+        3,
+        4
+       ],
+       "ticks": 47
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 18
+      }
+     ],
+     "top3_ticks": 83,
+     "top3_share_of_all": 0.522,
+     "top3_share_of_attributed": 0.6058,
+     "all_corridors": [
+      {
+       "corridor": [
+        3,
+        4
+       ],
+       "ticks": 47
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        3,
+        5
+       ],
+       "ticks": 17
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 15
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 9
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 6
+      },
+      {
+       "corridor": [
+        3,
+        2
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "recording": "c2dfe22b",
+    "verdict": {
+     "concentrated": true,
+     "label": "CONCENTRATED",
+     "top3_share_of_all": 0.522,
+     "cursor_coverage": 0.8616,
+     "caveat": null
+    }
+   }
+  },
+  "run5-386": {
+   "on": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 130,
+      "cross_redundant_ticks": 0
+     },
+     {
+      "ep": 2,
+      "ticks": 130,
+      "cross_redundant_ticks": 3
+     },
+     {
+      "ep": 3,
+      "ticks": 129,
+      "cross_redundant_ticks": 6
+     },
+     {
+      "ep": 4,
+      "ticks": 130,
+      "cross_redundant_ticks": 6
+     },
+     {
+      "ep": 5,
+      "ticks": 129,
+      "cross_redundant_ticks": 27
+     },
+     {
+      "ep": 6,
+      "ticks": 130,
+      "cross_redundant_ticks": 8
+     },
+     {
+      "ep": 7,
+      "ticks": 129,
+      "cross_redundant_ticks": 28
+     },
+     {
+      "ep": 8,
+      "ticks": 129,
+      "cross_redundant_ticks": 24
+     },
+     {
+      "ep": 9,
+      "ticks": 129,
+      "cross_redundant_ticks": 46
+     },
+     {
+      "ep": 10,
+      "ticks": 130,
+      "cross_redundant_ticks": 27
+     },
+     {
+      "ep": 11,
+      "ticks": 129,
+      "cross_redundant_ticks": 49
+     },
+     {
+      "ep": 12,
+      "ticks": 129,
+      "cross_redundant_ticks": 65
+     }
+    ],
+    "n_episodes": 12,
+    "first_half": {
+     "redundant_ticks": 50,
+     "attributed": 38,
+     "unattributed": 12,
+     "distinct_corridors": 7,
+     "top3_corridors": [
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 25
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 3
+      }
+     ],
+     "top3_ticks": 31,
+     "top3_share_of_all": 0.62,
+     "top3_share_of_attributed": 0.8158,
+     "all_corridors": [
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 25
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        3,
+        5
+       ],
+       "ticks": 1
+      },
+      {
+       "corridor": [
+        4,
+        4
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "second_half": {
+     "redundant_ticks": 239,
+     "attributed": 217,
+     "unattributed": 22,
+     "distinct_corridors": 7,
+     "top3_corridors": [
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 116
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 61
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 18
+      }
+     ],
+     "top3_ticks": 195,
+     "top3_share_of_all": 0.8159,
+     "top3_share_of_attributed": 0.8986,
+     "all_corridors": [
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 116
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 61
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 10
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 9
+      },
+      {
+       "corridor": [
+        4,
+        4
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        3,
+        3
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "recording": "6ae6782b",
+    "verdict": {
+     "concentrated": true,
+     "label": "CONCENTRATED",
+     "top3_share_of_all": 0.8159,
+     "cursor_coverage": 0.9079,
+     "caveat": null
+    }
+   },
+   "off": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 134,
+      "cross_redundant_ticks": 0
+     },
+     {
+      "ep": 2,
+      "ticks": 134,
+      "cross_redundant_ticks": 5
+     },
+     {
+      "ep": 3,
+      "ticks": 131,
+      "cross_redundant_ticks": 42
+     },
+     {
+      "ep": 4,
+      "ticks": 136,
+      "cross_redundant_ticks": 23
+     },
+     {
+      "ep": 5,
+      "ticks": 134,
+      "cross_redundant_ticks": 5
+     },
+     {
+      "ep": 6,
+      "ticks": 129,
+      "cross_redundant_ticks": 45
+     },
+     {
+      "ep": 7,
+      "ticks": 134,
+      "cross_redundant_ticks": 47
+     },
+     {
+      "ep": 8,
+      "ticks": 140,
+      "cross_redundant_ticks": 8
+     },
+     {
+      "ep": 9,
+      "ticks": 144,
+      "cross_redundant_ticks": 13
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "cross_redundant_ticks": 46
+     },
+     {
+      "ep": 11,
+      "ticks": 135,
+      "cross_redundant_ticks": 32
+     },
+     {
+      "ep": 12,
+      "ticks": 134,
+      "cross_redundant_ticks": 13
+     }
+    ],
+    "n_episodes": 12,
+    "first_half": {
+     "redundant_ticks": 120,
+     "attributed": 102,
+     "unattributed": 18,
+     "distinct_corridors": 8,
+     "top3_corridors": [
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 81
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 10
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 3
+      }
+     ],
+     "top3_ticks": 94,
+     "top3_share_of_all": 0.7833,
+     "top3_share_of_attributed": 0.9216,
+     "all_corridors": [
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 81
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 10
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        3,
+        4
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        4,
+        4
+       ],
+       "ticks": 1
+      },
+      {
+       "corridor": [
+        3,
+        5
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "second_half": {
+     "redundant_ticks": 159,
+     "attributed": 137,
+     "unattributed": 22,
+     "distinct_corridors": 10,
+     "top3_corridors": [
+      {
+       "corridor": [
+        3,
+        4
+       ],
+       "ticks": 47
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 18
+      }
+     ],
+     "top3_ticks": 83,
+     "top3_share_of_all": 0.522,
+     "top3_share_of_attributed": 0.6058,
+     "all_corridors": [
+      {
+       "corridor": [
+        3,
+        4
+       ],
+       "ticks": 47
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        3,
+        5
+       ],
+       "ticks": 17
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 15
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 9
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 6
+      },
+      {
+       "corridor": [
+        3,
+        2
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "recording": "bd458841",
+    "verdict": {
+     "concentrated": true,
+     "label": "CONCENTRATED",
+     "top3_share_of_all": 0.522,
+     "cursor_coverage": 0.8616,
+     "caveat": null
+    }
+   }
+  },
+  "run6-389": {
+   "on": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 131,
+      "cross_redundant_ticks": 0
+     },
+     {
+      "ep": 2,
+      "ticks": 129,
+      "cross_redundant_ticks": 7
+     },
+     {
+      "ep": 3,
+      "ticks": 133,
+      "cross_redundant_ticks": 5
+     },
+     {
+      "ep": 4,
+      "ticks": 129,
+      "cross_redundant_ticks": 13
+     },
+     {
+      "ep": 5,
+      "ticks": 130,
+      "cross_redundant_ticks": 8
+     },
+     {
+      "ep": 6,
+      "ticks": 129,
+      "cross_redundant_ticks": 10
+     },
+     {
+      "ep": 7,
+      "ticks": 129,
+      "cross_redundant_ticks": 49
+     },
+     {
+      "ep": 8,
+      "ticks": 130,
+      "cross_redundant_ticks": 28
+     },
+     {
+      "ep": 9,
+      "ticks": 129,
+      "cross_redundant_ticks": 15
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "cross_redundant_ticks": 44
+     },
+     {
+      "ep": 11,
+      "ticks": 130,
+      "cross_redundant_ticks": 30
+     },
+     {
+      "ep": 12,
+      "ticks": 129,
+      "cross_redundant_ticks": 41
+     }
+    ],
+    "n_episodes": 12,
+    "first_half": {
+     "redundant_ticks": 43,
+     "attributed": 31,
+     "unattributed": 12,
+     "distinct_corridors": 6,
+     "top3_corridors": [
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 14
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 8
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 5
+      }
+     ],
+     "top3_ticks": 27,
+     "top3_share_of_all": 0.6279,
+     "top3_share_of_attributed": 0.871,
+     "all_corridors": [
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 14
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 8
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 5
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 1
+      },
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "second_half": {
+     "redundant_ticks": 207,
+     "attributed": 180,
+     "unattributed": 27,
+     "distinct_corridors": 9,
+     "top3_corridors": [
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 68
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 52
+      },
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 38
+      }
+     ],
+     "top3_ticks": 158,
+     "top3_share_of_all": 0.7633,
+     "top3_share_of_attributed": 0.8778,
+     "all_corridors": [
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 68
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 52
+      },
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 38
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 9
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 6
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        4,
+        4
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        3,
+        2
+       ],
+       "ticks": 1
+      },
+      {
+       "corridor": [
+        4,
+        5
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "recording": "59b02fc5",
+    "verdict": {
+     "concentrated": true,
+     "label": "CONCENTRATED",
+     "top3_share_of_all": 0.7633,
+     "cursor_coverage": 0.8696,
+     "caveat": null
+    }
+   },
+   "off": {
+    "episodes": [
+     {
+      "ep": 1,
+      "ticks": 134,
+      "cross_redundant_ticks": 0
+     },
+     {
+      "ep": 2,
+      "ticks": 134,
+      "cross_redundant_ticks": 5
+     },
+     {
+      "ep": 3,
+      "ticks": 131,
+      "cross_redundant_ticks": 42
+     },
+     {
+      "ep": 4,
+      "ticks": 136,
+      "cross_redundant_ticks": 23
+     },
+     {
+      "ep": 5,
+      "ticks": 134,
+      "cross_redundant_ticks": 5
+     },
+     {
+      "ep": 6,
+      "ticks": 129,
+      "cross_redundant_ticks": 45
+     },
+     {
+      "ep": 7,
+      "ticks": 134,
+      "cross_redundant_ticks": 47
+     },
+     {
+      "ep": 8,
+      "ticks": 140,
+      "cross_redundant_ticks": 8
+     },
+     {
+      "ep": 9,
+      "ticks": 144,
+      "cross_redundant_ticks": 13
+     },
+     {
+      "ep": 10,
+      "ticks": 129,
+      "cross_redundant_ticks": 46
+     },
+     {
+      "ep": 11,
+      "ticks": 135,
+      "cross_redundant_ticks": 32
+     },
+     {
+      "ep": 12,
+      "ticks": 134,
+      "cross_redundant_ticks": 13
+     }
+    ],
+    "n_episodes": 12,
+    "first_half": {
+     "redundant_ticks": 120,
+     "attributed": 102,
+     "unattributed": 18,
+     "distinct_corridors": 8,
+     "top3_corridors": [
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 81
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 10
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 3
+      }
+     ],
+     "top3_ticks": 94,
+     "top3_share_of_all": 0.7833,
+     "top3_share_of_attributed": 0.9216,
+     "all_corridors": [
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 81
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 10
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        3,
+        4
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 2
+      },
+      {
+       "corridor": [
+        4,
+        4
+       ],
+       "ticks": 1
+      },
+      {
+       "corridor": [
+        3,
+        5
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "second_half": {
+     "redundant_ticks": 159,
+     "attributed": 137,
+     "unattributed": 22,
+     "distinct_corridors": 10,
+     "top3_corridors": [
+      {
+       "corridor": [
+        3,
+        4
+       ],
+       "ticks": 47
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 18
+      }
+     ],
+     "top3_ticks": 83,
+     "top3_share_of_all": 0.522,
+     "top3_share_of_attributed": 0.6058,
+     "all_corridors": [
+      {
+       "corridor": [
+        3,
+        4
+       ],
+       "ticks": 47
+      },
+      {
+       "corridor": [
+        7,
+        7
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        2,
+        4
+       ],
+       "ticks": 18
+      },
+      {
+       "corridor": [
+        3,
+        5
+       ],
+       "ticks": 17
+      },
+      {
+       "corridor": [
+        4,
+        2
+       ],
+       "ticks": 15
+      },
+      {
+       "corridor": [
+        5,
+        4
+       ],
+       "ticks": 9
+      },
+      {
+       "corridor": [
+        5,
+        3
+       ],
+       "ticks": 6
+      },
+      {
+       "corridor": [
+        3,
+        2
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        5,
+        5
+       ],
+       "ticks": 3
+      },
+      {
+       "corridor": [
+        5,
+        2
+       ],
+       "ticks": 1
+      }
+     ]
+    },
+    "recording": "01b3b022",
+    "verdict": {
+     "concentrated": true,
+     "label": "CONCENTRATED",
+     "top3_share_of_all": 0.522,
+     "cursor_coverage": 0.8616,
+     "caveat": null
+    }
+   }
+  }
+ },
+ "self_checks": [
+  "run1-303 on: continuity OK (301 == g315388)",
+  "run1-303 off: continuity OK (159 == g315388)",
+  "run2-380 on: continuity OK (258 == g315388)",
+  "run2-380 off: continuity OK (159 == g315388)",
+  "run3-381 on: continuity OK (262 == g315388)",
+  "run3-381 off: continuity OK (159 == g315388)",
+  "run4-384 on: continuity OK (183 == g315388)",
+  "run4-384 off: continuity OK (159 == g315388)",
+  "run5-386 on: continuity OK (239 == g315388)",
+  "run5-386 off: continuity OK (159 == g315388)",
+  "run6-389 on: continuity OK (207 == g315388)",
+  "run6-389 off: continuity OK (159 == g315388)"
+ ],
+ "aggregate_on": {
+  "pooled_second_half_redundant_ticks": 1450,
+  "unattributed": 159,
+  "attributed": 1291,
+  "distinct_corridors": 12,
+  "top3_corridors": [
+   {
+    "corridor": [
+     5,
+     4
+    ],
+    "ticks": 439
+   },
+   {
+    "corridor": [
+     5,
+     5
+    ],
+    "ticks": 338
+   },
+   {
+    "corridor": [
+     5,
+     2
+    ],
+    "ticks": 241
+   }
+  ],
+  "top3_share_of_all": 0.7021,
+  "top3_share_of_attributed": 0.7885,
+  "verdict": "CONCENTRATED"
+ },
+ "aggregate_off": {
+  "pooled_second_half_redundant_ticks": 954,
+  "unattributed": 132,
+  "attributed": 822,
+  "distinct_corridors": 10,
+  "top3_corridors": [
+   {
+    "corridor": [
+     3,
+     4
+    ],
+    "ticks": 282
+   },
+   {
+    "corridor": [
+     7,
+     7
+    ],
+    "ticks": 108
+   },
+   {
+    "corridor": [
+     2,
+     4
+    ],
+    "ticks": 108
+   }
+  ],
+  "top3_share_of_all": 0.522,
+  "top3_share_of_attributed": 0.6058,
+  "verdict": "CONCENTRATED"
+ }
+}
