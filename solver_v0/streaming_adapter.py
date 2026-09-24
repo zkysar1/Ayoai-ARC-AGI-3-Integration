@@ -220,8 +220,8 @@ class SolverV0StreamingAdapter:
         if self._previous_action is not None and self._previous_frame is not None:
             frame_changed = frame.frame != self._previous_frame.frame
             score_delta: int | None = None
-            if self._previous_score is not None and frame.score is not None:
-                score_delta = frame.score - self._previous_score
+            if self._previous_score is not None and frame.levels_completed is not None:
+                score_delta = frame.levels_completed - self._previous_score
             try:
                 self._policy.observe(
                     self._previous_action,
@@ -248,7 +248,7 @@ class SolverV0StreamingAdapter:
                     for a in (frame.available_actions or [])
                 ],
                 history=list(self._frame_history),
-                score=frame.score,
+                score=frame.levels_completed,
             )
         except Exception as e:
             raise AyoaiStreamingError(
@@ -290,7 +290,7 @@ class SolverV0StreamingAdapter:
         # Remember this tick's frame + action for next tick's deferred observe.
         self._previous_frame = frame
         self._previous_action = pd.action
-        self._previous_score = frame.score
+        self._previous_score = frame.levels_completed
 
         return AyoaiDecision(
             action=ga,

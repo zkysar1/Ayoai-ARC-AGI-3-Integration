@@ -287,10 +287,10 @@ class EpisodeBoundaryDetector:
 
         # 4. score-reset: score fell back to 0 from a positive value.
         if (
-            previous.score is not None
-            and current.score is not None
-            and current.score == 0
-            and previous.score > 0
+            previous.levels_completed is not None
+            and current.levels_completed is not None
+            and current.levels_completed == 0
+            and previous.levels_completed > 0
         ):
             return BoundaryResult(True, "score-reset")
 

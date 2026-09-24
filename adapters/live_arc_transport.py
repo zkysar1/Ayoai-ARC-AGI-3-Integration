@@ -121,7 +121,7 @@ class LiveArcTransport:
                 moved = True
         reason = (
             f"action {action}: cursor -> {self._cursor} "
-            f"live_state={new_frame.state.value} live_score={new_frame.score}"
+            f"live_state={new_frame.state.value} live_score={new_frame.levels_completed}"
         )
         return (moved, reason)
 
@@ -136,7 +136,7 @@ class LiveArcTransport:
             "frame_cols": self._cols,
             "available_actions": [a.value for a in self._frame.available_actions],
             "state": self._frame.state.value,
-            "score": self._frame.score,
+            "score": self._frame.levels_completed,
             "cursor": list(self._cursor),
         }
 
@@ -147,7 +147,7 @@ class LiveArcTransport:
 
     @property
     def score(self) -> int:
-        return self._frame.score
+        return self._frame.levels_completed
 
     @property
     def actions_sent(self) -> int:

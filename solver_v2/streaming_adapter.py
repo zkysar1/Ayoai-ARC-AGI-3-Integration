@@ -829,9 +829,9 @@ class SolverV2StreamingAdapter:
         prev_bank = self._previous_frame
         if (
             prev_bank is not None
-            and prev_bank.score is not None
-            and frame.score is not None
-            and frame.score > prev_bank.score
+            and prev_bank.levels_completed is not None
+            and frame.levels_completed is not None
+            and frame.levels_completed > prev_bank.levels_completed
         ):
             nb = getattr(self._executor, "notice_bank", None)
             if nb is not None:
@@ -841,9 +841,9 @@ class SolverV2StreamingAdapter:
             prev = self._previous_frame
             leveled_up = (
                 prev is not None
-                and prev.score is not None
-                and frame.score is not None
-                and frame.score > prev.score
+                and prev.levels_completed is not None
+                and frame.levels_completed is not None
+                and frame.levels_completed > prev.levels_completed
             )
             if leveled_up:
                 self._click_prior_engine.reset()
@@ -875,7 +875,7 @@ class SolverV2StreamingAdapter:
                 frame.frame,
                 available_actions=available_action_ids,
                 history=list(self._frame_history),
-                score=frame.score,
+                score=frame.levels_completed,
             )
             # g-315-378 (flag-gated, see __init__): splice the port-parity
             # per-cell EMA churn over the extract() output. In-place list
@@ -993,7 +993,7 @@ class SolverV2StreamingAdapter:
             if self._reward_memory is not None:
                 self._reward_memory.observe(
                     v4_state,
-                    float(frame.score) if frame.score is not None else 0.0,
+                    float(frame.levels_completed) if frame.levels_completed is not None else 0.0,
                 )
             action_id = self._v4_arm.step(
                 v4_state,
@@ -1022,7 +1022,7 @@ class SolverV2StreamingAdapter:
                     fallback = f"ACTION{action_id}"
                 chosen = self._theory_arm.step(
                     grid,
-                    level=int(frame.score or 0),
+                    level=int(frame.levels_completed or 0),
                     reset=boundary.is_boundary or self._theory_reset,
                     actions=[f"ACTION{a}" for a in available_action_ids if a != 0],
                     click_allowed=6 in available_action_ids,
@@ -1742,9 +1742,9 @@ class SolverV2StreamingAdapter:
             score_delta: Optional[int] = None
             if (
                 self._previous_policy_score is not None
-                and frame.score is not None
+                and frame.levels_completed is not None
             ):
-                score_delta = frame.score - self._previous_policy_score
+                score_delta = frame.levels_completed - self._previous_policy_score
             try:
                 policy.observe(
                     self._previous_policy_action,
@@ -1858,7 +1858,7 @@ class SolverV2StreamingAdapter:
                         ) from e
                     pd = PolicyDecision(action=ed.action, x=ed.x, y=ed.y)
         self._previous_policy_action = pd.action
-        self._previous_policy_score = frame.score
+        self._previous_policy_score = frame.levels_completed
         return pd
 
     def _note_cached_axis_outcome(self, frame_changed: bool) -> None:

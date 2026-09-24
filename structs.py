@@ -1,8 +1,14 @@
 import json
+import logging
 from enum import Enum
 from typing import Any, Optional, Type, Union
 
-from pydantic import BaseModel, Field, computed_field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
+
+logger = logging.getLogger(__name__)
+# FrameData warns about a legacy `score` payload once per process: a replayed
+# pre-0.9.3 recording would otherwise log once per frame.
+_legacy_score_warned = False
 
 MAX_REASONING_BYTES = 16 * 1024  # 16KB Max
 
@@ -208,11 +214,36 @@ class FrameData(BaseModel):
     game_id: str = ""
     frame: list[list[list[int]]] = []
     state: GameState = GameState.NOT_PLAYED
-    score: int = Field(0, ge=0, le=254)
+    # arc-agi 0.9.3 renamed the frame's `score` to `levels_completed` and added
+    # `win_levels`. Read levels_completed. `score` stays only as a legacy alias
+    # that mirrors it, for payloads and callers that still send `score`.
+    levels_completed: int = Field(default=0, ge=0, le=254)
+    win_levels: int = Field(default=0, ge=0, le=254)
+    score: int = Field(default=0, ge=0, le=254)
     action_input: ActionInput = Field(default_factory=lambda: ActionInput())
     guid: Optional[str] = None
     full_reset: bool = False
     available_actions: list[GameAction] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _levels_completed_from_legacy_score(cls, data: Any) -> Any:
+        global _legacy_score_warned
+        if not isinstance(data, dict):
+            return data
+        if "levels_completed" in data:
+            return {**data, "score": data["levels_completed"]}
+        if "score" in data:
+            if not _legacy_score_warned:
+                _legacy_score_warned = True
+                logger.warning(
+                    "FrameData got legacy `score` without `levels_completed`; "
+                    "reading score=%r as levels_completed (arc-agi < 0.9.3 payload); "
+                    "logged once per process",
+                    data["score"],
+                )
+            return {**data, "levels_completed": data["score"]}
+        return data
 
     def is_empty(self) -> bool:
         return len(self.frame) == 0

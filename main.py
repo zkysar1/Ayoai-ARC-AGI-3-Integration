@@ -194,7 +194,7 @@ def run_game_loop(
         action_sender: callable (action, guid, x, y) -> FrameData | None.
             Wraps the ARC API send_action — passed in so the loop is
             testable without a live requests.Session.
-        initial_frame: the starting frame (typically FrameData(score=0)
+        initial_frame: the starting frame (typically FrameData(levels_completed=0)
             with state=NOT_PLAYED).
         recorder: optional Recorder for per-tick JSONL recording.
         max_actions: action count cap (default 80; matches MAX_ACTIONS).
@@ -260,7 +260,7 @@ def run_game_loop(
                 fps = action_counter / elapsed if elapsed > 0 else 0
                 log.info(
                     f"{game_label} - {action.name}: count {action_counter}, "
-                    f"score {new_frame.score}, decided_by="
+                    f"score {new_frame.levels_completed}, decided_by="
                     f"{decision.provenance.get('decided_by', '?')}, "
                     f"avg fps {fps:.2f}"
                 )
@@ -1359,7 +1359,7 @@ def main() -> int:
         ep_actions, ep_elapsed = run_game_loop(
             streaming_client,
             _action_sender,
-            FrameData(score=0),
+            FrameData(levels_completed=0),
             recorder=recorder,
             max_actions=MAX_ACTIONS,
             game_id=args.game,

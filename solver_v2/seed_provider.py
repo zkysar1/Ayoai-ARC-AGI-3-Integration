@@ -497,8 +497,8 @@ class BitNetSeedProvider(SeedProvider):
             "frame": frame.frame if frame is not None else [],
             "available_actions": list(context.available_actions),
             "score": (
-                frame.score
-                if frame is not None and frame.score is not None
+                frame.levels_completed
+                if frame is not None and frame.levels_completed is not None
                 else 0
             ),
         }

@@ -45,6 +45,7 @@ recording dicts. No HTTP, no DNS, no sockets, no LLM.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter, deque
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
@@ -504,13 +505,23 @@ def calibrate_from_recording(
     baseline_cold = True
     observations: dict[int, list[tuple[float, float]]] = {}
     move_set = None if move_actions is None else {int(a) for a in move_actions}
+    legacy_score_warned = False  # a pre-0.9.3 recording warns once, not per frame
 
     for rec in frame_records:
         frame = rec.get("frame")
         if not frame:
             continue
         avail = rec.get("available_actions") or []
-        score = rec.get("score")
+        # arc-agi 0.9.3 recordings carry `levels_completed`; older ones `score`.
+        score = rec.get("levels_completed")
+        if score is None and "score" in rec:
+            if not legacy_score_warned:
+                legacy_score_warned = True
+                logging.getLogger(__name__).warning(
+                    "recording has legacy `score` without `levels_completed`; using it "
+                    "(logged once per recording)"
+                )
+            score = rec.get("score")
         action_input = rec.get("action_input") or {}
         action = action_input.get("id")
 

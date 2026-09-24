@@ -23,7 +23,7 @@ ENV-AGNOSTIC (echo PRIMARY / cognitive-load budget): states are OPAQUE HASHABLE 
 (the caller's world encoding) and ``reward`` is any comparable scalar. The recognizer
 carries NO environment constants, NO grid/score semantics, NO game-model assumption
 (rb-4569 sibling): it knows only "a comparable signal went up, remember where." The
-ARC-specific part -- that the reward signal IS ``FrameData.score`` -- stays in the
+ARC-specific part -- that the reward signal IS ``FrameData.levels_completed`` -- stays in the
 adapter, exactly as ``synthesized_world_model`` keeps dynamics in its injected program.
 
 CEILING (honest, per design §4): exact-match membership only helps where a winning

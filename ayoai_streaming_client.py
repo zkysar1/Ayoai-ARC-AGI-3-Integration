@@ -555,7 +555,7 @@ class AyoaiStreamingClient:
                 else 0
             ),
             "state": state_name,
-            "score": frame.score,
+            "score": frame.levels_completed,
             "available_actions": available_actions_csv,
             "guid": frame.guid,
             "full_reset": frame.full_reset,

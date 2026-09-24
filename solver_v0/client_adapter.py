@@ -22,12 +22,17 @@ RecordingReplayAdapter reads the bundled ls20 recording fixture.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections import deque
 from pathlib import Path
 from typing import IO, Iterable, Iterator, Optional, Protocol
 
 from solver_v0.perception import FrameFeatures, extract
+
+# Replaying a pre-0.9.3 recording hits the legacy-`score` fallback on every
+# frame, so that fallback warns once per process.
+_legacy_score_warned = False
 
 LIVE_ENV_VAR = "LIVE_ENDPOINT"
 DEFAULT_AVAILABLE_ACTIONS = [0, 1, 2, 3, 4, 5, 6, 7]
@@ -213,7 +218,19 @@ class RecordingReplayAdapter:
         # so the policy's score-delta preference can fire on replay (g-315-108).
         # Absent / non-int -> None (back-compat: older recordings and the
         # session_open record carry no score field).
-        score = data.get("score")
+        # arc-agi 0.9.3 renamed the frame's `score` to `levels_completed`;
+        # read that first and fall back to legacy `score` with a once-per-process warning.
+        score = data.get("levels_completed")
+        if score is None and "score" in data:
+            global _legacy_score_warned
+            if not _legacy_score_warned:
+                _legacy_score_warned = True
+                logging.getLogger(__name__).warning(
+                    "frame data has legacy `score` without `levels_completed`; "
+                    "using score=%r (logged once per process)",
+                    data.get("score"),
+                )
+            score = data.get("score")
         # Pass the PRIOR frames as history so perception computes real per-cell
         # churn / roles instead of the cold-start branch (g-315-116, rb-1301).
         # list(self._history) snapshots the window BEFORE the current frame is
