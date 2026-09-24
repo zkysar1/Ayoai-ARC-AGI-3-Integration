@@ -106,10 +106,11 @@ _MAX_GRAPH_NODES: int = 50_000
 coverage-explorer fallback. Never a silent cap -- curtailment is logged."""
 
 _RHAE_HUMAN_BASELINE: int = 40
-"""Conservative assumed human action count per level. RHAE scores ZERO above 5x
-human actions (rb-1267 / g-315-228 finding 3); the per-level budget caps
-exploration so a discovered win path is replayed (shortest) rather than
-re-explored."""
+"""Conservative assumed human action count per level. A level finished at 5x human
+actions scores (1/5) ** 2 = 4% of a human-paced finish, and no cutoff sets it to
+zero (rb-1267; arc_agi scorecard.py). This note said "scores ZERO above 5x" (after
+g-315-228 finding 3) until g-376-05. The budget caps exploration so a discovered
+win path is replayed (shortest) rather than re-explored."""
 
 _RHAE_MULT: int = 5
 
