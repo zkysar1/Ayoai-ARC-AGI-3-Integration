@@ -622,15 +622,16 @@ class TestBoundaryAsserts:
 
     def test_anthropic_import_is_lazy(self, source: str) -> None:
         # anthropic MUST NOT be imported at module top level (col 0) -- it is an
-        # optional runtime dependency, imported only inside the client-construct
-        # method so the module loads without it (the build-box state).
+        # optional runtime dependency, so the module loads without it (the
+        # build-box state).
         for line in source.splitlines():
             if line.startswith("import anthropic") or line.startswith(
                 "from anthropic"
             ):
                 pytest.fail(f"top-level anthropic import found: {line!r}")
-        # And it IS present (indented) somewhere -- the lazy path exists.
-        assert "import anthropic" in source
+        # And the lazy path exists -- through the spend meter, which owns the one
+        # SDK client construction (g-376-08).
+        assert "spend_meter.metered_anthropic(" in source
 
     def test_module_imports_without_anthropic(self) -> None:
         # The module was already imported at the top of this test file with no

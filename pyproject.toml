@@ -67,5 +67,11 @@ exclude = [
 ]
 plugins = []
 
+# anthropic is an optional runtime dependency, imported lazily by spend_meter
+# (the one SDK construction site) and absent from the build venv. (g-376-08)
+[[tool.mypy.overrides]]
+module = ["anthropic", "anthropic.*"]
+ignore_missing_imports = true
+
 [tool.ruff.lint]
 extend-select = ["I"]

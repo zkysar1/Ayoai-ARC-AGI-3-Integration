@@ -697,8 +697,9 @@ class LLMHypothesizer:
         """Return the injected client, or lazily construct one from anthropic.
 
         Constructs at most once; a missing package / key / any error yields
-        ``None`` (caller falls back).  ``anthropic`` is imported HERE only, so
-        the module imports without it and injected-client paths never touch it.
+        ``None`` (caller falls back).  The SDK client is built only by
+        ``spend_meter.metered_anthropic`` (g-376-08), so every call is priced,
+        capped and logged; a refused call raises and ``_call_llm`` falls back.
         """
         if self._client is not None:
             return self._client
@@ -706,9 +707,9 @@ class LLMHypothesizer:
             return None
         self._client_construct_attempted = True
         try:
-            import anthropic  # lazy -- optional runtime dependency
+            import spend_meter  # lazy -- the metered wrapper owns the SDK
 
-            self._client = anthropic.Anthropic()
+            self._client = spend_meter.metered_anthropic(run_id="wincon-llm")
         except Exception:
             self._client = None
         return self._client
