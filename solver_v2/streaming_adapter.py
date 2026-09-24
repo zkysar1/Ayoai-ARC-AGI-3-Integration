@@ -80,6 +80,7 @@ from structs import FrameData, GameAction, GameState
 # in choose_action. Composing it is a strict-superset no-op under a NoOp model.
 from primitives.v4_arm import V4Arm
 from primitives.reward_state_recognizer import RewardStateMemory
+from primitives.theory_arm import TheoryArm
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,17 @@ class SolverV2StreamingAdapter:
     # goal_predicate (design/v4-goal-predicate-win-bridge.md). Only instantiated +
     # fed when the v4 arm is on, so the v2/v3 path stays byte-identical.
     _reward_memory: "Optional[RewardStateMemory]" = None
+
+    # g-376-09: opt-in theory step (design/theory-step.md, default OFF). The factory
+    # builds one TheoryArm from the game's first frame; choose_action then lets the
+    # arm pick the move, with the v2 decision as its fallback (strict superset).
+    # _theory_reset marks that a RESET was sent, so the next move is not replayed
+    # across the attempt boundary. _theory_disabled holds the error that switched the
+    # arm off for the rest of the game (None while it is healthy).
+    _theory_arm_factory: "Optional[Callable[[Any], TheoryArm]]" = None
+    _theory_arm: "Optional[TheoryArm]" = None
+    _theory_reset: bool = False
+    _theory_disabled: "Optional[str]" = None
 
     def __init__(
         self,
@@ -571,11 +583,28 @@ class SolverV2StreamingAdapter:
 
     def close(self) -> None:
         # No session, socket, or file handle to release; only the optional
-        # click-prior worker thread (g-315-367). Matches the context-manager
+        # click-prior worker thread (g-315-367) and the opt-in theory arm's
+        # sandbox child (g-376-09). Matches the context-manager
         # contract so callers can do `with adapter as x:`.
         if self._click_prior_engine is not None:
             self._click_prior_engine.close()
+        self._finish_theory_arm()
         return None
+
+    def _finish_theory_arm(self) -> None:
+        """Game end for the opt-in theory arm (g-376-09): emit its game-end memory
+        record (design §12) and stop its sandbox child. A finish error is logged, not
+        raised. The adapter sees no frame after the last move, so a level finished by
+        that move is not measured here (the offline harness passes the final frame)."""
+        arm, self._theory_arm = self._theory_arm, None
+        if arm is None:
+            return
+        try:
+            arm.finish()
+        except Exception:
+            logger.warning("[theory-arm] finish failed at close", exc_info=True)
+        finally:
+            arm.synth.sandbox.close()
 
     def __enter__(self) -> "SolverV2StreamingAdapter":
         return self
@@ -644,6 +673,23 @@ class SolverV2StreamingAdapter:
             )
         )
 
+    def set_theory_arm(self, factory: "Optional[Callable[[Any], TheoryArm]]") -> None:
+        """Opt-in wire (default OFF) for the theory step (g-376-09). ``factory(grid)``
+        builds the game's TheoryArm from the first frame's top layer (for example
+        ``adapters.arc_theory.make_theory_arm``); pass ``None`` to disable. The arm
+        then picks each move, falling back to the v2 decision whenever it has no
+        admitted theory or test plan. An error inside the arm switches it off for the
+        rest of the game and keeps the v2 decision, so the opt-in arm cannot end a run;
+        the error is stamped into the decision's provenance."""
+        self._theory_arm_factory = factory
+        self._theory_arm = None
+        self._theory_reset = False
+        self._theory_disabled = None
+
+    @property
+    def theory_arm(self) -> "Optional[TheoryArm]":
+        return self._theory_arm
+
     def _v4_state(self, frame: FrameData) -> Any:
         """Hashable encoding of the layered ARC grid for V4Arm's transition
         buffer + planner (states MUST be hashable). Nested lists -> nested
@@ -709,6 +755,7 @@ class SolverV2StreamingAdapter:
             # g-315-367: a pending click observation would compare grids
             # across a death/reset seam — meaningless label; drop it.
             self._last_click = None
+            self._theory_reset = True
             return AyoaiDecision(
                 action=GameAction.RESET,
                 provenance={
@@ -955,6 +1002,48 @@ class SolverV2StreamingAdapter:
                 fallback_action=decision.action,
             )
 
+        # 3.6 (g-376-09): opt-in theory step. The arm speaks API action names and
+        # ("ACTION6", row, col) clicks; the v2 choice is its fallback. Model calls
+        # happen only inside the arm's between-moves phase (design §9). The game loop
+        # treats any non-streaming error as fatal, so an arm error (the factory
+        # included) switches the arm off for the rest of the game and keeps the v2
+        # decision: the opt-in experiment must never end a run.
+        out_x, out_y = decision.x, decision.y
+        theory_changed = False
+        theory_error: Optional[str] = None
+        if self._theory_arm_factory is not None and self._theory_disabled is None and frame.frame:
+            try:
+                grid = frame.frame[-1]
+                if self._theory_arm is None:
+                    self._theory_arm = self._theory_arm_factory(grid)
+                if action_id == 6 and decision.x is not None and decision.y is not None:
+                    fallback: Any = ("ACTION6", decision.y, decision.x)
+                else:
+                    fallback = f"ACTION{action_id}"
+                chosen = self._theory_arm.step(
+                    grid,
+                    level=int(frame.score or 0),
+                    reset=boundary.is_boundary or self._theory_reset,
+                    actions=[f"ACTION{a}" for a in available_action_ids if a != 0],
+                    click_allowed=6 in available_action_ids,
+                    fallback=fallback,
+                )
+                self._theory_reset = False
+                theory_changed = chosen != fallback
+                if isinstance(chosen, tuple):
+                    action_id, out_y, out_x = 6, int(chosen[1]), int(chosen[2])
+                else:
+                    action_id = int(str(chosen).removeprefix("ACTION"))
+            except Exception as exc:
+                theory_changed = False
+                theory_error = f"{type(exc).__name__}: {exc}"[:300]
+                self._theory_disabled = theory_error
+                logger.warning(
+                    "[theory-arm] switched off for the rest of the game: %s",
+                    theory_error,
+                    exc_info=True,
+                )
+
         # 4. Convert action id back to GameAction enum for AyoaiDecision.
         try:
             ga = GameAction.from_id(action_id)
@@ -978,6 +1067,19 @@ class SolverV2StreamingAdapter:
             provenance["v4_arm"] = {
                 "consulted": True,
                 "changed": action_id != decision.action,
+            }
+        if self._theory_disabled is not None:
+            # "consulted" only on the tick whose error switched the arm off.
+            provenance["theory_arm"] = {
+                "consulted": theory_error is not None,
+                "changed": False,
+                "error": self._theory_disabled,
+            }
+        elif self._theory_arm is not None:
+            provenance["theory_arm"] = {
+                "consulted": True,
+                "changed": theory_changed,
+                "calls": self._theory_arm.synth.budget.calls,
             }
         if boundary_reason is not None:
             provenance["episode_boundary"] = boundary_reason
@@ -1055,8 +1157,8 @@ class SolverV2StreamingAdapter:
 
         return AyoaiDecision(
             action=ga,
-            x=decision.x if ga.is_complex() else None,
-            y=decision.y if ga.is_complex() else None,
+            x=out_x if ga.is_complex() else None,
+            y=out_y if ga.is_complex() else None,
             reasoning=None,
             provenance=provenance,
         )

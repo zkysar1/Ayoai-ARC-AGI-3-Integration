@@ -1187,6 +1187,45 @@ def main() -> int:
                 goal_predicate=v4_goal_predicate,
                 history_k=v4_history_k,
             )
+        # g-376-09: opt-in theory step (design/theory-step.md). OFF by default. The
+        # smallest model writes the game's rules and a win guess as code between
+        # moves; plain code checks them and picks every move. Every call goes
+        # through spend_meter (reads ANTHROPIC_API_KEY from the environment by the
+        # SDK's own lookup). Measures go to a run directory outside the repo.
+        if os.environ.get("SOLVER_V2_THEORY_ARM", "").strip().lower() in (
+            "1",
+            "true",
+            "on",
+            "yes",
+        ):
+            import spend_meter
+            from adapters.arc_theory import THEORY_MODEL, make_theory_arm
+
+            theory_run_id = f"theory-{args.game}-{int(time.time())}"
+            theory_dir = (
+                Path(
+                    os.environ.get(
+                        "ARC_THEORY_RUN_DIR",
+                        str(Path.home() / ".ayoai-arc" / "theory-runs"),
+                    )
+                )
+                / theory_run_id
+            )
+            theory_client = spend_meter.metered_anthropic(
+                game_id=args.game, run_id=theory_run_id
+            )
+            logger.info(
+                "[theory-arm] enabled: model=%s run_dir=%s", THEORY_MODEL, theory_dir
+            )
+            streaming_client.set_theory_arm(
+                lambda grid: make_theory_arm(
+                    grid,
+                    client=theory_client,
+                    game_key=args.game,
+                    run_id=theory_run_id,
+                    run_dir=theory_dir,
+                )
+            )
     else:
         # streaming_url is resolved by this point (live: ayoai_session.streaming_url;
         # mock: args.mock_url). The assert makes that invariant explicit and

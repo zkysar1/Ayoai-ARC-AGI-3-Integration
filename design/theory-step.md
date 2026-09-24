@@ -67,6 +67,9 @@ states, so it cannot plan (rb-4985), and it can only plan toward states it has a
 seen, never a first win (rb-4721). A goal learned from observed wins is empty before the
 first win (rb-4961).
 
+As built (g-376-09), the theory step is its own per-frame loop beside `V4Arm`, not a
+synthesizer inside it; §17 says why.
+
 ## 3. What we copy from the published methods, and what we change
 
 Sources opened by echo on 2026-09-24 (method sections only; per-game sections were not
@@ -511,7 +514,8 @@ played.
    builder, rules learned per game from its own moves.
 4. **Pattern-preserving**: zero new mandatory adapter slots. The theory step fills the
    existing `WorldModelSynthesizer` seam and the `goal_predicate` argument of
-   `V4Arm.step`.
+   `V4Arm.step`. As built, only the first sentence holds: the wire is optional, but it
+   is a new one rather than the V4Arm seam (§17).
 
 Module map for g-376-09:
 
@@ -555,7 +559,77 @@ each budget refusal in §10.1, the deferral and stall logic, the refutation path
 3. g-376-10: memory transport and the three regimes.
 4. g-376-24 and g-376-25: the experiments, using the switches in §13.
 
-## 17. Cross-references
+## 17. As built (g-376-09, 2026-09-24)
+
+Where the build departs from §2-§16, and what the first runs measured.
+
+**Structure.** The theory step is its own per-frame loop,
+`primitives/theory_arm.TheoryArm`, not `V4Arm(TheorySynthesizer)`. The planner runs
+inside the sandbox next to the theory, because a 20,000-node search cannot cross a
+process boundary per node. And `V4Arm`'s driver cannot express the opening probe with
+C1, the refutation trigger C3, the deferral window, halt-on-mismatch, or clicks chosen
+from the current screen. The arm is wired through a new optional adapter call,
+`SolverV2StreamingAdapter.set_theory_arm` (off by default; `main.py` turns it on with
+`SOLVER_V2_THEORY_ARM=1`). The module map of §14 changes accordingly:
+`TheorySynthesizer` holds the admission checks and the budget; the triggers, deferral
+window, stall guard and search mode live in `primitives/theory_arm.py`;
+`adapters/arc_theory.py` renders the screen itself (hex digits, cropped, absolute
+labels) and lists objects with its own `objects` helper (background = the most common
+colour), the same helper the theory calls; the offline harness is
+`analysis/theory_step_offline.py`.
+
+**Sandbox (§6.3).** The theory's builtins are the design's list plus `str`, `float`,
+`round`, `reversed`, `frozenset`, `map`, `filter` and the common exception types, all
+pure. Each sandbox child's reader threads write only to that child's own queue, and a
+reply must carry its request's id.
+
+**Admission (§7).** The checks run in the order 1, 3, 2, 4, 5, 6, 7, because check 2
+reads the parts from the loaded module. With `require_win_guess` off, the win parts of
+check 2 and checks 6 and 7 still run and are listed in the call record's `advisory`
+field, but they are not fed back into the check report the model sees. The arm plans in
+both modes whenever the admitted theory has `is_win` or `test_target`, so the two modes
+differ in the binding alone.
+
+**Budget and loop (§8, §10.1).** `GameBudget` sums its own calls' costs in memory rather
+than reading the ledger; the global cap stays with the meter. The stall guard compares
+the fraction of logged moves explained. A stepping-stone test target reached 3 times on
+a level counts as a capped search.
+
+**Model call.** The installed SDK (anthropic 1.8.0, the `pyproject.toml` extra, now
+installed on cc-03) has no temperature argument, so the request sends
+`extra_body={"temperature": 0}`.
+
+**Levels, resets, game end.** Until g-376-04 lands, the adapter reads the level from
+`frame.score`; the offline harness reads `levels_completed`. The adapter marks its own
+RESET, because a GAME_OVER frame short-circuits to RESET before boundary detection.
+`close()` finishes the arm (the game-end record of §12) and stops its sandbox. The
+adapter sees no frame after the last move, so a level finished by that move is not
+measured on the live path; the offline harness passes the final frame. An error inside
+the arm switches it off for the rest of the game, keeps the solver-v2 move, and is
+stamped into the decision's provenance.
+
+**Measured**: offline, 3 dev games, 120 moves and at most 12 calls each, 2026-09-24.
+
+| | ls20 | re86 | ft09 |
+|---|---|---|---|
+| Calls between moves / in the decide phase | 12 / 0 | 12 / 0 | 12 / 0 |
+| Cost | $0.1670 | $0.1606 | $0.1233 |
+| Theories admitted | 1 of 12 | 0 of 12 | 1 of 12 |
+| Admitted theory, exact on later moves | 4 of 112 | none admitted | 97 of 115 |
+| Admitted theory, cell accuracy on later moves | 0.9912 | none admitted | 0.9988 |
+| Best version, exact on later moves | 4 of 112 | 0, every version | 112 of 115 (refused at check 7) |
+| Level-ups | 0 | 0 | 0 |
+| Wall time / slowest step | 134 s / 31 s | 131 s / 27 s | 696 s / 58 s |
+
+Per call over the 36 calls: input 3,993 to 7,492 tokens (mean 6,103), output 726 to
+2,025 (mean 1,285), cost $0.0080 to $0.0172 (mean $0.0125). The §10.2 prior was 12,000
+in, 2,500 out and $0.0245. Every refusal in ls20 and re86 was at check 4 (replay), the
+first risk in §15. ft09's wall time fits the per-move planner search running to its
+20 s cap: its admitted theory's search stopped at the time cap, where ls20's stopped at
+the depth cap. Per-step times were not recorded, so this is inferred, not measured. It
+bears on the idle-limit risk in §15. Run records: `~/.ayoai-arc/theory-runs/theory-offline-{ls20,re86,ft09}-1790265444/`.
+
+## 18. Cross-references
 
 - `v4-synthesized-world-model.md` (V4Arm, the synthesizer seam),
   `win-condition-discovery.md`, `win-condition-zero-positive-objective.md`

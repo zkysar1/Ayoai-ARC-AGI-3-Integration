@@ -128,6 +128,11 @@ class MeteredClient:
         billed = {k: kwargs.get(k) for k in ("system", "messages", "tools")}
         return call_cost(model, len(json.dumps(billed, default=str).encode()), max_tokens)
 
+    def estimate(self, **kwargs: Any) -> float:
+        """The pre-call worst-case cost ``create`` would check for these arguments,
+        for callers that keep their own budget (the theory step's GameBudget)."""
+        return self._estimate(str(kwargs.get("model", "")), int(kwargs.get("max_tokens", 0)), kwargs)
+
     def create(self, **kwargs: Any) -> Any:
         model = str(kwargs.get("model", ""))
         max_tokens = int(kwargs.get("max_tokens", 0))
