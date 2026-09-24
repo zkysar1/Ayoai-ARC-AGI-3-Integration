@@ -40,4 +40,4 @@ LEVELS_ASSUMED: int = 10
 (tests/fixtures/offline_frame_ls20.json); ten leaves room for longer games."""
 
 DEFAULT_ACTION_BUDGET: int = HUMAN_ACTIONS_PER_LEVEL * HUMAN_MULTIPLE * LEVELS_ASSUMED
-"""40 * 5 * 10 = 2000 actions per game."""
+"""40 * 5 * 10 = 2000 actions per game, set by g-376-05."""
