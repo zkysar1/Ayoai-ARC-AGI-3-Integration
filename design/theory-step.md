@@ -117,7 +117,8 @@ their scale) at lower cost ("2.6× better and 3× cheaper").
 ### What we copy
 
 1. The theory is a Python file with a transition function and a goal function
-   (Twin, OPINE), started from the identity stub (Twin).
+   (Twin, OPINE), started from the identity stub (Twin), with the transition written
+   as one rule per kind of object (OPINE's per-type rules).
 2. Admission by exact replay of every logged transition, evaluated twice (OPINE, Twin).
 3. The pre-reward goal filter: the win guess must be false on every logged frame (Twin).
 4. Optimism as an admission rule: a theory is admitted only if the planner can reach
@@ -138,7 +139,7 @@ their scale) at lower cost ("2.6× better and 3× cheaper").
 | The model never picks a move (OPINE's action agent is a model that "chooses the next action") | D2. |
 | Our code supplies reading aids: an object list and per-move change lists | A small model gets help reading the screen. The check stays cell-exact on the raw grid, so a segmentation mistake in the aids cannot hide a wrong theory (rb-4565: identity comes from behaviour, and colour-shared objects fool static segmentation). |
 | The win guess and its test are required by code at admission, not asked for in the prompt only | rb-10615: on a small model a correct prompt instruction went 0/3; the same rule enforced by the engine went 3/3. |
-| Hard per-level and per-game call and dollar caps | D3. The frontier systems report no such caps. |
+| Hard per-level and per-game call and dollar caps | D3. The method sections we read state no per-game call or dollar cap. |
 | No boundary refactor call at a level-up by default | Budget. The theory carries into the next level and is rewritten only if the new level contradicts it. g-376-11 measures whether this costs levels. |
 | Temperature 0 | guard-796: a reply that must pass a strict gate should decode deterministically, so identical input gives a reproducible theory. Variety comes from the counterexamples in the prompt, not from sampling. |
 
@@ -219,8 +220,9 @@ Instruction core (A), verbatim template:
 
 ```
 You are working out the rules of an unknown grid game from the screen and the
-moves tried so far. Write the rules as a Python module, including your best
-guess of what finishes a level. A planner will use your module to choose moves
+moves tried so far. Write the rules as a Python module, one small rule per
+kind of object, including your best guess of what finishes a level. A planner
+will use your module to choose moves
 that test your guess. Your guess is wrong if the level did not finish on a
 screen already seen, so it must be false on all of them. If several guesses fit
 what you have seen, choose the one that can be reached in the fewest moves.
@@ -247,6 +249,11 @@ def test_target(grid):  # optional; defaults to is_win
     """A state to reach first when the win itself is far, e.g. 'next to the exit'."""
 ```
 
+- `predict` is written as one small rule per kind of object, composed over
+  `objects(grid)` (OPINE's per-type rules): for example, one rule for what moves under
+  an action, one for what a contact changes, and everything no rule mentions stays
+  put. The per-object split is a writing aid for a small model, not a trust boundary:
+  admission (§7) still checks the whole grid cell by cell.
 - The state is the full last layer of the frame (`frame[-1]`), the same layer the ARC
   adapter segments (`adapters/arc.py:_top_layer`; rb-2558 records that two entry points
   once read different layers, so the choice is fixed here). Grids are immutable tuples,
