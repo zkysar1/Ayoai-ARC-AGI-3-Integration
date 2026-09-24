@@ -45,7 +45,7 @@ from solver_v2.seed_provider import (
     SeedProvider,
 )
 from solver_v2.streaming_adapter import SolverV2StreamingAdapter
-from structs import FrameData, GameAction, GameState, Scorecard
+from structs import FrameData, GameAction, GameState
 
 logger = logging.getLogger()
 
@@ -161,6 +161,20 @@ def send_action(
     except requests.exceptions.RequestException as e:
         logger.error(f"Request failed: {e}")
         return None
+
+
+def log_scorecard(label: str, data: Any) -> None:
+    """Log an official scorecard payload as the API returned it, minus any API key.
+
+    The API serves a scorecard only while it is open: once closed,
+    GET /api/scorecard/{card_id} answers 404 "not found" (g-376-06), so these log
+    lines are the run's only copy of the official record. The key is dropped the
+    way arc_agi's own close drops it: no credential goes into a log (guard-4525).
+    """
+    if isinstance(data, dict):
+        data = {k: v for k, v in data.items() if k != "api_key"}
+    logger.info(f"--- {label} ---")
+    logger.info(json.dumps(data, indent=2))
 
 
 def run_game_loop(
@@ -1425,7 +1439,20 @@ def main() -> int:
         )
     )
 
-    # Close scorecard
+    # Read the official scorecard while the card is still open: after the close
+    # the API answers 404 for this card_id (g-376-06).
+    # A failed read must never stop the close below.
+    try:
+        r = session.get(f"{ROOT_URL}/api/scorecard/{card_id}", timeout=10)
+        if r.status_code == 200:
+            log_scorecard("OFFICIAL SCORECARD (read before close)", r.json())
+        else:
+            logger.error(f"Failed to read scorecard: {r.status_code} - {r.text[:200]}")
+    except (requests.exceptions.RequestException, ValueError) as e:
+        logger.error(f"Failed to read scorecard before close: {e}")
+
+    # Close scorecard. Its response is logged as returned: the Scorecard model
+    # reads the pre-0.9 `cards` shape, so its dump of today's payload was all zeros.
     logger.info("Closing scorecard...")
     r = session.post(
         f"{ROOT_URL}/api/scorecard/close",
@@ -1435,11 +1462,8 @@ def main() -> int:
 
     if r.status_code == 200:
         try:
-            scorecard_data = r.json()
-            scorecard = Scorecard(**scorecard_data)
-            logger.info("--- SCORECARD REPORT ---")
-            logger.info(json.dumps(scorecard.model_dump(), indent=2))
-        except (ValueError, KeyError) as e:
+            log_scorecard("SCORECARD REPORT (close response)", r.json())
+        except ValueError as e:
             logger.error(f"Failed to parse scorecard report: {e}")
     else:
         logger.error(f"Failed to close scorecard: {r.status_code} - {r.text[:200]}")
