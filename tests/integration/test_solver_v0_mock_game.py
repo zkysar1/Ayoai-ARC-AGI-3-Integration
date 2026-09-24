@@ -11,7 +11,7 @@ when `--use-solver-v0` is active:
        -> SolverV0StreamingAdapter.choose_action  -> ACTIONn (solver-v0)
        -> action_sender(ACTIONn, ...)             -> next frame
        -> ... (N strategic ticks) ...
-       -> GAME_OVER frame                          -> loop terminates
+       -> WIN frame                                -> loop terminates
        -> SolverV0StreamingAdapter.send_delete    -> no-op
 
 No HTTP, no MockAyoaiServer, no recording fixture -- the adapter's
@@ -102,7 +102,7 @@ class _ScriptedActionSender:
 
 def test_run_game_loop_with_solver_v0_completes_full_game() -> None:
     """End-to-end: run_game_loop drives a 5-action game with
-    SolverV0StreamingAdapter as the decision source, GAME_OVER terminates
+    SolverV0StreamingAdapter as the decision source, a WIN terminates
     the loop naturally, and the recorded action stream attributes every
     non-RESET decision to solver-v0."""
 
@@ -117,14 +117,15 @@ def test_run_game_loop_with_solver_v0_completes_full_game() -> None:
     #    is appended since it has state != NOT_PLAYED).
     #  - frames 1-4 (NOT_FINISHED): each is the response to a solver-v0
     #    strategic action.
-    #  - frame 5 (GAME_OVER): terminates the loop.
+    #  - frame 5 (WIN): terminates the loop. A GAME_OVER would not: the
+    #    adapter answers it with RESET and play goes on (g-376-05).
     scripted = [
         _live_frame(score=0, guid="g-1"),
         _live_frame(score=0, guid="g-2"),
         _live_frame(score=1, guid="g-3"),
         _live_frame(score=1, guid="g-4"),
         _live_frame(score=2, guid="g-5"),
-        _live_frame(score=2, guid="g-6", state=GameState.GAME_OVER),
+        _live_frame(score=2, guid="g-6", state=GameState.WIN),
     ]
     sender = _ScriptedActionSender(scripted)
 
@@ -139,8 +140,8 @@ def test_run_game_loop_with_solver_v0_completes_full_game() -> None:
     )
 
     # The loop should have driven 5 actions (RESET + 4 strategic) before
-    # the GAME_OVER frame on action #6 broke the loop. Some implementations
-    # may also count the GAME_OVER-receiving call, so accept 5 or 6.
+    # the WIN frame on action #6 broke the loop. Some implementations
+    # may also count the WIN-receiving call, so accept 5 or 6.
     assert action_count >= 5, f"expected >=5 actions, got {action_count}"
     assert elapsed >= 0  # smoke check; cannot bound tightly in CI
 
@@ -174,7 +175,7 @@ def test_run_game_loop_with_solver_v0_completes_full_game() -> None:
     # (RESET does NOT increment tick).
     assert adapter.tick >= 1, f"tick should advance on strategic ticks, got {adapter.tick}"
     # Tick == number of strategic decisions issued. RESET is the first
-    # call; every subsequent call (until GAME_OVER) was strategic.
+    # call; every subsequent call (until the WIN) was strategic.
     assert adapter.tick == len(strategic_actions), (
         f"tick {adapter.tick} != strategic action count {len(strategic_actions)}"
     )

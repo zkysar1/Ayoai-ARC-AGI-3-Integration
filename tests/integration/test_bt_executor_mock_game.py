@@ -10,7 +10,7 @@ production uses:
        -> action_sender(RESET, ...)                  -> NOT_FINISHED frame
        -> BehaviorTreeStreamingAdapter.send_add       -> no-op
        -> choose_action -> walks the tree -> ACTION1, ACTION2, ACTION3, cycling
-       -> GAME_OVER frame                             -> loop terminates
+       -> WIN frame                                   -> loop terminates
        -> send_delete                                 -> no-op
 
 No HTTP, no MockAyoaiServer (the executor decides locally, off the tree) — the
@@ -111,7 +111,7 @@ def test_run_game_loop_executes_behavior_tree() -> None:
         _live_frame(score=0, guid="play-1"),
         _live_frame(score=1, guid="play-1"),
         _live_frame(score=1, guid="play-1"),
-        _live_frame(score=2, guid="play-1", state=GameState.GAME_OVER),
+        _live_frame(score=2, guid="play-1", state=GameState.WIN),
     ]
     sender = _ScriptedActionSender(scripted)
 

@@ -13,9 +13,10 @@ the SAME env-agnostic ``primitives.frontier_coverage.FrontierCoverage`` core tha
 on the offline simulation (and byte-identical-portable across roblox / vinheim) drives a
 REAL ARC game through the universal adapter. Each FrontierCoverage Decision exits through
 ``ArcExecutor.execute`` -> this transport's ``move`` -> a real ``POST /api/cmd/{ACTION}``.
-The episode "completes" when the live game reaches WIN / GAME_OVER, or when
-``run_arc_episode``'s ``max_ticks`` budget is spent -- either way the loop returns an
-``EpisodeReport``.
+Only a WIN ends the game; after it, further moves are no-ops. A GAME_OVER ends one
+attempt at a level: the next ``move`` sends RESET first and play goes on, as it would
+for a human (g-376-05). The loop returns an ``EpisodeReport`` once
+``run_arc_episode``'s ``max_ticks`` budget is spent.
 
 Cursor model (parity with ``SimulatedArcGrid``): ARC's simple actions are whole-grid (no
 native cursor); ACTION6 is the only click. This transport maintains a NOTIONAL coverage
@@ -38,10 +39,11 @@ live specifics live HERE, beside the offline simulation.
 from __future__ import annotations
 
 import os
-from typing import Callable, Mapping, Optional, Sequence
+from typing import Callable, Mapping, Optional, Sequence, cast
 
 import requests
 
+from action_budget import DEFAULT_ACTION_BUDGET
 from adapters.arc import EpisodeReport, GridCoord, run_arc_episode
 from adapters.base import EnvironmentAdapter
 from adapters.provision import provision
@@ -53,7 +55,8 @@ from structs import FrameData, GameAction, GameState
 # actions 1-4 move the cursor (+/- col, +/- row); 5 and 7 carry no delta (no-op echo).
 _DEFAULT_DELTAS: dict[int, GridCoord] = {1: (1, 0), 2: (-1, 0), 3: (0, 1), 4: (0, -1)}
 
-_TERMINAL_STATES = (GameState.WIN, GameState.GAME_OVER)
+# Only a WIN ends the game. A GAME_OVER ends one attempt at a level (g-376-05).
+_TERMINAL_STATES = (GameState.WIN,)
 
 # A sender realizes one ARC action against the live API: (arc_action_id, guid) -> new
 # FrameData (or None on API/transport failure). Injected so LiveArcTransport is unit-
@@ -76,9 +79,9 @@ class LiveArcTransport:
     scorecard, supplied by ``run_live_arc_episode``) and the post-RESET ``initial_frame``.
     ``move`` issues a real action and advances the notional coverage cursor; ``position``
     reports that cursor; ``world_state`` reports the live frame in the FrameData-shaped dict
-    ``ArcWorldBuilder`` reads. Once the live game reaches a terminal state, further ``move``
-    calls are no-ops (the episode is over) so a primitive that keeps deciding cannot issue
-    actions against a finished game.
+    ``ArcWorldBuilder`` reads. Once the live game is won, further ``move`` calls are no-ops,
+    so a primitive that keeps deciding cannot issue actions against a finished game. After a
+    GAME_OVER the next ``move`` sends RESET, then its own action (g-376-05).
     """
 
     def __init__(
@@ -101,13 +104,22 @@ class LiveArcTransport:
     def move(self, action: int) -> tuple[bool, str]:
         if self._frame.state in _TERMINAL_STATES:
             return (False, f"action {action}: episode already {self._frame.state.value}")
+        prefix = ""
+        if self._frame.state is GameState.GAME_OVER:
+            # A lost attempt is not the end of the game: RESET restarts the level
+            # and play goes on (g-376-05).
+            # GameAction stores the int action id as its value (structs.GameAction.__init__).
+            reset_frame = self._send(cast(int, GameAction.RESET.value), self._guid)
+            if reset_frame is None:
+                return (False, f"action {action}: RESET after GAME_OVER returned no frame")
+            self._take(reset_frame)
+            if reset_frame.state is GameState.GAME_OVER:
+                return (False, f"action {action}: still GAME_OVER after RESET")
+            prefix = "RESET after GAME_OVER; "
         new_frame = self._send(action, self._guid)
         if new_frame is None:
-            return (False, f"action {action}: live API returned no frame")
-        self._frame = new_frame
-        self._actions_sent += 1
-        if new_frame.guid:
-            self._guid = new_frame.guid
+            return (False, f"{prefix}action {action}: live API returned no frame")
+        self._take(new_frame)
 
         # Advance the notional coverage cursor (bounded), mirroring SimulatedArcGrid.move:
         # this drives FrontierCoverage's learned-displacement projection. The cursor is a
@@ -120,10 +132,17 @@ class LiveArcTransport:
                 self._cursor = (nx, ny)
                 moved = True
         reason = (
-            f"action {action}: cursor -> {self._cursor} "
+            f"{prefix}action {action}: cursor -> {self._cursor} "
             f"live_state={new_frame.state.value} live_score={new_frame.levels_completed}"
         )
         return (moved, reason)
+
+    def _take(self, new_frame: FrameData) -> None:
+        """Adopt one live API reply as the current frame."""
+        self._frame = new_frame
+        self._actions_sent += 1
+        if new_frame.guid:
+            self._guid = new_frame.guid
 
     def position(self) -> GridCoord:
         return self._cursor
@@ -203,7 +222,7 @@ def run_live_arc_episode(
     game_id: str,
     *,
     tags: Optional[Sequence[str]] = None,
-    max_ticks: int = 64,
+    max_ticks: int = DEFAULT_ACTION_BUDGET,
     actions: Optional[Sequence[int]] = None,
     session: Optional[requests.Session] = None,
     root_url: Optional[str] = None,
@@ -291,7 +310,12 @@ def _main() -> int:
     )
     parser.add_argument("--game", type=str, default=None, help="ARC game_id to play (e.g. ls20-...).")
     parser.add_argument("--list", action="store_true", help="List available game_ids and exit.")
-    parser.add_argument("--max-ticks", type=int, default=64, help="Exploration tick budget (default 64).")
+    parser.add_argument(
+        "--max-ticks",
+        type=int,
+        default=DEFAULT_ACTION_BUDGET,
+        help=f"Tick budget, about one action per tick (default {DEFAULT_ACTION_BUDGET}, action_budget.py).",
+    )
     parser.add_argument(
         "--exam",
         action="store_true",

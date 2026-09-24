@@ -78,6 +78,10 @@ from typing import Any, Callable, Optional
 
 from arcengine import FrameData, GameAction, GameState
 
+# The repo root is on sys.path wherever this agent runs (offline_run.py,
+# analysis/), so the shared action budget resolves (g-376-05).
+from action_budget import DEFAULT_ACTION_BUDGET
+
 # When run inside the ARC-AGI-3-Agents framework (locally or on Kaggle)
 # the `agents` package is on sys.path, so this import resolves.
 from agents.agent import Agent
@@ -117,8 +121,8 @@ _INJECT_EVERY: int = 6       # during a stall, 1-in-N actions becomes a click
 # then CLEAR the agent's learned state (so the click run is independent of the
 # movement run) and run CLICK-mode for the remainder. Feasibility (measured
 # g-315-345): ar25 completes via movement @568, cn04 via click @363, so
-# MAX_ACTIONS must be >= ~600 + ~363; the module default MAX_ACTIONS stays 600
-# and _SELF_PARTITION=False keeps the baseline BYTE-IDENTICAL. The submittable
+# MAX_ACTIONS must be >= ~600 + ~363; the module default MAX_ACTIONS was 600
+# (2000 since g-376-05) and _SELF_PARTITION=False keeps the baseline BYTE-IDENTICAL. The submittable
 # config would set _SELF_PARTITION=True + MAX_ACTIONS~1000.
 #
 # SHELVED (g-315-346, 2026-07-12): the flag STAYS OFF. Budget investigation
@@ -481,7 +485,8 @@ class MyAgent(Agent):
     # kernel limit with ~1000x margin. 600 captures lp85+ar25 first-level
     # completions (0 at 400) -> aggregate 0.4683772 -> 0.4688472, scoring-safe
     # (monotonic: no public game regressed). Extends the private-game insurance.
-    MAX_ACTIONS = 600
+    # g-376-05: the one budget every entry point shares (action_budget.py, 2000).
+    MAX_ACTIONS = DEFAULT_ACTION_BUDGET
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)

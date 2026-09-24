@@ -227,7 +227,7 @@ def test_update_fires_per_tick_through_choose_action(mock_client):
         _real_frame(state=GameState.NOT_FINISHED, score=0, guid="g-0"),
         _real_frame(state=GameState.NOT_FINISHED, score=2, guid="g-1"),
         _real_frame(state=GameState.NOT_FINISHED, score=4, guid="g-2"),
-        _real_frame(state=GameState.GAME_OVER, score=4, guid="g-3"),
+        _real_frame(state=GameState.WIN, score=4, guid="g-3"),
     ]
     sender = MagicMock(side_effect=frames_to_return)
 
@@ -235,5 +235,46 @@ def test_update_fires_per_tick_through_choose_action(mock_client):
 
     # 4 frames seen in the loop: the initial NOT_PLAYED + the 3 NOT_FINISHED.
     # choose_action fires on each non-terminal: NOT_PLAYED, NOT_FINISHED ×3 = 4.
-    # (GAME_OVER terminal frame triggers the break before choose_action.)
+    # (the WIN frame ends the game before choose_action.)
     assert mock_client.choose_action.call_count == 4
+
+
+# ---------- GAME_OVER is not the end of the game (g-376-05) ---------- #
+
+
+def _contract_decision(frame: FrameData) -> AyoaiDecision:
+    """Every decision client answers NOT_PLAYED / GAME_OVER with a client-side RESET."""
+    if frame.state in (GameState.NOT_PLAYED, GameState.GAME_OVER):
+        return AyoaiDecision(
+            action=GameAction.RESET, x=None, y=None, reasoning=None,
+            provenance={"decided_by": "client"},
+        )
+    return _decision(GameAction.ACTION1)
+
+
+def test_game_over_is_answered_with_reset_and_play_continues(mock_client):
+    """A lost attempt restarts the level; the loop plays on until the WIN."""
+    mock_client.choose_action.side_effect = _contract_decision
+    sender = MagicMock(side_effect=[
+        _real_frame(state=GameState.NOT_FINISHED, guid="g-0"),
+        _real_frame(state=GameState.GAME_OVER, guid="g-1"),
+        _real_frame(state=GameState.NOT_FINISHED, guid="g-2"),
+        _real_frame(state=GameState.WIN, score=1, guid="g-3"),
+    ])
+
+    actions, _ = run_game_loop(mock_client, sender, FrameData(score=0), max_actions=10)
+
+    sent = [c.args[0] for c in sender.call_args_list]
+    assert sent == [GameAction.RESET, GameAction.ACTION1, GameAction.RESET, GameAction.ACTION1]
+    assert actions == 4
+    mock_client.send_delete.assert_called_once()
+
+
+def test_the_default_budget_is_the_shared_one():
+    """No stray cap: a default run gets action_budget.DEFAULT_ACTION_BUDGET, not 80."""
+    import inspect
+
+    from action_budget import DEFAULT_ACTION_BUDGET
+
+    default = inspect.signature(run_game_loop).parameters["max_actions"].default
+    assert default == DEFAULT_ACTION_BUDGET == 2000

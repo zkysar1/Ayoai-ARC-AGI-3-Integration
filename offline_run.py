@@ -31,6 +31,7 @@ from arc_agi import OperationMode  # noqa: E402
 from arcengine import GameAction, GameState  # noqa: E402
 from my_agent import MyAgent  # type: ignore[import-not-found]  # noqa: E402
 
+from action_budget import DEFAULT_ACTION_BUDGET  # noqa: E402
 from house_rules import heldout_refusal, make_game  # noqa: E402
 
 SIMPLE_ACTIONS = [a for a in GameAction if a.value not in (0, 6)]
@@ -52,7 +53,7 @@ def engine_fps(arc: arc_agi.Arcade, game: str, steps: int, exam: bool) -> float:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--game", required=True, help="short game id, e.g. ls20")
-    parser.add_argument("--max-actions", type=int, default=400)
+    parser.add_argument("--max-actions", type=int, default=DEFAULT_ACTION_BUDGET)
     parser.add_argument("--engine-steps", type=int, default=2000)
     parser.add_argument("--frame-out", type=Path, default=None)
     parser.add_argument(

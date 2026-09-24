@@ -12,7 +12,7 @@ production uses:
        -> SolverV2StreamingAdapter.choose_action  -> seeds episode 1, ACTIONn
        -> action_sender(ACTIONn, ...)             -> next frame
        -> ... (N strategic ticks, same EpisodePrior) ...
-       -> GAME_OVER frame                          -> loop terminates
+       -> WIN frame                                -> loop terminates
        -> SolverV2StreamingAdapter.send_delete    -> no-op
 
 No HTTP, no MockAyoaiServer, no recording fixture -- the adapter's contract is
@@ -101,7 +101,7 @@ def test_run_game_loop_with_solver_v2_completes_full_game() -> None:
         _live_frame(score=1, guid="play-1"),
         _live_frame(score=1, guid="play-1"),
         _live_frame(score=2, guid="play-1"),
-        _live_frame(score=2, guid="play-1", state=GameState.GAME_OVER),
+        _live_frame(score=2, guid="play-1", state=GameState.WIN),
     ]
     sender = _ScriptedActionSender(scripted)
 
@@ -283,3 +283,38 @@ def test_run_game_loop_with_solver_v2_failing_seed_still_drives_episode() -> Non
     assert adapter.episode_id == 1
     assert adapter.episode_prior is not None
     assert adapter.episode_prior.is_trusted() is False
+
+
+def test_run_game_loop_with_solver_v2_resets_after_game_over() -> None:
+    """A GAME_OVER ends one attempt, not the game (g-376-05): the adapter answers
+    it with a client-side RESET, and strategic play resumes until the WIN."""
+    adapter = SolverV2StreamingAdapter(
+        ayo_server_key="card-test", arc_game_id="ls20-test"
+    )
+    scripted = [
+        _live_frame(score=0, guid="play-1"),
+        _live_frame(score=0, guid="play-1"),
+        _live_frame(score=0, guid="play-1", state=GameState.GAME_OVER),
+        _live_frame(score=0, guid="play-1"),
+        _live_frame(score=0, guid="play-1"),
+        _live_frame(score=1, guid="play-1", state=GameState.WIN),
+    ]
+    sender = _ScriptedActionSender(scripted)
+
+    run_game_loop(
+        streaming_client=adapter,
+        action_sender=sender,
+        initial_frame=_initial_not_played(),
+        recorder=None,
+        max_actions=20,
+        game_id="ls20-test",
+        log=logging.getLogger("test"),
+    )
+
+    sent = [c[0] for c in sender.calls]
+    # Every scripted frame was consumed: play went past the GAME_OVER to the WIN.
+    assert len(sent) == len(scripted)
+    assert sent[0] == GameAction.RESET  # answer to NOT_PLAYED
+    assert sent[3] == GameAction.RESET  # answer to the GAME_OVER frame
+    # Four strategic decisions: two before the GAME_OVER, two after it.
+    assert adapter.tick == 4

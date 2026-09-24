@@ -64,6 +64,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Mapping, Optional, Sequence, cast
 
+from action_budget import DEFAULT_ACTION_BUDGET
 from adapters.base import (
     Decision,
     EnvironmentAdapter,
@@ -433,12 +434,15 @@ def run_arc_episode(
     proximity: ArcProximityModel,
     executor: ArcExecutor,
     *,
-    max_ticks: int = 64,
+    max_ticks: int = DEFAULT_ACTION_BUDGET,
     calibrate: bool = True,
 ) -> EpisodeReport:
     """Run the ARC grid exploration episode via the shared env-agnostic driver
     (adapters/episode.run_exploration_episode), supplying arc's cursor-locating
     seam ``_find_cursor_unit``.
+
+    ``max_ticks`` defaults to the shared ARC budget (action_budget.py, g-376-05).
+    The env-agnostic driver keeps its own default of 64 for the other environments.
 
     The drive loop itself is now the SHARED one (g-355-72 extraction of the loop
     that was byte-identical across arc / roblox / vinheim / football); arc's only

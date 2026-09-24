@@ -17,6 +17,7 @@ from typing import Any, Callable
 import requests
 from pydantic import ValidationError
 
+from action_budget import DEFAULT_ACTION_BUDGET
 from ayoai_client import (
     AyoaiSessionError,
     AyoaiSessionInfo,
@@ -170,7 +171,7 @@ def run_game_loop(
     initial_frame: FrameData,
     *,
     recorder: Recorder | None = None,
-    max_actions: int = 80,
+    max_actions: int = DEFAULT_ACTION_BUDGET,
     game_id: str | None = None,
     log: logging.Logger | None = None,
 ) -> tuple[int, float]:
@@ -185,8 +186,8 @@ def run_game_loop(
         grid-env unit exists.
       - UPDATE fires per tick via streaming_client.choose_action().
       - DELETE fires once in the finally-block, ONLY if ADD was sent.
-        Covers KeyboardInterrupt, normal game-end (WIN/GAME_OVER),
-        MAX_ACTIONS exhaustion, choose_action / action_sender failures,
+        Covers KeyboardInterrupt, normal game-end (WIN), action-budget
+        exhaustion, choose_action / action_sender failures,
         and unexpected exceptions.
 
     Args:
@@ -197,7 +198,8 @@ def run_game_loop(
         initial_frame: the starting frame (typically FrameData(levels_completed=0)
             with state=NOT_PLAYED).
         recorder: optional Recorder for per-tick JSONL recording.
-        max_actions: action count cap (default 80; matches MAX_ACTIONS).
+        max_actions: the game's action budget, RESETs included (default
+            action_budget.DEFAULT_ACTION_BUDGET).
         game_id: optional game identifier for log line context.
         log: optional logger; defaults to the module logger.
 
@@ -216,15 +218,17 @@ def run_game_loop(
         while action_counter <= max_actions:
             current_frame = frames[-1]
 
-            # Game-end check
-            if current_frame.state in [GameState.WIN, GameState.GAME_OVER]:
+            # Game-end check. Only a WIN ends the game. A GAME_OVER ends one
+            # attempt at a level: every decision client answers it with a
+            # client-side RESET, and play goes on as it would for a human (g-376-05).
+            if current_frame.state == GameState.WIN:
                 log.info(f"Game ended with state: {current_frame.state}")
                 break
 
             # ADD wire-in (g-315-22): send ADD once for the first real frame.
             # initial_frame has state=NOT_PLAYED. After the first
             # action_sender(RESET) returns a real ARC frame, state becomes
-            # NOT_FINISHED (or WIN/GAME_OVER, handled above). ADD must
+            # NOT_FINISHED (or WIN, handled above). ADD must
             # precede the first UPDATE so AyoAI registers the grid-env unit.
             if not add_sent and current_frame.state != GameState.NOT_PLAYED:
                 try:
@@ -533,12 +537,13 @@ def main() -> int:
     parser.add_argument(
         "--max-actions",
         type=int,
-        default=80,
+        default=DEFAULT_ACTION_BUDGET,
         help=(
-            "Client-side action cap per play (default 80, matching the legacy "
-            "MAX_ACTIONS constant -- byte-identical when omitted). Raise it for a "
-            "SUSTAINED single-long-episode litmus so the solver-v2 "
-            "StateGraphExplorer can explore more of the masked-state frontier "
+            "Action budget per play, RESETs included (default "
+            f"{DEFAULT_ACTION_BUDGET}: action_budget.py derives it from human "
+            "action counts; the old 80 was a loop guard, not an ARC limit, "
+            "g-376-05). A long budget lets the solver-v2 "
+            "StateGraphExplorer explore more of the masked-state frontier "
             "within ONE episode: ls20 has no in-play RESET until a score unlocks "
             "a sublevel, so cross-episode persistence only engages AFTER the "
             "first score -- reaching the first score needs a longer single "
@@ -557,8 +562,9 @@ def main() -> int:
             "_click_state_graph_cache persists across episodes, so re-RESETing into "
             "the SAME adapter EXERCISES the cross-episode masked-state graph for "
             "SCORE-0 games -- the harness g-315-265 found missing (run_game_loop "
-            "plays ONE game/process and breaks on WIN/GAME_OVER, so the in-play "
-            "RESET cache-reuse path never fires at score 0). Each episode does its "
+            "then stopped at the first GAME_OVER, so the in-play RESET "
+            "cache-reuse path never fired at score 0; since g-376-05 it RESETs "
+            "and plays on within one episode). Each episode does its "
             "own ADD/play/DELETE; the scorecard stays open across all N. Per-episode "
             "cross-episode graph growth (node_count/live/inert) + the reward-lock "
             "state are logged so coverage accumulation across episodes is "
@@ -1318,10 +1324,8 @@ def main() -> int:
             })
 
     # Game loop variables
-    # CLI-overridable (g-315-253): defaults to 80 (byte-identical to the prior
-    # literal when --max-actions is omitted). Raise it for a SUSTAINED
-    # single-long-episode litmus where the per-episode action cap, not the
-    # graph reset, is the binding constraint on reaching the first score.
+    # CLI-overridable (g-315-253). Defaults to action_budget.DEFAULT_ACTION_BUDGET
+    # (g-376-05); a lower --max-actions is for short smoke runs.
     MAX_ACTIONS = args.max_actions
 
     logger.info(f"Starting game loop for: {args.game}")

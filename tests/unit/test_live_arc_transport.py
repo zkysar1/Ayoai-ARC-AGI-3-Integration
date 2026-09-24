@@ -77,13 +77,25 @@ def test_live_transport_moves_notional_cursor() -> None:
     assert t.position() == (1, 0)
 
 
-def test_live_transport_terminal_state_blocks_moves() -> None:
+def test_live_transport_won_game_blocks_moves() -> None:
+    sender = _ScriptedSender()
+    t = LiveArcTransport(action_sender=sender, initial_frame=_frame(state=GameState.WIN))
+    moved, reason = t.move(1)
+    assert moved is False
+    assert "WIN" in reason
+    assert sender.calls == []  # no action issued against a finished game
+
+
+def test_live_transport_resets_after_game_over_and_plays_on() -> None:
+    """A GAME_OVER ends one attempt, not the game: RESET (id 0), then the action (g-376-05)."""
     sender = _ScriptedSender()
     t = LiveArcTransport(action_sender=sender, initial_frame=_frame(state=GameState.GAME_OVER))
     moved, reason = t.move(1)
-    assert moved is False
-    assert "GAME_OVER" in reason
-    assert sender.calls == []  # no action issued against a finished game
+    assert [a for a, _ in sender.calls] == [0, 1]
+    assert moved is True and t.position() == (1, 0)
+    assert reason.startswith("RESET after GAME_OVER; ")
+    assert t.state == GameState.NOT_FINISHED
+    assert t.actions_sent == 2
 
 
 def test_run_arc_episode_drives_live_transport_offline() -> None:
