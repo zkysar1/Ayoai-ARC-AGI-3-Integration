@@ -49,6 +49,7 @@ from arcengine import GameState as EGameState  # noqa: E402
 # learner-subprocess spawn can re-import ``solver_v2.click_prior`` by module
 # name in the child (same discipline as click_prior_validation_g315367.py).
 sys.path.insert(0, str(REPO))
+from house_rules import make_game  # noqa: E402  (house rule 4)
 from solver_v2.streaming_adapter import SolverV2StreamingAdapter  # noqa: E402
 from structs import (  # noqa: E402
     FrameData as RFrameData,
@@ -141,7 +142,7 @@ def run_arm(
     for i, einfo in enumerate(envs, 1):
         full_gid = einfo.game_id
         short = full_gid.split("-")[0]
-        env = arc.make(short)
+        env = make_game(arc, short)
         if env is None:
             per_game[short] = {"error": "env-create-failed"}
             continue

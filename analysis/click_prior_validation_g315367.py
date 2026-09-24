@@ -50,6 +50,7 @@ from arcengine import GameAction, GameState  # noqa: E402
 # silently floor the prior arm. solver_v2/__init__ is docstring-only, and
 # click_prior/action6_explore are pure-stdlib imports, so this is dep-light.
 sys.path.insert(0, str(REPO))
+from house_rules import make_game  # noqa: E402  (house rule 4)
 from solver_v2 import action6_explore, click_prior  # noqa: E402
 
 N_ACTIONS = int(sys.argv[1]) if len(sys.argv) > 1 else 2500
@@ -180,7 +181,7 @@ def main():
         results[gid] = {}
         for mode in ("random", "sweep", "prior"):
             t0 = time.time()
-            env = arc.make(gid)
+            env = make_game(arc, gid)
             agent = ClickArm(
                 card_id="local-validate",
                 game_id=gid,

@@ -30,6 +30,8 @@ from arc_agi import OperationMode  # noqa: E402
 sys.path.insert(0, str(KIT / "kaggle_salvage"))
 from my_agent import MyAgent  # noqa: E402
 
+from house_rules import make_game  # noqa: E402  (house rule 4)
+
 MAX_STEPS = 200
 
 
@@ -43,7 +45,7 @@ def main() -> None:
     t0 = time.time()
     for i, einfo in enumerate(envs, 1):
         short = einfo.game_id.split("-")[0]
-        env = arc.make(short)
+        env = make_game(arc, short)
         if env is None:
             print(f"[{i}/{len(envs)}] {short}: env-create-failed", flush=True)
             continue

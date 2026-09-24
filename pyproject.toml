@@ -64,6 +64,13 @@ exclude = [
     # Excluding them keeps strict focused on production solver/integration code
     # instead of taxing every future diagnostic probe. (g-315-296)
     "analysis",
+    # environment_files/ is the game source; house rule 1 says no tool of ours
+    # reads it (HOUSE_RULES.md). vendor/ is the third-party agent kit; its own
+    # main.py collided with ours as a duplicate module "main", which stopped
+    # `mypy .` before it checked any file from 2026-08-04 (8c18bf7) until this
+    # exclude (g-376-02). tests/test_house_rules.py asserts both stay listed.
+    "environment_files",
+    "vendor",
 ]
 plugins = []
 
@@ -72,6 +79,72 @@ plugins = []
 [[tool.mypy.overrides]]
 module = ["anthropic", "anthropic.*"]
 ignore_missing_imports = true
+
+# ── strict baseline (g-376-02) ─────────────────────────────────────────────
+# `mypy .` checked nothing from 2026-08-04 until the vendor/ exclude above. Its
+# first run after that exclude (mypy 1.17.1, on e874c33 plus the two excludes)
+# found 75 errors in 14 modules; analysis/ modules appear because main.py
+# imports them. Strict stays on: each module below skips only the error codes
+# it already failed on (counts in the comment), every other code is checked,
+# and every other module gets full strict, so `mypy .` is a working gate again.
+# Delete a module's entry once its errors are fixed.
+[[tool.mypy.overrides]]
+module = "primitives.world_model_synthesizer"
+disable_error_code = ["type-arg", "no-untyped-def", "no-untyped-call", "arg-type", "index"]  # 12, 9, 3, 2, 2
+
+[[tool.mypy.overrides]]
+module = "analysis.win_condition_llm"
+disable_error_code = ["union-attr", "arg-type", "return-value"]  # 15, 3, 1
+
+[[tool.mypy.overrides]]
+module = "kaggle_salvage.my_agent"
+disable_error_code = ["no-untyped-call", "union-attr", "attr-defined", "import-not-found", "misc"]  # 2, 2, 1, 1, 1
+
+[[tool.mypy.overrides]]
+module = "solver_v2.frame_coordinate_state"
+disable_error_code = ["type-arg", "operator", "return-value"]  # 3, 1, 1
+
+[[tool.mypy.overrides]]
+module = "primitives.ontology_uncertainty"
+disable_error_code = ["type-arg"]  # 5
+
+[[tool.mypy.overrides]]
+module = "analysis.win_condition_heuristic"
+disable_error_code = ["unused-ignore"]  # 3
+
+[[tool.mypy.overrides]]
+module = "analysis.predicate_compiler"
+disable_error_code = ["unused-ignore"]  # 1
+
+[[tool.mypy.overrides]]
+module = ["analysis.trajectory_summarizer", "analysis.win_condition_extractor"]
+disable_error_code = ["arg-type"]  # 1, 1
+
+[[tool.mypy.overrides]]
+module = "solver_v2.streaming_adapter"
+disable_error_code = ["assignment"]  # 1
+
+[[tool.mypy.overrides]]
+module = "ayoai_client"
+disable_error_code = ["return-value"]  # 1
+
+[[tool.mypy.overrides]]
+module = "adapters.live_arc_transport"
+disable_error_code = ["attr-defined"]  # 1
+
+[[tool.mypy.overrides]]
+module = "adapters.football"
+disable_error_code = ["redundant-cast"]  # 1
+
+[[tool.mypy.overrides]]
+module = "conftest"
+disable_error_code = ["no-untyped-def"]  # 1
+
+[tool.ruff]
+# Same two directories as the mypy exclude above, for the same reasons: ruff
+# printed findings with source snippets from game files (house rule 1), and
+# vendor/ is not our code. tests/test_house_rules.py asserts both stay listed.
+extend-exclude = ["environment_files", "vendor"]
 
 [tool.ruff.lint]
 extend-select = ["I"]

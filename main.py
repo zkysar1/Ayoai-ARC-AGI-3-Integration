@@ -29,6 +29,7 @@ from ayoai_streaming_client import (
     AyoaiStreamingError,
     StreamingDecisionClient,
 )
+from house_rules import heldout_refusal
 from random_streaming_adapter import RandomStreamingAdapter
 from recorder import Recorder
 from solver_v0.streaming_adapter import SolverV0StreamingAdapter
@@ -83,6 +84,7 @@ EXIT_OK = 0
 EXIT_ARC_UPSTREAM = 2       # ARC-AGI-3 side: connect / game list / scorecard
 EXIT_AYOAI_SESSION_OPEN = 3  # AyoAI Collect cold-start or readiness poll failed
 EXIT_AYOAI_STREAMING = 4     # AyoAI session opened but streaming setup failed
+EXIT_HELDOUT_REFUSED = 5     # sealed held-out exam game without --exam (house rule 4)
 
 
 def choose_random_action(frame: FrameData) -> GameAction:
@@ -418,6 +420,16 @@ def main() -> int:
         "--record",
         action="store_true",
         help="Record gameplay to JSONL file",
+    )
+    parser.add_argument(
+        "--exam",
+        action="store_true",
+        help=(
+            "Allow a sealed held-out exam game (eval/heldout.json). Without "
+            "this flag such a game is refused with exit code 5 before anything "
+            "touches the network (house rule 4, HOUSE_RULES.md). Only the exam "
+            "run passes it."
+        ),
     )
     parser.add_argument(
         "--mock-url",
@@ -775,6 +787,13 @@ def main() -> int:
             "StateGraphExplorer is only built on the solver-v2 untrusted-"
             "movement route); ignoring the flag this run."
         )
+
+    # House rule 4: refuse a sealed held-out game before any network call, so
+    # a refused run opens no scorecard and sends no action (g-376-02).
+    refusal = heldout_refusal(args.game, args.exam)
+    if refusal is not None:
+        logger.error(refusal)
+        return EXIT_HELDOUT_REFUSED
 
     logger.info(f"Connecting to API at: {ROOT_URL}")
 

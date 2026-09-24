@@ -89,7 +89,8 @@ uv run main.py --game test
 - `GameAction.ACTION6` is the only complex action (requires x, y coordinates 0-63).
 - `reasoning` field on `ActionInput` is capped at 16KB and must be JSON-serializable.
 - Game loop caps at 80 actions per run (`MAX_ACTIONS`).
-- `mypy` strict mode is enabled but excludes `tests/`.
+- `mypy` strict mode is enabled. It excludes `tests/`, `analysis/`, `environment_files/` and `vendor/`, and `pyproject.toml` lists a per-module baseline of errors that predate 2026-09-24 (g-376-02).
+- House rules: `HOUSE_RULES.md`. `tests/test_house_rules.py` checks the ones code can check. A held-out game needs `--exam`, and only the exam run passes it. Create a local game with `house_rules.make_game(arc, game)`, never `arc.make()`.
 
 ## Environment Variables
 

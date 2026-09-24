@@ -50,6 +50,7 @@ from arcengine import GameAction as EGameAction  # noqa: E402
 from arcengine import GameState as EGameState  # noqa: E402
 
 sys.path.insert(0, str(REPO))
+from house_rules import make_game  # noqa: E402  (house rule 4)
 from solver_v2.streaming_adapter import SolverV2StreamingAdapter  # noqa: E402
 from structs import FrameData as RFrameData  # noqa: E402
 from structs import GameAction as RGameAction  # noqa: E402
@@ -71,7 +72,7 @@ def probe_game(short: str) -> dict[str, object]:
         operation_mode=OperationMode.NORMAL,
         environments_dir=str(KIT / "environment_files"),
     )
-    env = arc.make(short)
+    env = make_game(arc, short)
     if env is None:
         return {"game": short, "error": "env-create-failed"}
     adapter = SolverV2StreamingAdapter(

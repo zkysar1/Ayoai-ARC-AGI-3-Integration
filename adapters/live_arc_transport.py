@@ -45,6 +45,7 @@ import requests
 from adapters.arc import EpisodeReport, GridCoord, run_arc_episode
 from adapters.base import EnvironmentAdapter
 from adapters.provision import provision
+from house_rules import HeldOutRefused, refuse_heldout
 from structs import FrameData, GameAction, GameState
 
 # The notional-cursor delta convention, identical to SimulatedArcGrid._DEFAULT_DELTAS so the
@@ -206,6 +207,7 @@ def run_live_arc_episode(
     actions: Optional[Sequence[int]] = None,
     session: Optional[requests.Session] = None,
     root_url: Optional[str] = None,
+    exam: bool = False,
 ) -> tuple[EpisodeReport, int, GameState, str]:
     """Run ONE full agent learning loop against a LIVE ARC-AGI-3 game (g-331-03).
 
@@ -217,7 +219,11 @@ def run_live_arc_episode(
     Returns ``(report, final_score, final_state, card_id)``. ``report`` is the EpisodeReport
     proving the loop completed (decisions / results / cells covered); ``final_score`` is the
     live ARC score (0 expected on cold-start, recognition-bound).
+
+    Raises HeldOutRefused, before any network call, for a sealed held-out exam
+    game unless ``exam`` is true (house rule 4, HOUSE_RULES.md).
     """
+    refuse_heldout(game_id, exam)
     owns_session = session is None
     sess = session if session is not None else requests.Session()
     if owns_session:
@@ -286,6 +292,11 @@ def _main() -> int:
     parser.add_argument("--game", type=str, default=None, help="ARC game_id to play (e.g. ls20-...).")
     parser.add_argument("--list", action="store_true", help="List available game_ids and exit.")
     parser.add_argument("--max-ticks", type=int, default=64, help="Exploration tick budget (default 64).")
+    parser.add_argument(
+        "--exam",
+        action="store_true",
+        help="Allow a sealed held-out exam game (house rule 4); exam run only. Without it such a game exits 5.",
+    )
     args = parser.parse_args()
 
     root = _root_url()
@@ -310,9 +321,16 @@ def _main() -> int:
         print(f"game {game_id!r} not in available games")
         return 2
 
+    try:
+        refuse_heldout(game_id, args.exam)
+    except HeldOutRefused as refused:
+        print(refused)
+        sess.close()
+        return 5
+
     print(f"playing live episode: {game_id} (max_ticks={args.max_ticks})")
     report, score, state, card_id = run_live_arc_episode(
-        game_id, max_ticks=args.max_ticks, session=sess, root_url=root
+        game_id, max_ticks=args.max_ticks, session=sess, root_url=root, exam=args.exam
     )
     summary = {
         "game_id": game_id,

@@ -24,6 +24,7 @@ from pathlib import Path
 KIT = Path(__file__).resolve().parents[1]  # repo-local since g-315-529 (Kaggle clone dependency cut)
 sys.path.insert(0, str(KIT))
 sys.path.insert(0, str(KIT / "vendor" / "ARC-AGI-3-Agents"))
+from house_rules import make_game  # noqa: E402  (house rule 4)
 
 import arc_agi  # noqa: E402
 from arc_agi import OperationMode  # noqa: E402
@@ -103,7 +104,7 @@ def main():
     out = {}
     t0 = time.time()
     for i, gid in enumerate(sorted(game_ids), 1):
-        env = arc.make(gid)
+        env = make_game(arc, gid)
         if env is None:
             out[gid] = {"error": "make failed"}
             continue

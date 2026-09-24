@@ -34,6 +34,8 @@ from arc_agi import OperationMode  # noqa: E402
 sys.path.insert(0, str(KIT / "kaggle_salvage"))
 from my_agent import MyAgent  # noqa: E402
 
+from house_rules import make_game  # noqa: E402  (house rule 4)
+
 MAX_STEPS = 200
 
 
@@ -68,7 +70,7 @@ def main() -> None:
         operation_mode=OperationMode.NORMAL,
         environments_dir=str(KIT / "environment_files"),
     )
-    env = arc.make(short)
+    env = make_game(arc, short)
     if env is None:
         raise SystemExit(f"env-create-failed: {short}")
     agent = TracingAgent(

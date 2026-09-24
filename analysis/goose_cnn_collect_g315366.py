@@ -20,6 +20,7 @@ import numpy as np
 KIT = Path(__file__).resolve().parents[1]  # repo-local since g-315-529 (Kaggle clone dependency cut)
 sys.path.insert(0, str(KIT))
 sys.path.insert(0, str(KIT / "vendor" / "ARC-AGI-3-Agents"))
+from house_rules import make_game  # noqa: E402  (house rule 4)
 
 import arc_agi  # noqa: E402
 from arc_agi import OperationMode  # noqa: E402
@@ -86,7 +87,7 @@ def main():
                          environments_dir=str(KIT / "environment_files"))
     for gid in GAMES:
         t0 = time.time()
-        env = arc.make(gid)
+        env = make_game(arc, gid)
         agent = Collector(card_id="local-collect", game_id=gid,
                           agent_name=f"goosecollect.{gid}",
                           ROOT_URL="http://localhost", record=False,

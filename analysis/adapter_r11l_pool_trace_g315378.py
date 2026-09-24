@@ -26,6 +26,7 @@ from arcengine import GameState as EGameState  # noqa: E402
 
 sys.path.insert(0, str(REPO))
 import solver_v2.executor as EX  # noqa: E402
+from house_rules import make_game  # noqa: E402  (house rule 4)
 from solver_v0.policy import detect_cursor_and_targets  # noqa: E402
 from solver_v2.streaming_adapter import SolverV2StreamingAdapter  # noqa: E402
 from structs import FrameData as RFrameData  # noqa: E402
@@ -58,7 +59,7 @@ def main() -> None:
         operation_mode=OperationMode.NORMAL,
         environments_dir=str(KIT / "environment_files"),
     )
-    env = arc.make("r11l")
+    env = make_game(arc, "r11l")
     adapter = SolverV2StreamingAdapter(
         arc_game_id="r11l-pool378",
         coverage_seeds=True, target_sweep=True, mixed_movement=True,

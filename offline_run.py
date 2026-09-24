@@ -7,7 +7,8 @@ game and prints one JSON summary line: end-to-end FPS (solver included), raw
 engine FPS, the end state and levels_completed. --frame-out saves the last raw
 frame as JSON, so the frame schema is on record.
 
-Held-out exam games (eval/heldout.json) are refused: house rule 4.
+Held-out exam games (eval/heldout.json) are refused unless --exam is passed:
+house rule 4.
 
     .venv/bin/python offline_run.py --game ls20
 """
@@ -30,17 +31,14 @@ from arc_agi import OperationMode  # noqa: E402
 from arcengine import GameAction, GameState  # noqa: E402
 from my_agent import MyAgent  # type: ignore[import-not-found]  # noqa: E402
 
+from house_rules import heldout_refusal, make_game  # noqa: E402
+
 SIMPLE_ACTIONS = [a for a in GameAction if a.value not in (0, 6)]
 
 
-def heldout_ids() -> set[str]:
-    data = json.loads((ROOT / "eval" / "heldout.json").read_text())
-    return set(data["heldout"])
-
-
-def engine_fps(arc: arc_agi.Arcade, game: str, steps: int) -> float:
+def engine_fps(arc: arc_agi.Arcade, game: str, steps: int, exam: bool) -> float:
     """Step the bare engine with a fixed action cycle; RESET on GAME_OVER."""
-    env = arc.make(game)
+    env = make_game(arc, game, exam)
     if env is None:
         raise SystemExit(f"env-create-failed: {game}")
     t0 = time.perf_counter()
@@ -57,18 +55,22 @@ def main() -> None:
     parser.add_argument("--max-actions", type=int, default=400)
     parser.add_argument("--engine-steps", type=int, default=2000)
     parser.add_argument("--frame-out", type=Path, default=None)
+    parser.add_argument(
+        "--exam",
+        action="store_true",
+        help="allow a sealed held-out exam game (house rule 4); exam run only",
+    )
     args = parser.parse_args()
 
-    if args.game.split("-")[0] in heldout_ids():
-        raise SystemExit(
-            f"refused: {args.game} is a sealed held-out exam game (house rule 4)"
-        )
+    refusal = heldout_refusal(args.game, args.exam)
+    if refusal is not None:
+        raise SystemExit(refusal)
 
     arc = arc_agi.Arcade(
         operation_mode=OperationMode.OFFLINE,
         environments_dir=str(ROOT / "environment_files"),
     )
-    env = arc.make(args.game)
+    env = make_game(arc, args.game, args.exam)
     if env is None:
         raise SystemExit(f"env-create-failed: {args.game}")
     MyAgent.MAX_ACTIONS = args.max_actions
@@ -98,7 +100,7 @@ def main() -> None:
                 "actions": agent.action_counter,
                 "seconds": round(seconds, 3),
                 "fps_end_to_end": round(agent.action_counter / seconds, 1),
-                "engine_fps": round(engine_fps(arc, args.game, args.engine_steps), 1),
+                "engine_fps": round(engine_fps(arc, args.game, args.engine_steps, args.exam), 1),
                 "state": last.state.name,
                 "levels_completed": last.levels_completed,
                 "win_levels": last.win_levels,
