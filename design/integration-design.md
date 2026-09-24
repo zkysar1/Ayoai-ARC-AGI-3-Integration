@@ -103,6 +103,10 @@ open scorecard → loop:
 `MAX_ACTIONS = 80` per loop. The loop is single-threaded; one action per HTTP
 round-trip; observed FPS in `logs.log` is ~2–7 actions/s (ARC-API-bound).
 
+Since g-376-05 (2026-09-24) the loop breaks only on WIN: a GAME_OVER is answered
+with RESET and play goes on. The budget defaults to
+`action_budget.DEFAULT_ACTION_BUDGET` (2000).
+
 ---
 
 ## Part 2 — AyoAI Environment Server surface (the side this repo will speak)

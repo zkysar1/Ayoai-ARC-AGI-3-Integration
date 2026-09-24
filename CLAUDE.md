@@ -69,7 +69,8 @@ uv run main.py --game test
 
 | File | Purpose |
 |------|---------|
-| `main.py` | Game loop driver: connects to API, runs action loop (max 80 actions), manages scorecards |
+| `main.py` | Game loop driver: connects to API, runs the action loop until WIN or the action budget runs out, manages scorecards |
+| `action_budget.py` | The one per-game action budget every entry point defaults to (2000, RESETs included) |
 | `structs.py` | Pydantic models: `FrameData`, `GameAction` (8 actions, 7 simple + 1 complex), `GameState`, `Scorecard`, `Card` |
 | `recorder.py` | JSONL gameplay recorder with UUID-based filenames, stored in `RECORDINGS_DIR` |
 | `tests/conftest.py` | Shared fixtures: temp recordings dir, sample frames, env var mocking |
@@ -88,7 +89,7 @@ uv run main.py --game test
 - The `guid` field in `FrameData` must be passed with every action except RESET. The API returns it; subsequent requests must echo it back.
 - `GameAction.ACTION6` is the only complex action (requires x, y coordinates 0-63).
 - `reasoning` field on `ActionInput` is capped at 16KB and must be JSON-serializable.
-- Game loop caps at 80 actions per run (`MAX_ACTIONS`).
+- Every way of playing a game defaults to `action_budget.DEFAULT_ACTION_BUDGET` (2000). Only a WIN ends a game. A GAME_OVER ends one attempt at a level, and the loop answers it with RESET and plays on (g-376-05).
 - `mypy` strict mode is enabled. It excludes `tests/`, `analysis/`, `environment_files/` and `vendor/`, and `pyproject.toml` lists a per-module baseline of errors that predate 2026-09-24 (g-376-02).
 - House rules: `HOUSE_RULES.md`. `tests/test_house_rules.py` checks the ones code can check. A held-out game needs `--exam`, and only the exam run passes it. Create a local game with `house_rules.make_game(arc, game)`, never `arc.make()`.
 
