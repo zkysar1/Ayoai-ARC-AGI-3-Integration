@@ -98,7 +98,7 @@
     "1. Candidates: the 25 public game ids, read from the directory NAMES under environment_files/ (no game file was opened; house rule 1).",
     "2. Ineligible: any game with live-play history (ls20, ft09, lp85, su15, vc33), any game with a knowledge-tree node named for it, and any game with at least one game-specific knowledge-tree node or reasoning-bank entry.",
     "3. A mention is GAME-SPECIFIC when the record or file names that game and at most one other of the 25 public ids (<= 2 ids). Records that name 3 or more of the 25 are broad multi-game tables or sweeps; they are counted under all_mentions but do not make a game studied.",
-    "4. Rank the eligible games by game_specific.total (tree nodes + reasoning bank + guardrails + experience records/files + ARC repo files + recordings), then by all_mentions.total, then by sha256(game_id) ascending. Take the first 10.",
+    "4. Rank the eligible games by game_specific.total (tree nodes + reasoning bank + guardrails + experience records and files + ARC repo files + recordings), then by all_mentions.total, then by sha256(game_id) ascending. Take the first 10.",
     "5. After sealing, the held-out games are not opened, played, analyzed or discussed until the exam goal (g-376-14). Their game files stay unread (house rules 1 and 4)."
   ],
   "method": {
