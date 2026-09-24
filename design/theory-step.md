@@ -121,8 +121,9 @@ their scale) at lower cost ("2.6× better and 3× cheaper").
    as one rule per kind of object (OPINE's per-type rules).
 2. Admission by exact replay of every logged transition, evaluated twice (OPINE, Twin).
 3. The pre-reward goal filter: the win guess must be false on every logged frame (Twin).
-4. Optimism as an admission rule: a theory is admitted only if the planner can reach
-   its win guess under its own rules (WorldCoder's constraint, Twin's "plan a test").
+4. Optimism as an admission rule: a theory is refused when its own rules make its win
+   guess unreachable (WorldCoder's constraint, Twin's "plan a test"). A search cut off
+   by the cap is not such a verdict (§7).
 5. BFS over the theory with full-grid dedup, and halt-on-mismatch execution with
    Twin's three outcomes (§8.3).
 6. Rewrite only on misprediction, with a deferral window and a stall guard (OPINE).
@@ -305,13 +306,20 @@ Cheapest first. A refusal is written into the check report (§5, I) for the next
 | 4 | Replay | `predict(s, a) != s'` on any logged transition of this game, excluding attempt-ending moves, RESETs and cross-level pairs (Twin). Reported: explained/total and the first 3 cell differences |
 | 5 | Determinism | two runs of `predict` on a 10-transition sample differ (OPINE) |
 | 6 | Win-guess filter | `is_win` is true on any logged frame of this game, or on the current frame. Every logged frame is a known non-win (Twin), and a refuted guess's target state is logged, so a refuted guess can never be re-admitted |
-| 7 | Test plan (optimism) | BFS over `predict` from the current state finds no path to `is_win` within depth 12 and 20,000 nodes, and none to `test_target` either (WorldCoder's constraint). The found action sequence IS the test plan |
+| 7 | Test plan (optimism) | BFS over `predict` from the current state exhausts every state the theory can reach (the frontier empties) without reaching `is_win` or `test_target` (WorldCoder's constraint): the theory's own rules make its guess unreachable. Stopping at the depth-12 or 20,000-node cap is not a refusal (see below). The found action sequence IS the test plan |
 
 A theory that passes all seven is **admitted**: it becomes `V4Arm.model`, and its
 `is_win` (or `test_target`, when only that is reachable) becomes the goal. Checks 2, 6
 and 7 are the code binding the addendum requires: a theory without a win guess, with a
-guess already contradicted, or with a guess it cannot test is refused whatever the
-prompt said.
+guess already contradicted, or with a guess its own rules make unreachable is refused
+whatever the prompt said.
+
+The cap bounds work; it says nothing about reachability (rb-2216). A search that stops
+at the cap without a path admits the theory with no test plan yet. The explorer (§8.4)
+takes one informative move (Twin's probe: an untried control or an unexplored click),
+and the planner re-runs from the new state on the next frame. If the cap still holds
+after 20 moves, the guess counts as refuted for the switch to search (§8.4), so the
+verdict comes from play, not from the budget.
 
 The planner's candidate actions per state: the allowed simple actions, plus one click
 per object (its click cell from the object list). `model_planner.plan` takes a fixed
@@ -362,11 +370,14 @@ code picks moves with the solver's existing frontier explorer
 then the nearest state with an untried action), steered toward Twin's change-based
 candidates: a colour that disappears, a colour that appears, a local change, a global
 change, and frontier states. A new kind of event (a new colour, an object vanishing, a
-level-up) or 30 moves re-open the model (C2). This keeps rb-2039's lesson (the
-Milestone-1 winners found win conditions by exploring, not guessing) as the fallback,
-while the later frontier result sets the order: Twin clears 179 of 183 levels and infers
+level-up) or 30 moves re-open the model (C2). This keeps rb-2039's lesson (the Agent
+Preview Competition winners, before 2026, found win conditions by exploring, not
+guessing) as the fallback. Later results set the order: by Milestone 1 (2026-06-30) the
+winners were local-LLM agents, the first of them writing Python in a live REPL (AyoAI
+tree node `milestone-1-winner-techniques`), and Twin clears 179 of 183 levels and infers
 the goal before any reward on 87.2% of the levels it clears, searching only for the
-rest. Guess first; search when the guesses run out.
+rest. Guess first; search when the guesses run out. (rb-2039 is retired, superseded by
+rb-11788.)
 
 ## 9. Exactly when the model is called
 
@@ -437,7 +448,8 @@ Written per run to the run's output directory (never the synced Mind tree):
 
 - **Per call**: time, level, trigger (C1-C4), `input_tokens`, `output_tokens`, cost,
   model and its tier note (`model_tier_note`, g-315-508), theory version, the check
-  that refused it or "admitted", transitions explained, test-plan length.
+  that refused it or "admitted", transitions explained, test-plan length, and whether
+  the check-7 search was exhausted or stopped at the cap.
 - **Per level-up**: the theory version in force, `WIN_GUESS`, and
   `predicted = is_win(predict(s_last, a_last))`: whether the theory in force said the
   last move would finish the level. Also moves, calls and cost spent on the level.
@@ -549,7 +561,7 @@ each budget refusal in §10.1, the deferral and stall logic, the refutation path
   `win-condition-discovery.md`, `win-condition-zero-positive-objective.md`
 - `HOUSE_RULES.md`, `spend_meter.py`
 - AyoAI tree nodes `goal-inference-before-reward`, `win-condition-discovery`,
-  `win-condition-model-bottleneck`
+  `win-condition-model-bottleneck`, `milestone-1-winner-techniques`
 - guard-1030, guard-894, guard-796, guard-1352; rb-10615, rb-4721, rb-4961, rb-4985,
-  rb-2039, rb-2558
+  rb-2039 (retired; superseded by rb-11788), rb-2216, rb-2558
 - Goals g-376-04, g-376-05, g-376-09, g-376-10, g-376-11, g-376-24, g-376-25
