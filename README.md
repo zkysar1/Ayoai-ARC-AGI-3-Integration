@@ -110,6 +110,18 @@ uv run main.py --game ls20-fa137e247ce6 --tags "experiment,v1.0"
 
 **Note:** Game IDs include unique hash suffixes. Run with an invalid game ID to see the list of available games.
 
+## Offline Play (no key, no network)
+
+`arc-agi` 0.9.9 and `arcengine` 0.9.3 run games locally from `environment_files/`. Play one dev game through the local solver and print FPS, end state and `levels_completed` (held-out exam games in `eval/heldout.json` are refused):
+
+```bash
+.venv/bin/python offline_run.py --game ls20 --frame-out tests/fixtures/offline_frame_ls20.json
+```
+
+Measured on cc-03 (2026-09-24): ls20, 401 actions in 0.63 s = 640 FPS through the solver, 1853 FPS bare engine; `NOT_FINISHED`, `levels_completed` 0 of `win_levels` 7. Frames carry `levels_completed` and `win_levels`; there is no `score` field.
+
+Where `uv` is not installed, the gate is `.venv/bin/python -m pytest -q -p no:cacheprovider`, `.venv/bin/ruff check .` and `.venv/bin/mypy .`.
+
 ## Tests
 
 Run the test suite:

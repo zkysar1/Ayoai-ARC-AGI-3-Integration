@@ -22,6 +22,13 @@ dependencies = [
 llm = [
     "anthropic>=0.34.0",
 ]
+# Local game play with no key and no network (offline_run.py): arc-agi runs the
+# games from environment_files/ in OFFLINE mode. Install directly, as for [llm]:
+# `.venv/bin/pip install "arc-agi==0.9.9" "arcengine==0.9.3"` (g-376-03).
+offline = [
+    "arc-agi==0.9.9",
+    "arcengine==0.9.3",
+]
 
 [dependency-groups]
 dev = [
