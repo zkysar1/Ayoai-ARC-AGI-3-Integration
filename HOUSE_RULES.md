@@ -20,8 +20,9 @@ These are quoted from the approved plan.
    Prize".
 7. Every run goes through the AyoAI framework, no side-door solver.
 
-We are not entering any competition (the 2026-08-04 ruling stands), and we
-sign up for no third-party services.
+We are not entering any competition (the owner's directive of 2026-09-24; the
+2026-08-04 ruling on the Kaggle track, recorded as AyoAI guard-6663, stands),
+and we sign up for no third-party services.
 
 ## What is checked automatically
 
