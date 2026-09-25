@@ -38,7 +38,7 @@ from analysis.win_condition_cegis import (
 from analysis.win_condition_heuristic import HeuristicHypothesizer
 from analysis.win_condition_hypothesizer import WinConditionHypothesizer
 from solver_v0.perception import FrameFeatures
-from solver_v2.state_graph import FrameProcessor, _CONFIG_PRIORS
+from solver_v2.state_graph import _CONFIG_PRIORS, FrameProcessor
 
 
 def state_to_cc_signature(state: Any, *, history_k: int = 0) -> CCSignature:

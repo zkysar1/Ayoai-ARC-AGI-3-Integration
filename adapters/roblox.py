@@ -55,19 +55,21 @@ import math
 from dataclasses import dataclass
 from typing import Mapping, Optional, Sequence, cast
 
+# `X as X` re-exports Decision and Result from this adapter
+# (tests/unit/test_roblox_adapter.py imports Decision from adapters.roblox).
+from adapters.base import Decision as Decision
 from adapters.base import (
-    Decision,
     EpisodeReport,
     ProximityModel,
-    Result,
     Transport,
     UnitLike,
     WorldBuilder,
 )
+from adapters.base import Result as Result
 from adapters.episode import run_exploration_episode as _run_shared_episode
+from adapters.transport_executor import TransportExecutor
 from primitives.frontier_coverage import Cell
 from primitives.learned_displacement import LearnedDisplacementModel
-from adapters.transport_executor import TransportExecutor
 
 Vec3 = tuple[float, float, float]
 

@@ -65,21 +65,24 @@ from dataclasses import dataclass
 from typing import Mapping, Optional, Sequence, cast
 
 from action_budget import DEFAULT_ACTION_BUDGET
+
+# `X as X` re-exports Decision and Result from this adapter
+# (tests/unit/test_arc_adapter.py imports Decision from adapters.arc).
+from adapters.base import Decision as Decision
 from adapters.base import (
-    Decision,
     EnvironmentAdapter,
     EpisodeReport,
     Executor,
     ProximityModel,
-    Result,
     Transport,
     UnitLike,
     WorldBuilder,
 )
+from adapters.base import Result as Result
 from adapters.episode import run_exploration_episode
-from primitives.frontier_coverage import Cell, FrontierCoverage
-from primitives.learned_displacement import LearnedDisplacementModel
 from adapters.transport_executor import TransportExecutor
+from primitives.frontier_coverage import Cell
+from primitives.learned_displacement import LearnedDisplacementModel
 
 # A point on the ARC grid: (col, row) integer coordinate. Unlike roblox's Vec3 (a 3-D
 # world pose) or vinheim's Coord (a semantic-plane float pair), ARC coordinates are

@@ -88,10 +88,11 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 from measure_seam_real_ls20 import REC_DIR, load_frames  # noqa: E402
 
-from solver_v2.frame_coordinate_state import FrameCoordinateDecomposer  # noqa: E402
-
 from primitives.model_planner import plan  # noqa: E402
-from primitives.synthesized_world_model import TransitionBuffer, WorldModel  # noqa: E402
+from primitives.synthesized_world_model import (  # noqa: E402
+    TransitionBuffer,
+    WorldModel,
+)
 from primitives.v4_arm import V4Arm  # noqa: E402
 from primitives.world_model_synthesizer import (  # noqa: E402
     ContextConditionedModalSynthesizer,
@@ -99,6 +100,7 @@ from primitives.world_model_synthesizer import (  # noqa: E402
     TableSynthesizer,
     synthesize_until_consistent,
 )
+from solver_v2.frame_coordinate_state import FrameCoordinateDecomposer  # noqa: E402
 
 MAX_EXPANSIONS = 10_000  # planner budget; |actions|^H << this for H<=3, so never the binding limit
 
@@ -327,7 +329,8 @@ def confirm_via_arm(path, split=0.8, min_dominance=0.5, terrain_top_n=2, horizon
         goal = states[i + horizon]
         if goal == states[i]:
             continue
-        is_goal = lambda s: s == goal
+        def is_goal(s):
+            return s == goal
         p0 = plan(v0m.predict, states[i], is_goal, action_set, horizon=horizon, max_expansions=MAX_EXPANSIONS)
         p2 = plan(v2m.predict, states[i], is_goal, action_set, horizon=horizon, max_expansions=MAX_EXPANSIONS)
         if p2 is not None and p0 is None:

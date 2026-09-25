@@ -19,8 +19,6 @@ Covers the three Increment III ship criteria from the design spec
 
 from __future__ import annotations
 
-from typing import Callable
-
 import pytest
 
 from analysis.predicate_compiler import compile
@@ -28,7 +26,6 @@ from analysis.predicate_spec import (
     CCSignature,
     Component,
     CountConstraint,
-    PredicateSpec,
 )
 from analysis.win_condition_cegis import CEGISResult, hypothesize_until_viable
 from analysis.win_condition_hypothesizer import (
@@ -37,7 +34,6 @@ from analysis.win_condition_hypothesizer import (
     StaticHypothesizer,
     WinConditionHypothesizer,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures: hand-built CCSignatures + validation frames

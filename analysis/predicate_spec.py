@@ -20,7 +20,6 @@ import dataclasses
 from dataclasses import dataclass
 from typing import Any, Mapping, Union
 
-
 # ---------------------------------------------------------------------------
 # Structural signature (abstract mirror of solver internals)
 # ---------------------------------------------------------------------------

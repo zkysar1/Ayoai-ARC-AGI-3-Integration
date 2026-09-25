@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
-from pathlib import Path
 
 
 def parse_recording(path: str) -> list[dict]:

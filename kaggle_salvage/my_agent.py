@@ -76,15 +76,14 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
+# When run inside the ARC-AGI-3-Agents framework (locally or on Kaggle)
+# the `agents` package is on sys.path, so this import resolves.
+from agents.agent import Agent
 from arcengine import FrameData, GameAction, GameState
 
 # The repo root is on sys.path wherever this agent runs (offline_run.py,
 # analysis/), so the shared action budget resolves (g-376-05).
 from action_budget import DEFAULT_ACTION_BUDGET
-
-# When run inside the ARC-AGI-3-Agents framework (locally or on Kaggle)
-# the `agents` package is on sys.path, so this import resolves.
-from agents.agent import Agent
 
 Cell = tuple[int, int]
 

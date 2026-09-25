@@ -145,7 +145,8 @@ def main() -> None:
                     ap["overlay_sizes"][len(overlay)] += 1
                     ap["other_diff_sizes"][len(other)] += 1
                     if overlay:
-                        rs = [x[0] for x in overlay]; cs = [x[1] for x in overlay]
+                        rs = [x[0] for x in overlay]
+                        cs = [x[1] for x in overlay]
                         bbox = (min(rs), min(cs), max(rs), max(cs))
                         ap["bbox_by_size"].setdefault(len(overlay), Counter())[bbox] += 1
                     pos, npos = agent_pos(grids[k - 1])
@@ -156,7 +157,8 @@ def main() -> None:
                     ap["bar_at_appear"][counts[k - 1]] += 1
                     # sanity: does the overlay region overlap the agent?
                     if overlay and pos:
-                        rs = [x[0] for x in overlay]; cs = [x[1] for x in overlay]
+                        rs = [x[0] for x in overlay]
+                        cs = [x[1] for x in overlay]
                         inside = (min(rs) <= pos[0] <= max(rs)) and (min(cs) <= pos[1] <= max(cs))
                         out["no_overlap_check"]["agent_inside_bbox" if inside else "agent_outside_bbox"] += 1
                     rows.append({"pause_tick": k, "appear_action": ep[k - 1]["action"],

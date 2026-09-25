@@ -29,19 +29,17 @@ from __future__ import annotations
 
 import json
 import pathlib
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 from solver_v0.perception import FrameFeatures, extract
 from solver_v2.state_graph import (
-    FrameProcessor,
     _CONFIG_PRIORS,
+    FrameProcessor,
     _config_compression_gain,
     _config_orderedness,
     _config_symmetry,
 )
 from structs import FrameData, GameState
-
 
 # ---------------------------------------------------------------------------
 # Data structures

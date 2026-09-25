@@ -60,10 +60,10 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Optional
 
 from analysis.predicate_spec import (
-    PredicateSpec,
-    PriorThresholdConstraint,
     VALID_OPS,
     VALID_PRIORS,
+    PredicateSpec,
+    PriorThresholdConstraint,
     from_dict,
 )
 from analysis.win_condition_hypothesizer import CounterExample

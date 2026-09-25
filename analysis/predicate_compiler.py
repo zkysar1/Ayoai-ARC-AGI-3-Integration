@@ -22,6 +22,8 @@ import operator as op_mod
 from typing import Any, Callable
 
 from analysis.predicate_spec import (
+    VALID_OPS,
+    VALID_PRIORS,
     AdjacencyConstraint,
     AndConstraint,
     CCSignature,
@@ -32,10 +34,7 @@ from analysis.predicate_spec import (
     PriorThresholdConstraint,
     SizeRatioConstraint,
     TypeCountConstraint,
-    VALID_OPS,
-    VALID_PRIORS,
 )
-
 
 # ---------------------------------------------------------------------------
 # Operator dispatch (explicit, deterministic -- no eval/exec)

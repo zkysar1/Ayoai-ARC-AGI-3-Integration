@@ -29,7 +29,6 @@ from adapters.football import (
     FootballProximityModel,
     FootballWorldBuilder,
     SimulatedPitch,
-    Unit,
     run_exploration_episode,
 )
 from primitives.frontier_coverage import FrontierCoverage

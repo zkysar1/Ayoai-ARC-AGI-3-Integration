@@ -44,6 +44,13 @@ from ayoai_streaming_client import (
     AyoaiDecision,
     AyoaiStreamingError,
 )
+from primitives.reward_state_recognizer import RewardStateMemory
+from primitives.theory_arm import TheoryArm
+
+# g-355-51: the env-agnostic v4 control-loop primitive (OPINE-World port). The
+# solver DEPENDS ON primitives (correct direction); imported for the opt-in wire
+# in choose_action. Composing it is a strict-superset no-op under a NoOp model.
+from primitives.v4_arm import V4Arm
 from solver_v0.perception import FrameFeatures, extract
 from solver_v0.policy import (
     HandBuiltPolicy,
@@ -74,13 +81,6 @@ from solver_v2.seed_provider import DeterministicOracleSeedProvider, SeedProvide
 from solver_v2.state_graph import ClickStateGraphExplorer, StateGraphExplorer
 from solver_v2.toggle_probe import ToggleProbe, cell_under_cursor, toggle_candidates
 from structs import FrameData, GameAction, GameState
-
-# g-355-51: the env-agnostic v4 control-loop primitive (OPINE-World port). The
-# solver DEPENDS ON primitives (correct direction); imported for the opt-in wire
-# in choose_action. Composing it is a strict-superset no-op under a NoOp model.
-from primitives.v4_arm import V4Arm
-from primitives.reward_state_recognizer import RewardStateMemory
-from primitives.theory_arm import TheoryArm
 
 logger = logging.getLogger(__name__)
 

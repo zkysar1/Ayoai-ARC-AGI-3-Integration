@@ -147,8 +147,6 @@ def main(argv):
         print("no measurable recordings")
         return 1
 
-    hdr = ("recording", "frames", "trans", "arity", "arityStab", "consistAct",
-           "gen%", "tab%", "genMove%", "tabMove%")
     print(f"{'recording':46} {'fr':>4} {'tr':>4} {'ar':>3} {'stab':>5} {'consA':>6} "
           f"{'gen%':>5} {'tab%':>5} {'genMv%':>6} {'tabMv%':>6}")
     for r in rows:

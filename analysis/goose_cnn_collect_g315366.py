@@ -20,12 +20,12 @@ import numpy as np
 KIT = Path(__file__).resolve().parents[1]  # repo-local since g-315-529 (Kaggle clone dependency cut)
 sys.path.insert(0, str(KIT))
 sys.path.insert(0, str(KIT / "vendor" / "ARC-AGI-3-Agents"))
-from house_rules import make_game  # noqa: E402  (house rule 4)
-
 import arc_agi  # noqa: E402
-from arc_agi import OperationMode  # noqa: E402
 from agents.agent import Agent  # noqa: E402
+from arc_agi import OperationMode  # noqa: E402
 from arcengine import GameAction, GameState  # noqa: E402
+
+from house_rules import make_game  # noqa: E402  (house rule 4)
 
 N_ACTIONS = int(sys.argv[1]) if len(sys.argv) > 1 else 2000
 GAMES = (sys.argv[2] if len(sys.argv) > 2 else "ft09,lp85").split(",")

@@ -28,7 +28,6 @@ no network. The provisioner's default transport is the offline simulation.
 
 from __future__ import annotations
 
-
 import pytest
 
 from adapters.arc import (

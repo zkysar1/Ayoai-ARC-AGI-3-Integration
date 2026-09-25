@@ -57,7 +57,6 @@ from analysis.win_condition_llm import (
     parse_spec_response,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fake anthropic-shaped client (INJECTED -- no network)
 # ---------------------------------------------------------------------------

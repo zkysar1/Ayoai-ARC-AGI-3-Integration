@@ -22,7 +22,6 @@ from adapters.football import (
     FootballProximityModel,
     FootballWorldBuilder,
     SimulatedPitch,
-    build_football_adapter,
 )
 from adapters.provision import provision, registered_env_types
 

@@ -25,12 +25,11 @@ _REPO = pathlib.Path(__file__).resolve().parents[2]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
-from analysis.trajectory_summarizer import (
-    SessionSummary,
+from analysis.trajectory_summarizer import (  # noqa: E402
     summarize_all_recordings,
     summarize_recording,
 )
-from solver_v2.state_graph import _CONFIG_PRIORS
+from solver_v2.state_graph import _CONFIG_PRIORS  # noqa: E402
 
 RECORDINGS_DIR = _REPO / "recordings"
 

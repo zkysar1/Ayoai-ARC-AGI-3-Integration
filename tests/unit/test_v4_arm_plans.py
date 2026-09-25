@@ -179,7 +179,8 @@ def test_v4_cross_env_transfer_gridworld() -> None:
     (tuple states, NESW actions) -- a different environment shape than the ARC line/
     frame world. Cross-env generalization no longer rests on frontier_coverage alone;
     the v4 cluster is a second primitive proven to transfer (g-355-48 gap)."""
-    goal = lambda s: s == (2, 0)
+    def goal(s):
+        return s == (2, 0)
     # (a) Black-box: the arm REACHES a goal on a tuple-state grid -- a different env shape
     #     than the line, driven by the SAME code path.
     reacher = V4Arm(TableSynthesizer(), horizon=8)

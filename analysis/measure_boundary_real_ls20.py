@@ -28,14 +28,16 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 from measure_seam_real_ls20 import REC_DIR, load_frames  # noqa: E402
 
-from solver_v2.frame_coordinate_state import FrameCoordinateDecomposer  # noqa: E402
-
-from primitives.synthesized_world_model import TransitionBuffer, WorldModel  # noqa: E402
+from primitives.synthesized_world_model import (  # noqa: E402
+    TransitionBuffer,
+    WorldModel,
+)
 from primitives.world_model_synthesizer import (  # noqa: E402
     ContextConditionedModalSynthesizer,
     SlotwiseModalSynthesizer,
     TableSynthesizer,
 )
+from solver_v2.frame_coordinate_state import FrameCoordinateDecomposer  # noqa: E402
 
 PERIOD = 6
 DYN = (0, 1)          # r, c -- the coordinates that move

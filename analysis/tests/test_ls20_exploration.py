@@ -33,7 +33,6 @@ from analysis.ls20_exploration import (
 )
 from analysis.win_condition_extractor import state_to_cc_signature
 
-
 # ---------------------------------------------------------------------------
 # Fixtures: hand-authored frames for synthetic tests
 # ---------------------------------------------------------------------------

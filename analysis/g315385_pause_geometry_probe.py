@@ -112,7 +112,8 @@ def main() -> None:
                     dp = diff_pairs(grids[k - 1], grids[k])
                     clears = [(r, c) for (r, c, va, vb) in dp if va == 5 and vb == 0]
                     if clears:
-                        rs = [x[0] for x in clears]; cs = [x[1] for x in clears]
+                        rs = [x[0] for x in clears]
+                        cs = [x[1] for x in clears]
                         bbox = (min(rs), min(cs), max(rs), max(cs))
                         bbox_by_size.setdefault(len(clears), Counter())[bbox] += 1
                     pause_ticks.append(k)

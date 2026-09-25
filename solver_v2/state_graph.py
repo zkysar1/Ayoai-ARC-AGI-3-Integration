@@ -63,7 +63,7 @@ from solver_v2.calibration import (
     move_actions_from,
 )
 from solver_v2.executor import ExecutorDecision
-from solver_v2.frontier_explorer import FrontierCoverageExplorer, _EFFECT_REGION_SIZE
+from solver_v2.frontier_explorer import _EFFECT_REGION_SIZE, FrontierCoverageExplorer
 
 # ---------------------------------------------------------------------------
 # Tunable constants (all deterministic; no per-game values)

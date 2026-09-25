@@ -61,7 +61,15 @@ Design decisions (logged for review per self.md Decision Authority):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Mapping, Optional, Protocol, Sequence, TypeVar, runtime_checkable
+from typing import (
+    Callable,
+    Mapping,
+    Optional,
+    Protocol,
+    Sequence,
+    TypeVar,
+    runtime_checkable,
+)
 
 from primitives.frontier_coverage import Cell, FrontierCoverage
 

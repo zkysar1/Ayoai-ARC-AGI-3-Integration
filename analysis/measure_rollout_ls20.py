@@ -50,17 +50,19 @@ from collections import Counter
 sys.path.insert(0, os.path.dirname(__file__))
 from measure_seam_real_ls20 import REC_DIR, load_frames  # noqa: E402
 
-from solver_v2.cc_segment import segment, terrain_values  # noqa: E402
-from solver_v2.frame_coordinate_state import (  # noqa: E402
-    FrameCoordinateDecomposer,
-    wall_occupancy,
+from primitives.synthesized_world_model import (  # noqa: E402
+    TransitionBuffer,
+    WorldModel,
 )
-
-from primitives.synthesized_world_model import TransitionBuffer, WorldModel  # noqa: E402
 from primitives.world_model_synthesizer import (  # noqa: E402
     ContextConditionedModalSynthesizer,
     SlotwiseModalSynthesizer,
     TableSynthesizer,
+)
+from solver_v2.cc_segment import segment, terrain_values  # noqa: E402
+from solver_v2.frame_coordinate_state import (  # noqa: E402
+    FrameCoordinateDecomposer,
+    wall_occupancy,
 )
 
 PERIOD = 6

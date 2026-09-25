@@ -59,7 +59,9 @@ from solver_v0.perception import extract  # noqa: E402
 from solver_v0.policy import detect_cursor_and_targets  # noqa: E402
 
 try:  # production region quantization (single source of truth); fall back if moved
-    from solver_v2.frontier_explorer import _EFFECT_REGION_SIZE as _DEFAULT_REGION_SIZE  # noqa: E402
+    from solver_v2.frontier_explorer import (
+        _EFFECT_REGION_SIZE as _DEFAULT_REGION_SIZE,  # noqa: E402
+    )
 except Exception:  # pragma: no cover - import shape guard
     _DEFAULT_REGION_SIZE = 8
 

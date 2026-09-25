@@ -43,9 +43,12 @@ from collections import Counter, deque
 _ARC = "/opt/GitHub/Ayoai/Ayoai-ARC-AGI-3-Integration"
 sys.path.insert(0, _ARC)
 
-from primitives.synthesized_world_model import TransitionBuffer, WorldModel  # noqa: E402
-from primitives.world_model_synthesizer import TableSynthesizer  # noqa: E402
+from primitives.synthesized_world_model import (  # noqa: E402
+    TransitionBuffer,
+    WorldModel,
+)
 from primitives.v4_arm import V4Arm  # noqa: E402
+from primitives.world_model_synthesizer import TableSynthesizer  # noqa: E402
 from solver_v0.perception import extract  # noqa: E402
 from solver_v0.policy import detect_cursor_and_targets  # noqa: E402
 
@@ -123,7 +126,7 @@ def featurize_episode(frames, history_k=12):
         try:
             feats = extract(frame, avail, history=list(hist), score=score)
             cursor, targets = detect_cursor_and_targets(feats)
-        except Exception as e:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             hist.append(frame)
             out.append((None, None, ak))
             continue
@@ -237,24 +240,24 @@ def distance_ab_report(changed_frames, valid):
         arm_impr += 1 if d_arm < d0 else 0
         fb_impr += 1 if d_fb_actual < d0 else 0
 
-    def _rate(w, l):
-        dec = w + l
-        return (w / dec) if dec else 0.0
+    def _rate(wins, losses):
+        dec = wins + losses
+        return (wins / dec) if dec else 0.0
 
     print(f"changed frames analysed : {n}")
-    print(f"1) PRIMARY  arm delta-PREDICTED vs fallback ACTUAL (arm-optimistic, wall-blind arm):")
+    print("1) PRIMARY  arm delta-PREDICTED vs fallback ACTUAL (arm-optimistic, wall-blind arm):")
     print(f"     WIN(arm closer) {win}   TIE {tie}   LOSE(fallback closer) {lose}"
           f"   | decisive win-rate {_rate(win, lose):.1%} ({win}/{win + lose})")
     print(f"     arm reduces dist vs baseline: {arm_impr}/{n}   fallback reduces dist vs baseline: {fb_impr}/{n}")
-    print(f"2) CROSS-CHECK  both via delta model (arm-favorable by construction, bound only):")
+    print("2) CROSS-CHECK  both via delta model (arm-favorable by construction, bound only):")
     print(f"     WIN {win_m}   TIE {tie_m}   LOSE {lose_m}")
-    print(f"3) GROUND-TRUTH  arm ACTUAL where (cursor,chosen) observed vs fallback actual (wall-aware, fairest):")
+    print("3) GROUND-TRUTH  arm ACTUAL where (cursor,chosen) observed vs fallback actual (wall-aware, fairest):")
     if n_obs:
         print(f"     observed subset n_obs={n_obs}/{n} ({n_obs / n:.0%})"
               f"   WIN {win_o}   TIE {tie_o}   LOSE {lose_o}   | decisive win-rate {_rate(win_o, lose_o):.1%}")
     else:
-        print(f"     observed subset n_obs=0 -- no changed-frame (cursor,chosen) pair was ever played "
-              f"in the recording, so no wall-aware ground truth exists for the arm's overrides.")
+        print("     observed subset n_obs=0 -- no changed-frame (cursor,chosen) pair was ever played "
+              "in the recording, so no wall-aware ground truth exists for the arm's overrides.")
     print()
 
     # Verdict: framing 3 (fairest) leads when the observed subset is adequate
@@ -262,21 +265,21 @@ def distance_ab_report(changed_frames, valid):
     print("=== g-315-480 VERDICT ===")
     use_gt = n_obs >= 20 and n_obs >= 0.10 * n
     if use_gt:
-        w, l, t, basis = win_o, lose_o, tie_o, f"ground-truth subset (n_obs={n_obs}, wall-aware)"
+        w, loss, t, basis = win_o, lose_o, tie_o, f"ground-truth subset (n_obs={n_obs}, wall-aware)"
     else:
-        w, l, t, basis = win, lose, tie, f"arm-optimistic primary (n={n}; ground-truth subset too small: n_obs={n_obs})"
-    if w > l:
+        w, loss, t, basis = win, lose, tie, f"arm-optimistic primary (n={n}; ground-truth subset too small: n_obs={n_obs})"
+    if w > loss:
         print(f"NET-BENEFICIAL on {basis}: the parametric arm's overrides reduce cursor->target distance "
-              f"MORE often than the fallback ({w} win / {l} lose / {t} tie). "
+              f"MORE often than the fallback ({w} win / {loss} lose / {t} tie). "
               + ("Wall-aware evidence supports g-315-479 production wiring."
                  if use_gt else
                  "But this is the ARM-OPTIMISTIC framing (wall-blind delta) -- treat as SUGGESTIVE, not "
                  "sufficient: wire g-315-479 only behind a live-play A/B, since the wall-aware subset was too small to confirm."))
-    elif w == l:
-        print(f"NET-NEUTRAL on {basis}: arm wins {w} == loses {l} ({t} tie). changed>0 is motion WITHOUT a "
+    elif w == loss:
+        print(f"NET-NEUTRAL on {basis}: arm wins {w} == loses {loss} ({t} tie). changed>0 is motion WITHOUT a "
               f"net directional improvement -> g-315-479 wiring is NOT justified on this offline evidence.")
     else:
-        print(f"NET-HARMFUL on {basis}: arm loses ({l}) MORE than it wins ({w}), {t} tie. The overrides move "
+        print(f"NET-HARMFUL on {basis}: arm loses ({loss}) MORE than it wins ({w}), {t} tie. The overrides move "
               f"AWAY from target more often than toward -- and even the arm-favorable framings agree "
               f"(model-consistent WIN {win_m}/LOSE {lose_m}). DO NOT wire g-315-479 without rerouting the arm's objective.")
     print(f"(g-315-478 recap: delta-arm changed={n} frames; the question here is whether those overrides help.)")

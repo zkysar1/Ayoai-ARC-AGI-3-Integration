@@ -27,8 +27,6 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
 
-logger = logging.getLogger(__name__)
-
 from analysis.predicate_spec import CCSignature, PredicateSpec
 from analysis.win_condition_heuristic import _build_tail_candidates
 from analysis.win_condition_hypothesizer import (
@@ -38,6 +36,8 @@ from analysis.win_condition_hypothesizer import (
 
 if TYPE_CHECKING:
     from analysis.trajectory_summarizer import SessionSummary
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------

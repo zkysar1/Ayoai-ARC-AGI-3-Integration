@@ -35,13 +35,12 @@ import inspect
 
 import pytest
 
+from analysis.predicate_spec import CCSignature, CountConstraint
 from analysis.win_condition_extractor import (
     state_to_cc_signature,
     synthesize_goal_predicate,
 )
-from analysis.predicate_spec import CCSignature, Component, CountConstraint
 from analysis.win_condition_hypothesizer import StaticHypothesizer
-
 
 # ---------------------------------------------------------------------------
 # Fixtures: hand-authored 2D grids + the layer-wrapping the real state uses

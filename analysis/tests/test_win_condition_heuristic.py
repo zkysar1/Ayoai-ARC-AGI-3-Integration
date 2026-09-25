@@ -25,7 +25,6 @@ from analysis.predicate_spec import (
     CountConstraint,
     PredicateSpec,
     PriorThresholdConstraint,
-    TypeCountConstraint,
 )
 from analysis.trajectory_summarizer import ComponentSignature, FrameSummary
 from analysis.win_condition_cegis import CEGISResult, hypothesize_until_viable
@@ -37,7 +36,6 @@ from analysis.win_condition_hypothesizer import (
     CounterExample,
     WinConditionHypothesizer,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

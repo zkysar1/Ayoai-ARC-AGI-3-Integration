@@ -31,7 +31,6 @@ from analysis.win_condition_cegis import CEGISResult, hypothesize_until_viable
 from analysis.win_condition_extractor import state_to_cc_signature
 from analysis.win_condition_heuristic import HeuristicHypothesizer
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

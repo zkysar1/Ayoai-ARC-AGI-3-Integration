@@ -66,19 +66,21 @@ import json
 import math
 
 import adapters.episode as ep
-from primitives.frontier_coverage import FrontierCoverage as _FrontierCoverage
-
 from adapters.football import (
-    SimulatedPitch,
     build_football_adapter,
+)
+from adapters.football import (
     run_exploration_episode as run_football_episode,
 )
 from adapters.vinheim import (
     VinheimExecutor,
     VinheimProximityModel,
     VinheimWorldBuilder,
+)
+from adapters.vinheim import (
     run_exploration_episode as run_vinheim_episode,
 )
+from primitives.frontier_coverage import FrontierCoverage as _FrontierCoverage
 
 # The canonical vinheim OFFLINE transport lives in the vinheim driver test
 # (tests/unit lacks __init__.py, so load it by file path rather than as a
