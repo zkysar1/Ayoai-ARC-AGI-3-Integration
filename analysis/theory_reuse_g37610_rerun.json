@@ -1,0 +1,125 @@
+{
+  "experiment": "g-376-10-c-rerun",
+  "hypothesis": "2026-09-25_arc-stored-theory-no-first-level-gain",
+  "prereg_commit": "44122ed",
+  "box": "cc-03",
+  "date": "2026-09-25",
+  "driver_start": "2026-09-25T14:30:34",
+  "driver_end": "2026-09-25T17:48:31",
+  "max_actions": 2000,
+  "total_games": 4,
+  "seeded_games": 2,
+  "seeded_threshold": 3,
+  "total_runs": 8,
+  "verdict": "unresolvable",
+  "verdict_reason": "fewer than 3 seeded games (2 of 4 games loaded theories)",
+  "model_spend": {
+    "total_usd": 1.2054,
+    "fleet_total_before": 35.83,
+    "fleet_total_after": 37.04
+  },
+  "games": [
+    {
+      "game_id": "ft09-0d8bbf25",
+      "game_num": 1,
+      "source": "primary",
+      "seeded": true,
+      "on_arm": "WARM-A",
+      "theories_loaded": 1,
+      "theories_stored": 1,
+      "theory_stored_detail": "v3 sha256=14dbee44fb81 -> 201",
+      "arms": {
+        "OFF": {
+          "action_index": 2000,
+          "censored": true,
+          "cost_usd": 0.1421,
+          "rc": 0,
+          "scorecard": "cd44248d"
+        },
+        "WARM-A": {
+          "action_index": 2000,
+          "censored": true,
+          "cost_usd": 0.14,
+          "rc": 0,
+          "scorecard": "6e07af50"
+        }
+      }
+    },
+    {
+      "game_id": "ls20-9607627b",
+      "game_num": 2,
+      "source": "primary",
+      "seeded": true,
+      "on_arm": "WARM-A",
+      "theories_loaded": 1,
+      "theories_stored": 1,
+      "theory_stored_detail": "v1 sha256=d2141e3b76bd -> 201",
+      "arms": {
+        "OFF": {
+          "action_index": 2000,
+          "censored": true,
+          "cost_usd": 0.1964,
+          "rc": 0,
+          "scorecard": "e0db8a23"
+        },
+        "WARM-A": {
+          "action_index": 2000,
+          "censored": true,
+          "cost_usd": 0.2006,
+          "rc": 0,
+          "scorecard": "0041c6bd"
+        }
+      }
+    },
+    {
+      "game_id": "su15-1944f8ab",
+      "game_num": 3,
+      "source": "primary",
+      "seeded": false,
+      "on_arm": null,
+      "theories_loaded": 0,
+      "theories_stored": 0,
+      "arms": {
+        "OFF": {
+          "action_index": 2000,
+          "censored": true,
+          "cost_usd": 0.133,
+          "rc": 0,
+          "scorecard": "8a2b5dda"
+        },
+        "WARM-A": {
+          "action_index": 2000,
+          "censored": true,
+          "cost_usd": 0.0163,
+          "rc": 0,
+          "scorecard": "4c3408d7"
+        }
+      }
+    },
+    {
+      "game_id": "lp85-305b61c3",
+      "game_num": 4,
+      "source": "fallback",
+      "seeded": false,
+      "on_arm": null,
+      "theories_loaded": 0,
+      "theories_stored": 0,
+      "arms": {
+        "OFF": {
+          "action_index": 278,
+          "censored": false,
+          "cost_usd": 0.1866,
+          "rc": 0,
+          "scorecard": "12be0ed9"
+        },
+        "WARM-A": {
+          "action_index": 278,
+          "censored": false,
+          "cost_usd": 0.1903,
+          "rc": 0,
+          "scorecard": "fa837d9e"
+        }
+      }
+    }
+  ]
+}
