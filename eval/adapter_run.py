@@ -12,6 +12,9 @@ passes (main.py run_game_loop: streaming_client.choose_action(current_frame)).
 Held-out games are never played (house rule 4).
 
     .venv/bin/python eval/adapter_run.py --out eval/adapter-baseline-2026-09-25.json
+
+`--player port` plays the same protocol through PortStreamingClient instead, the
+port-backed session client of g-376-30 (eval/port-client-2026-09-25.json).
 """
 
 from __future__ import annotations
@@ -42,6 +45,7 @@ from baseline_run import (  # type: ignore[import-not-found]  # noqa: E402
 
 from action_budget import DEFAULT_ACTION_BUDGET  # noqa: E402
 from house_rules import make_game  # noqa: E402
+from port_streaming_client import PortStreamingClient  # noqa: E402
 from solver_v2.streaming_adapter import SolverV2StreamingAdapter  # noqa: E402
 from structs import FrameData, GameAction, GameState  # noqa: E402
 
@@ -51,7 +55,9 @@ class AdapterDrive(Agent):  # type: ignore[misc]
 
     MAX_ACTIONS = DEFAULT_ACTION_BUDGET
 
-    def __init__(self, *args: Any, adapter: SolverV2StreamingAdapter, **kwargs: Any) -> None:
+    def __init__(
+        self, *args: Any, adapter: SolverV2StreamingAdapter | PortStreamingClient, **kwargs: Any
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.adapter = adapter
         self.decided_by: Counter[str] = Counter()
@@ -89,6 +95,12 @@ def main() -> None:
     parser.add_argument("--max-actions", type=int, default=DEFAULT_ACTION_BUDGET)
     parser.add_argument("--games", nargs="*", default=None, help="subset of dev games")
     parser.add_argument("--out", type=Path, default=None, help="write the JSON here too")
+    parser.add_argument(
+        "--player",
+        choices=("adapter", "port"),
+        default="adapter",
+        help="adapter = SolverV2StreamingAdapter; port = PortStreamingClient (g-376-30)",
+    )
     args = parser.parse_args()
 
     games = args.games or dev_games()
@@ -103,7 +115,11 @@ def main() -> None:
         env = make_game(arc, game)
         if env is None:
             raise SystemExit(f"env-create-failed: {game}")
-        adapter = SolverV2StreamingAdapter(ayo_server_key="offline-adapter", arc_game_id=game)
+        adapter: SolverV2StreamingAdapter | PortStreamingClient = (
+            PortStreamingClient(ayo_server_key="offline-adapter", arc_game_id=game)
+            if args.player == "port"
+            else SolverV2StreamingAdapter(ayo_server_key="offline-adapter", arc_game_id=game)
+        )
         agent = AdapterDrive(
             card_id="offline-adapter",
             game_id=game,
@@ -136,7 +152,11 @@ def main() -> None:
     card = scorecard.get()
     card.pop("api_key", None)  # this file is committed; a key never goes in it
     result = {
-        "player": "SolverV2StreamingAdapter (main.py --use-solver-v2 defaults, oracle seed)",
+        "player": (
+            "PortStreamingClient (kaggle_salvage.MyAgent behind the AyoAI streaming surface)"
+            if args.player == "port"
+            else "SolverV2StreamingAdapter (main.py --use-solver-v2 defaults, oracle seed)"
+        ),
         "arc_agi": version("arc-agi"),
         "arcengine": version("arcengine"),
         "max_actions": args.max_actions,
