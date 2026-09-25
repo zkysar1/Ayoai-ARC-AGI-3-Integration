@@ -184,6 +184,31 @@ def log_scorecard(label: str, data: Any) -> None:
     logger.info(json.dumps(data, indent=2))
 
 
+def read_scorecard_then_close(session: requests.Session, card_id: str) -> requests.Response:
+    """Log the official scorecard, then close the card; return the close response.
+
+    The read comes first because the card is still open: after the close the API
+    answers 404 for this card_id (g-376-06). A failed read (an exception, a
+    non-200 answer, or a body that is not JSON) must never stop the close;
+    tests/unit/test_scorecard_log.py pins that (g-376-31).
+    """
+    try:
+        r = session.get(f"{ROOT_URL}/api/scorecard/{card_id}", timeout=10)
+        if r.status_code == 200:
+            log_scorecard("OFFICIAL SCORECARD (read before close)", r.json())
+        else:
+            logger.error(f"Failed to read scorecard: {r.status_code} - {r.text[:200]}")
+    except (requests.exceptions.RequestException, ValueError) as e:
+        logger.error(f"Failed to read scorecard before close: {e}")
+
+    logger.info("Closing scorecard...")
+    return session.post(
+        f"{ROOT_URL}/api/scorecard/close",
+        json={"card_id": card_id},
+        timeout=10,
+    )
+
+
 def run_game_loop(
     streaming_client: StreamingDecisionClient,
     action_sender: Callable[
@@ -1571,26 +1596,9 @@ def main() -> int:
         )
     )
 
-    # Read the official scorecard while the card is still open: after the close
-    # the API answers 404 for this card_id (g-376-06).
-    # A failed read must never stop the close below.
-    try:
-        r = session.get(f"{ROOT_URL}/api/scorecard/{card_id}", timeout=10)
-        if r.status_code == 200:
-            log_scorecard("OFFICIAL SCORECARD (read before close)", r.json())
-        else:
-            logger.error(f"Failed to read scorecard: {r.status_code} - {r.text[:200]}")
-    except (requests.exceptions.RequestException, ValueError) as e:
-        logger.error(f"Failed to read scorecard before close: {e}")
-
     # Close scorecard. Its response is logged as returned: the Scorecard model
     # reads the pre-0.9 `cards` shape, so its dump of today's payload was all zeros.
-    logger.info("Closing scorecard...")
-    r = session.post(
-        f"{ROOT_URL}/api/scorecard/close",
-        json={"card_id": card_id},
-        timeout=10,
-    )
+    r = read_scorecard_then_close(session, card_id)
 
     if r.status_code == 200:
         try:

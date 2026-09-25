@@ -21,6 +21,7 @@ from ayoai_client import (
     COLD_START_URL,
     DEFAULT_ENV_KEY,
     DEFAULT_HTTP_TIMEOUT_S,
+    DEFAULT_MAX_ATTEMPTS,
     DEV_COLD_START_URL,
     DEV_LANE,
     DEV_RESOLUTION_URL,
@@ -575,6 +576,57 @@ def test_default_http_timeout_exceeds_measured_provisioning_latency():
         f"measured {measured_warm_pool_latency_s}s warm-pool provisioning "
         f"latency — cold start will time out on every retry attempt."
     )
+
+
+# ---------- readiness-poll limit (g-376-31) ---------- #
+
+
+def _warming_session(polls: int) -> MagicMock:
+    return _make_session_mock(
+        [_mock_response(200, _success_body(ready=False)) for _ in range(polls)]
+    )
+
+
+def test_ready_poll_limit_env_override(monkeypatch):
+    """main.py never passes max_attempts, so AYOAI_READY_POLL_ATTEMPTS is the knob."""
+    monkeypatch.setenv("AYOAI_READY_POLL_ATTEMPTS", "7")
+    sess = _warming_session(DEFAULT_MAX_ATTEMPTS)
+    with pytest.raises(AyoaiTimeoutError, match="in 7 attempts"):
+        open_ayoai_session("card-P", api_key="k", session=sess, retry_delay_s=0.0)
+    assert sess.post.call_count == 1 + 7  # the cold-start POST, then 7 polls
+
+
+@pytest.mark.parametrize("bad", ["abc", "0", "-3", "2.5", " "])
+def test_ready_poll_limit_bad_value_falls_back_to_default(monkeypatch, bad):
+    monkeypatch.setenv("AYOAI_READY_POLL_ATTEMPTS", bad)
+    sess = _warming_session(DEFAULT_MAX_ATTEMPTS)
+    with pytest.raises(AyoaiTimeoutError, match=f"in {DEFAULT_MAX_ATTEMPTS} attempts"):
+        open_ayoai_session("card-Q", api_key="k", session=sess, retry_delay_s=0.0)
+    assert sess.post.call_count == 1 + DEFAULT_MAX_ATTEMPTS
+
+
+def test_explicit_max_attempts_beats_the_env_var(monkeypatch):
+    monkeypatch.setenv("AYOAI_READY_POLL_ATTEMPTS", "50")
+    sess = _warming_session(3)
+    with pytest.raises(AyoaiTimeoutError, match="in 3 attempts"):
+        open_ayoai_session(
+            "card-R", api_key="k", session=sess, max_attempts=3, retry_delay_s=0.0
+        )
+
+
+def test_default_ready_poll_budget_covers_the_measured_cold_starts():
+    """Pin the default against the cold starts it was sized from (g-376-06).
+
+    READY came after 79.5s and 76.8s; a third open was still WARMING when the old
+    90-poll limit ran out at 113.4s, so that card never played. Giving up early
+    saves nothing on the AyoAI side (the env server ends an idle instance 180s
+    after READY either way), so the limit errs high. Raising it is fine; dropping
+    it back near a cold start is the regression.
+    """
+    seconds_per_poll = 113.4 / 90  # 90 polls, 1s apart, took 113.4s with the request
+    budget_s = DEFAULT_MAX_ATTEMPTS * seconds_per_poll
+    assert budget_s >= 2 * 113.4, f"{budget_s:.0f}s is under twice the open that gave up"
+    assert budget_s >= 3 * 79.5, f"{budget_s:.0f}s is under three typical cold starts"
 
 
 def test_initiate_cold_start_payload_shape():

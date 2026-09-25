@@ -94,9 +94,21 @@ def resolve_lane(lane: str | None = None) -> AyoaiLane:
         return DEV_LANE
     raise AyoaiSessionError(f"AYOAI_LANE must be prod or dev, not {name!r}")
 
-# Roblox parity: same cap (SendUpdate.server.lua:140), same intervals
-# (SendUpdate.server.lua:166). One-second between attempts (line 146).
-DEFAULT_MAX_ATTEMPTS = 90
+# Readiness-poll budget (g-376-31). The one-second interval keeps Roblox parity
+# (SendUpdate.server.lua:146, :166); the cap no longer does. Roblox's 90
+# (SendUpdate.server.lua:140) sat only ~1.4x above an ARC cold start. Measured
+# cold opens: READY after 57s / 42 polls (2026-05-22), ~80s / 61 (June, rb-1621),
+# 79.5s and 76.8s / 61 (2026-09-24, g-376-06), and one still WARMING when the 90
+# polls ran out at 113.4s (~1.26s per poll with the request): exit 3, the card
+# never played.
+# Giving up early saves nothing on the AyoAI side. main.py sends no stop, and the
+# env server's inactivity monitor ends an idle instance STREAM_INACTIVITY_TIMEOUT_S
+# (180s) after it reaches READY either way. So the costly error is a limit that is
+# too LOW: a lost run, and the exam plays each held-out game once, cold. The
+# default therefore errs high: 240 polls, ~5 min. That is ~3.8x the typical cold
+# start and ~2.6x the slowest seen. The poll rate is unchanged; only the budget
+# grew. AYOAI_READY_POLL_ATTEMPTS overrides it, and a bad value falls back here.
+DEFAULT_MAX_ATTEMPTS = 240
 DEFAULT_RETRY_DELAY_S = 1.0
 LOG_INTERVALS = {1, 5, 10, 20, 30, 45, 60}
 
@@ -428,7 +440,7 @@ def open_ayoai_session(
     env_key: str = DEFAULT_ENV_KEY,
     api_key: str | None = None,
     *,
-    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    max_attempts: int | None = None,
     retry_delay_s: float = DEFAULT_RETRY_DELAY_S,
     http_timeout_s: float | None = None,
     session: requests.Session | None = None,
@@ -445,7 +457,10 @@ def open_ayoai_session(
         env_key: The AyoAI environment key. Default "arc-agi-3" (g-315-02).
         api_key: The AYOAI-API-KEY value. Defaults to env var AYOAI_API_KEY,
             falling back to AYO_OPERATOR_KEY (the fleet's actual value).
-        max_attempts: Cap on poll attempts (default 90, Roblox parity).
+        max_attempts: Cap on poll attempts. None (default) resolves from
+            AYOAI_READY_POLL_ATTEMPTS, else DEFAULT_MAX_ATTEMPTS (240, sized
+            against measured cold starts above). main.py calls this without
+            the argument, so the env var is how a run changes it (g-376-31).
         retry_delay_s: Seconds between poll attempts (default 1.0, Roblox parity).
         http_timeout_s: Per-request timeout in seconds. None (default) resolves
             from AYOAI_HTTP_TIMEOUT_S, else DEFAULT_HTTP_TIMEOUT_S (30.0, set
@@ -473,6 +488,8 @@ def open_ayoai_session(
         raise AyoaiSessionError("env_key is required (default 'arc-agi-3')")
     if http_timeout_s is None:
         http_timeout_s = _env_float("AYOAI_HTTP_TIMEOUT_S", DEFAULT_HTTP_TIMEOUT_S)
+    if max_attempts is None:
+        max_attempts = _env_int("AYOAI_READY_POLL_ATTEMPTS", DEFAULT_MAX_ATTEMPTS)
     resolved_lane = resolve_lane(lane)
     resolved_api_key = resolve_api_key(api_key)
     if not resolved_api_key:
