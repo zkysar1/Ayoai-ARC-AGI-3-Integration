@@ -23,12 +23,14 @@ from ayoai_client import (
     AyoaiSessionInfo,
     open_ayoai_session,
     resolve_api_key,
+    resolve_lane,
 )
 from ayoai_streaming_client import (
     AyoaiStreamingClient,
     AyoaiStreamingDnsError,
     AyoaiStreamingError,
     StreamingDecisionClient,
+    resolve_streaming_host_with_retry,
 )
 from house_rules import heldout_refusal
 from random_streaming_adapter import RandomStreamingAdapter
@@ -860,6 +862,30 @@ def main() -> int:
         if not 0.0 <= theory_win_share <= 1.0:
             parser.error("ARC_THEORY_WIN_TEST_SHARE must be a number from 0 to 1")
 
+    # g-376-10-b: the theory arm's memory regime (design §12). cold (the default) reads
+    # and stores nothing. warm stores each admitted theory in AyoAI memory through the
+    # session and offers the game's stored theories to the admission checks at each
+    # level start. Only the theory arm uses memory, so warm without it is refused.
+    theory_arm_on = os.environ.get("SOLVER_V2_THEORY_ARM", "").strip().lower() in (
+        "1",
+        "true",
+        "on",
+        "yes",
+    )
+    theory_memory_regime = os.environ.get("ARC_THEORY_MEMORY", "").strip().lower() or "cold"
+    if theory_memory_regime not in ("cold", "warm"):
+        parser.error("ARC_THEORY_MEMORY must be cold or warm")
+    if theory_memory_regime == "warm" and not (args.use_solver_v2 and theory_arm_on):
+        parser.error("ARC_THEORY_MEMORY=warm needs --use-solver-v2 and SOLVER_V2_THEORY_ARM")
+
+    # g-376-10-b: AYOAI_LANE picks the launch chain the session opens through (unset or
+    # prod, or dev for the DEV lane of grant-015). A value it cannot use is refused here,
+    # before a scorecard is opened.
+    try:
+        resolve_lane()
+    except AyoaiSessionError as exc:
+        parser.error(str(exc))
+
     # --state-graph only takes effect under --use-solver-v2 (the v2 adapter is
     # the sole StateGraphExplorer build site). Warn rather than error so the
     # SOLVER_V2_STATE_GRAPH env-var path and harmless no-op invocations still
@@ -1288,15 +1314,11 @@ def main() -> int:
         # moves; plain code checks them and picks every move. Every call goes
         # through spend_meter (reads ANTHROPIC_API_KEY from the environment by the
         # SDK's own lookup). Measures go to a run directory outside the repo.
-        if os.environ.get("SOLVER_V2_THEORY_ARM", "").strip().lower() in (
-            "1",
-            "true",
-            "on",
-            "yes",
-        ):
+        if theory_arm_on:
             import spend_meter
             from adapters.arc_theory import THEORY_MODEL, make_theory_arm
             from primitives.theory_arm import ArmConfig
+            from primitives.theory_memory import TheoryMemory
 
             arm_config = (
                 None
@@ -1317,11 +1339,28 @@ def main() -> int:
             theory_client = spend_meter.metered_anthropic(
                 game_id=args.game, run_id=theory_run_id
             )
+            # g-376-10-b: warm memory lives in the game's AyoAI session. The solver-v2
+            # branch above opened one or aborted the play, so it is there.
+            theory_memory: TheoryMemory | None = None
+            if theory_memory_regime == "warm" and ayoai_session is not None:
+                memory_url = ayoai_session.streaming_url
+                theory_memory = TheoryMemory.for_session(
+                    memory_url,
+                    api_key=resolve_api_key(),
+                    game_id=args.game,
+                    run_id=theory_run_id,
+                    warm_dns=lambda: resolve_streaming_host_with_retry(memory_url),
+                )
+            elif theory_memory_regime == "warm":
+                logger.warning("[theory-arm] ARC_THEORY_MEMORY=warm but no AyoAI session is open; memory=cold")
             logger.info(
-                "[theory-arm] enabled: model=%s run_dir=%s win_test_share=%s",
+                "[theory-arm] enabled: model=%s run_dir=%s win_test_share=%s memory=%s",
                 THEORY_MODEL,
                 theory_dir,
                 "default" if arm_config is None else arm_config.win_test_share,
+                "cold"
+                if theory_memory is None
+                else f"warm via {theory_memory.base_url}/ArcTheory",
             )
             streaming_client.set_theory_arm(
                 lambda grid: make_theory_arm(
@@ -1331,6 +1370,7 @@ def main() -> int:
                     run_id=theory_run_id,
                     run_dir=theory_dir,
                     config=arm_config,
+                    memory=theory_memory,
                 )
             )
     else:
@@ -1389,6 +1429,7 @@ def main() -> int:
         if ayoai_session is not None:
             recorder.record({
                 "kind": "ayoai_session_open",
+                "lane": ayoai_session.lane,
                 "ayo_server_key": ayoai_session.ayo_server_key,
                 "ayo_environment_key": ayoai_session.ayo_environment_key,
                 "ayoai_hostname": ayoai_session.ayoai_hostname,

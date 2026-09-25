@@ -1080,6 +1080,7 @@ class SolverV2StreamingAdapter:
                 "consulted": True,
                 "changed": theory_changed,
                 "calls": self._theory_arm.synth.budget.calls,
+                "memory": self._theory_arm.memory_state,
             }
         if boundary_reason is not None:
             provenance["episode_boundary"] = boundary_reason

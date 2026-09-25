@@ -347,6 +347,22 @@ class TheorySynthesizer:
         self._record(context, trigger, verdict=verdict.check, result=result, admission=verdict)
         return verdict
 
+    def adopt(self, code: str, current: Grid, simple: Sequence[str], click: bool, *, source: str) -> Admission:
+        """Offer a theory this run's model did not write (a stored theory from memory,
+        design §12 warm regime) to the same seven checks. No call is made and nothing is
+        charged. It gets a version number like a written theory, so the measures follow
+        it, and only an admitted one becomes the current theory the next prompt shows."""
+        version = len(self.versions) + 1
+        verdict = self.admit(code, current, simple, click, version=version)
+        self.versions.append(
+            {"version": version, "trigger": "reuse", "code": code, "log_size": self.sandbox.log_size,
+             "admitted": verdict.admitted, "source": source}
+        )
+        if verdict.admitted:
+            self.latest_code = code
+            self.latest_report = self._report(verdict)
+        return verdict
+
     def admit(
         self,
         code: str,

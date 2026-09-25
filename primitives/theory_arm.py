@@ -29,6 +29,12 @@ win"), moves made with no admitted win guess, the admitted theory's per-move
 prediction log, and the arc-theory-v1 memory record of design §12 at every level-up
 and at game end. They go to the injected ``sink(kind, record)``.
 
+Memory (design §12, warm regime, g-376-10-b): with a ``TheoryMemory`` injected, the arm
+fetches the game's stored theories at each level start, offers them to the admission
+checks at the level's first call point before the model is asked (a "theory-reuse"
+record says what happened), stores the admitted theory with each memory record, and
+ticks the memory once per move. Without one the arm is cold, as before.
+
 ENV-AGNOSTIC: grids are 2-D int grids, actions are strings or ``("ACTION6", row, col)``
 click tuples, and ``click_targets`` (one click per object) is injected by the adapter.
 The game key is held only for the memory record; it never reaches a prompt.
@@ -37,17 +43,24 @@ The game key is held only for the memory record; it never reaches a prompt.
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence
 
 from primitives.theory_sandbox import Grid
 from primitives.theory_synthesizer import (
+    Admission,
     Counterexample,
     MoveNote,
     TheoryContext,
     TheorySynthesizer,
 )
+
+if TYPE_CHECKING:
+    from primitives.theory_memory import StoredTheory, TheoryMemory
+
+logger = logging.getLogger(__name__)
 
 Action = Any
 FrozenGrid = tuple[tuple[int, ...], ...]
@@ -95,6 +108,7 @@ class TheoryArm:
         sink: Optional[Sink] = None,
         game_key: str = "",
         run_id: str = "",
+        memory: Optional[TheoryMemory] = None,
     ) -> None:
         self.synth = synthesizer
         self._click_targets = click_targets
@@ -102,6 +116,11 @@ class TheoryArm:
         self._sink = sink
         self.game_key = game_key
         self.run_id = run_id
+        # memory (warm regime): the stored theories waiting for this level's first
+        # call point, and the game's class features stored beside each theory
+        self.memory = memory
+        self._candidates: list[StoredTheory] = []
+        self._features: dict[str, Any] = {}
         # previous decision: (grid, action, level)
         self._pending: Optional[tuple[FrozenGrid, Action, int]] = None
         # opening probe
@@ -146,6 +165,7 @@ class TheoryArm:
         self.memory_records: list[dict[str, Any]] = []
         self.moves_without_guess = 0
         self.prediction_log: list[dict[str, Any]] = []
+        self.reuse_records: list[dict[str, Any]] = []
 
     # ---- the frame loop ------------------------------------------------------------ #
 
@@ -167,8 +187,13 @@ class TheoryArm:
         """
         g = freeze(grid)
         self.synth.phase = "between_moves"
+        if self.moves == 0 and self.memory is not None:
+            self._features = self._class_features(g, actions, click_allowed)
+            self._candidates = self.memory.level_start(level)
         self._close(g, level, reset)
         self._maybe_call(g, level, actions, click_allowed)
+        if self.memory is not None:
+            self.memory.tick()
         self._flush_calls()
         self.synth.phase = "decide"
         try:
@@ -210,7 +235,15 @@ class TheoryArm:
             "admitted_prediction": {"moves": len(self.prediction_log), "exact": exact},
             "later_accuracy": later,
             "sandbox_restarts": self.synth.sandbox.restarts,
+            "memory": self.memory_state,
+            "theories_reused": sum(1 for r in self.reuse_records if r["admitted_id"]),
         }
+
+    @property
+    def memory_state(self) -> str:
+        """The memory regime in force: "cold" when no memory is attached, else the
+        memory's own state, "on", or "off: <why>" once a failure switched it off."""
+        return "cold" if self.memory is None else self.memory.state
 
     # ---- phase 1: between moves -------------------------------------------------- #
 
@@ -315,6 +348,8 @@ class TheoryArm:
         self._search = False
         self._plan = None
         self._tests_reached = 0
+        if self.memory is not None:
+            self._candidates = self.memory.level_start(level)
 
     def _maybe_call(
         self, grid: FrozenGrid, level: int, actions: Sequence[str], click_allowed: bool
@@ -341,21 +376,23 @@ class TheoryArm:
             if self.moves - self._stalled_since < self.cfg.stall_moves:
                 return
             self._unstall()
-        context = TheoryContext(
-            grid=grid,
-            actions=tuple(actions),
-            click_allowed=click_allowed,
-            level=level,
-            moves_on_level=self._level_moves,
-            recent=tuple(self._recent),
-            counterexamples=tuple(self._ces[-self.cfg.counterexamples_shown:]),
-            theory_code=self.synth.latest_code,
-            check_report=self.synth.latest_report,
-            refuted_guesses=tuple(self._refuted_texts),
-        )
-        verdict = self.synth.attempt(
-            trigger, context, simple=_simple(actions), click=click_allowed
-        )
+        verdict = self._reuse(trigger, grid, level, actions, click_allowed)
+        if verdict is None:
+            context = TheoryContext(
+                grid=grid,
+                actions=tuple(actions),
+                click_allowed=click_allowed,
+                level=level,
+                moves_on_level=self._level_moves,
+                recent=tuple(self._recent),
+                counterexamples=tuple(self._ces[-self.cfg.counterexamples_shown:]),
+                theory_code=self.synth.latest_code,
+                check_report=self.synth.latest_report,
+                refuted_guesses=tuple(self._refuted_texts),
+            )
+            verdict = self.synth.attempt(
+                trigger, context, simple=_simple(actions), click=click_allowed
+            )
         self._opened = True
         self._refutation_pending = False
         if self._search:
@@ -387,6 +424,58 @@ class TheoryArm:
             self._stall_kinds = set(self._ce_kinds)
             if self.synth.admitted is None:
                 self._enter_search()
+
+    def _reuse(
+        self, trigger: str, grid: FrozenGrid, level: int, actions: Sequence[str], click_allowed: bool
+    ) -> Optional[Admission]:
+        """Warm regime (design §12): at the level's first call point, offer each stored
+        theory to the seven admission checks, newest first, before the model is asked.
+        The first one admitted becomes the theory in force and no call is made. If none
+        is admitted the call goes ahead exactly as it would with no memory."""
+        candidates, self._candidates = self._candidates, []
+        if not candidates:
+            return None
+        in_force = self.synth.admitted["code"] if self.synth.admitted else None
+        tried: list[dict[str, Any]] = []
+        verdict: Optional[Admission] = None
+        for stored in candidates:
+            if stored.code == in_force:
+                continue
+            v = self.synth.adopt(stored.code, grid, _simple(actions), click_allowed, source=f"memory:{stored.id}")
+            tried.append(
+                {"id": stored.id, "from_run": stored.run_id, "theory_version": v.version, "verdict": v.check}
+            )
+            if v.admitted:
+                verdict = v
+                break
+        record = {
+            "run_id": self.run_id,
+            "game_key": self.game_key,
+            "level": level,
+            "move": self.moves,
+            "replaces_call": trigger,
+            "candidates": len(candidates),
+            "tried": tried,
+            "admitted_id": tried[-1]["id"] if verdict is not None else None,
+            "admitted_from_run": tried[-1]["from_run"] if verdict is not None else None,
+            "theory_version": verdict.version if verdict is not None else None,
+        }
+        self.reuse_records.append(record)
+        self._emit("theory-reuse", record)
+        if verdict is not None:
+            logger.info(
+                "[theory-arm] level %d move %d: stored theory id=%s from run %s passed the admission "
+                "checks on this run's %d logged moves and is theory v%d; no model call at %s",
+                level, self.moves, record["admitted_id"], record["admitted_from_run"], verdict.total,
+                verdict.version, trigger,
+            )
+        else:
+            logger.info(
+                "[theory-arm] level %d move %d: none of %d stored theories passed the admission checks "
+                "(%s); %s calls the model",
+                level, self.moves, len(candidates), "; ".join(t["verdict"][:80] for t in tried), trigger,
+            )
+        return verdict
 
     def _unstall(self) -> None:
         self._stall_count = 0
@@ -520,6 +609,21 @@ class TheoryArm:
         }
         self.memory_records.append(record)
         self._emit("theory-records", record)
+        if self.memory is not None:
+            self.memory.store(record, self._features)
+
+    def _class_features(
+        self, grid: FrozenGrid, actions: Sequence[str], click_allowed: bool
+    ) -> dict[str, Any]:
+        """What kind of game this is, from its first screen: stored beside each theory
+        as its game class features, never shown to the model."""
+        return {
+            "grid": [len(grid), len(grid[0]) if grid else 0],
+            "colours": sorted(_colours(grid)),
+            "objects": len(self._click_targets(grid)),
+            "actions": _simple(actions),
+            "click": bool(click_allowed),
+        }
 
     def _flush_calls(self) -> None:
         for record in self.synth.records[self._flushed:]:
