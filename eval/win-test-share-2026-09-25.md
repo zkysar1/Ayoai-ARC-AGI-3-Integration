@@ -1,9 +1,10 @@
 # Win-seeking moves vs coverage moves, offline, 2026-09-25 (g-376-24)
 
 On 2026-09-24 the owner said the agent "explored well. But it didn't use that
-exploration to win". This experiment asks whether spending a share of each level's
-moves on testing the theory's win guess, instead of exploring, completes more levels or
-reaches the first level-up sooner on the dev games.
+exploration to win" (the full text is on Mind goal g-376-23). This experiment asks
+whether spending a share of each level's moves on testing the theory's win guess,
+instead of exploring, completes more levels or reaches the first level-up sooner on
+the dev games.
 
 **Answer: not with the theory step as built.** In 45 runs (15 dev games x 3 shares) the
 smallest model got 12 of 830 theories admitted, and the arm spent 2 moves on win tests
@@ -104,6 +105,12 @@ columns were identical in all three shares, except the win-test moves on lp85.
 - Time: C plays ft09 in 7 s. Each W run took 23 to 24 minutes on ft09 (1,396 to 1,438 s),
   consistent with the planner running to its 20 s cap on many moves (inferred, not
   measured per move). Other games took 144 to 382 s per W run.
+- Sources: the rows of `eval/win-test-share-C-2026-09-25.json` and
+  `eval/win-test-share-W25-2026-09-25.json` (W50 and W75 likewise), namely `seconds`,
+  `levels_completed`, `level_up_at_action` and the `theory` measures. The call verdicts
+  are the `verdict` field of `theory-calls.jsonl` in each row's theory run directory,
+  recounted at the g-376-24 close: 830 paid calls, 772 refused at check 4, 24 at check
+  7, 18 at check 1, 4 at check 6, and 12 admitted.
 
 ## Verdict
 
