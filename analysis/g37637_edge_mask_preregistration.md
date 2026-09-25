@@ -183,3 +183,15 @@ The constraints of the goal hold throughout:
 - the $250 cap through spend_meter;
 - dev games only (held-out games are sealed until g-376-14);
 - sportsmanlike play.
+
+## Addendum 2026-09-25T07:16Z (during the run, before any of its data was read)
+
+Measure 7 misnames its instrument. It calls `seq_hash` the sha256 of the run's action
+sequence, but `eval/arm_table.py`, the analyzer named above, computes a SCREEN hash: sha256
+over every recorded layer (`eval/level_up_events.screen_hash`), because the offline frames
+do not carry the action taken. g-376-25's preregistration uses the same wording over the
+same analyzer. The attribution control compares those screen hashes, so Z1 and Z2 must have
+equal screen hashes on all 15 games. Nothing else changes.
+
+`analysis/g37637_edge_mask_measures.py` computes measures 2, 3, 4 and 8 and the verdicts
+above from the merged runs and arm_table's summary.
