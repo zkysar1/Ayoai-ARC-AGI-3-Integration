@@ -87,3 +87,76 @@ would push the fleet past $53.12 ($20 added).
 
 This document was committed and pushed before the first live run of this
 experiment.
+
+---
+
+## Addendum: Re-run with 2000-action budget (2026-09-25)
+
+Filed before the re-run's first live game. Pipeline hypothesis:
+`2026-09-25_arc-stored-theory-no-first-level-gain`.
+
+### Rationale
+
+The first batch (verdict: UNRESOLVABLE) ran 5 games at 300 actions. All 22
+proposed theories failed admission check 4 (replay verification), so 0 of 5
+games were seeded. The offline check-4 census (`g37637_check4_census.json`)
+shows that admitted theories exist in AyoAI memory for exactly 4 dev games:
+ft09 (37 admitted), ls20 (5), su15 (5), lp85 (3). All other dev games have
+zero admissions. This re-run targets those 4 games at 2000 actions per run
+so the theory arm has enough play to store new theories, and the WARM arm
+can load theories already admitted by offline runs.
+
+### Design changes from first batch
+
+| Parameter | First batch | Re-run |
+|-----------|-------------|--------|
+| `--max-actions` | 300 | 2000 |
+| Games | sp80, ar25, lp85 + fallback r11l, tn36, vc33 | ft09, ls20, su15 + fallback lp85 |
+| Arms | OFF / SEED / ON | OFF / WARM-A / (conditional) WARM-B |
+| Censored value | 300 | 2000 |
+| Theory run dir | `/tmp/echo-arc/theory-runs-g37610c` | `/tmp/echo-arc/theory-runs-g37610c2` |
+| Seeded detection | `POST /ArcTheory.*201` (corrected) | same + LOADED detection from GET line |
+
+### Arms (per game, in order)
+
+1. **OFF** — `ARC_THEORY_MEMORY=cold`. Baseline. No memory.
+2. **WARM-A** — `ARC_THEORY_MEMORY=warm`. First warm run. May load
+   pre-existing theories (from offline check-4 runs) AND store new ones.
+3. **WARM-B** (conditional) — `ARC_THEORY_MEMORY=warm`. Runs only if WARM-A
+   stored theories but loaded none. WARM-B should load what WARM-A stored.
+
+Adaptive seeding:
+- If WARM-A loaded >= 1 candidate theory → WARM-A is the ON arm. Done.
+- Else if WARM-A stored >= 1 theory (POST /ArcTheory -> 201) → run WARM-B.
+  WARM-B is the ON arm.
+- Else → game is UNSEEDED.
+
+### Detection patterns
+
+**LOADED**: count of candidates from the `[theory-memory] level * start:`
+log line. Regex: `\[theory-memory\] level .* start:.*candidate`; extract the
+integer before `candidate(s)` and sum across lines.
+
+**STORED**: any line matching `\[theory-memory\].*POST /ArcTheory.*201`
+(broader than the first batch's `game_end`-only pattern, since `store()` fires
+at both `level_up` and `game_end` outcomes).
+
+### Games (pre-registered order)
+
+Primary: ft09-0d8bbf25, ls20-9607627b, su15-1944f8ab.
+Fallback: lp85-305b61c3.
+
+Stop adding games once 3 games are seeded, or after 4 games in total.
+
+### Measures
+
+Same as the original design above, except:
+- Censored value is 2000 (not 300).
+- Noise control: report |WARM-A - OFF| (or |WARM-B - OFF|) beside the ON/OFF
+  delta for each game.
+
+### Spend cap
+
+Fleet has spent approximately $35.83 of $250 cap. This batch runs at most
+12 live sessions (4 games x 3 arms). At ~$0.5--1.0/run for 2000-action games,
+expected cost is ~$6--12. Stop and report if this batch would push past $20.
