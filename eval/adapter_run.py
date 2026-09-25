@@ -22,6 +22,10 @@ model calls go through spend_meter (the $250 cap and its ledger), and each game'
 records go to a run directory under ARC_THEORY_RUN_DIR (default
 ~/.ayoai-arc/theory-runs). The port-only run, without --theory-share, is the
 coverage arm: a share of 0 still lets the arm follow one plan per level.
+
+Each row counts `distinct_screens`, the distinct top layers the player was shown:
+under the fixed action budget, a proxy for how large the game's reachable state
+space is (g-376-24 reports small and large games apart).
 """
 
 from __future__ import annotations
@@ -57,7 +61,7 @@ from action_budget import DEFAULT_ACTION_BUDGET  # noqa: E402
 from adapters.arc_theory import make_theory_arm  # noqa: E402
 from house_rules import make_game  # noqa: E402
 from port_streaming_client import PortStreamingClient  # noqa: E402
-from primitives.theory_arm import ArmConfig  # noqa: E402
+from primitives.theory_arm import ArmConfig, freeze  # noqa: E402
 from solver_v2.streaming_adapter import SolverV2StreamingAdapter  # noqa: E402
 from structs import FrameData, GameAction, GameState  # noqa: E402
 
@@ -74,6 +78,7 @@ class AdapterDrive(Agent):  # type: ignore[misc]
         self.adapter = adapter
         self.decided_by: Counter[str] = Counter()
         self.chosen: dict[int, str] = {}  # its result lands at frames[len(frames)]
+        self.screens: set[int] = set()  # distinct top layers seen (g-376-24 game size)
 
     def is_done(self, frames: list[Any], latest_frame: Any) -> bool:
         return bool(latest_frame.state is EGameState.WIN)
@@ -91,6 +96,8 @@ class AdapterDrive(Agent):  # type: ignore[misc]
                 GameAction.from_id(int(a)) for a in (getattr(latest_frame, "available_actions", None) or [])
             ],
         )
+        if frame.frame:
+            self.screens.add(hash(freeze(frame.frame[-1])))
         decision = self.adapter.choose_action(frame)
         self.decided_by[str((decision.provenance or {}).get("decided_by", "?"))] += 1
         # By NAME: both enums mirror the framework's action names. A mismatch
@@ -146,7 +153,9 @@ def main() -> None:
         )
         theory_run_id = None
         if args.theory_share is not None:
-            theory_run_id = f"theory-{game}-{int(time.time())}"
+            # The pid keeps parallel runs of one game (one process per share) apart:
+            # three shares started ar25 in the same second and shared a run directory.
+            theory_run_id = f"theory-{game}-{int(time.time())}-{os.getpid()}"
             adapter.set_theory_arm(
                 functools.partial(
                     make_theory_arm,
@@ -179,6 +188,7 @@ def main() -> None:
             "levels_completed": last.levels_completed,
             "win_levels": last.win_levels,
             "decided_by": dict(agent.decided_by),
+            "distinct_screens": len(agent.screens),
             **attempt_profile(agent.frames, agent.chosen),
         }
         if theory_run_id is not None and isinstance(adapter, PortStreamingClient):

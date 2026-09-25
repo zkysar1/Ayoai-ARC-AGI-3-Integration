@@ -1,0 +1,3883 @@
+{
+ "player": "PortStreamingClient (kaggle_salvage.MyAgent behind the AyoAI streaming surface) + TheoryArm",
+ "max_actions": 2000,
+ "theory_share": 0.5,
+ "runs": [
+  {
+   "source": "smoke-W50-vc33.json",
+   "scorecard_id": "b9b6f06e-7f27-481a-85b5-c7d9990b2fe8",
+   "overall_score": 0.01370506695904143,
+   "seconds": 382.9,
+   "theory_share": 0.5,
+   "complete": true,
+   "games": [
+    "vc33"
+   ]
+  },
+  {
+   "source": "W50-A.log",
+   "scorecard_id": "45f4160b-33c4-43a5-9167-18e579cc5b0e",
+   "complete": false,
+   "note": "process stopped before its JSON was written; rows are its per-game log lines",
+   "games": [
+    "ar25",
+    "bp35",
+    "cd82",
+    "cn04",
+    "ft09",
+    "ka59"
+   ]
+  },
+  {
+   "source": "W50-B.json",
+   "scorecard_id": "baadba3f-cab1-4509-8c24-d0c62697150f",
+   "overall_score": 1.111003458939747,
+   "seconds": 1389.4,
+   "theory_share": 0.5,
+   "complete": true,
+   "games": [
+    "r11l",
+    "re86",
+    "sp80",
+    "su15",
+    "tn36",
+    "wa30"
+   ]
+  },
+  {
+   "source": "rest-W50.json",
+   "scorecard_id": "dca5c579-91a0-4665-be78-90e4a6cc36e6",
+   "overall_score": 0.003462457851464632,
+   "seconds": 591.0,
+   "theory_share": 0.5,
+   "complete": true,
+   "games": [
+    "ka59",
+    "lp85",
+    "ls20"
+   ]
+  },
+  {
+   "source": "rerun-W50-ar25.json",
+   "scorecard_id": "c28a1668-0a21-431f-934e-97dfd3872ffd",
+   "overall_score": 0.3591016846918879,
+   "seconds": 297.6,
+   "theory_share": 0.5,
+   "complete": true,
+   "games": [
+    "ar25"
+   ]
+  },
+  {
+   "source": "rerun-W50-r11l.json",
+   "scorecard_id": "4a4e8b6f-8ee7-4d56-98b3-5f79b6aee058",
+   "overall_score": 4.761904761904762,
+   "seconds": 356.6,
+   "theory_share": 0.5,
+   "complete": true,
+   "games": [
+    "r11l"
+   ]
+  }
+ ],
+ "replaced_rows": [
+  {
+   "game": "ka59",
+   "run_id": "theory-ka59-1790308060",
+   "by": "rest-W50",
+   "levels_completed": 0,
+   "level_up_at_action": []
+  },
+  {
+   "game": "ar25",
+   "run_id": "theory-ar25-1790305817",
+   "by": "rerun-W50-ar25",
+   "levels_completed": 1,
+   "level_up_at_action": [
+    89
+   ]
+  },
+  {
+   "game": "r11l",
+   "run_id": "theory-r11l-1790305817",
+   "by": "rerun-W50-r11l",
+   "levels_completed": 1,
+   "level_up_at_action": [
+    19
+   ]
+  }
+ ],
+ "missing_games": [],
+ "games": [
+  {
+   "game": "ar25",
+   "actions": 2001,
+   "seconds": 296.87,
+   "state": "NOT_FINISHED",
+   "levels_completed": 1,
+   "win_levels": 8,
+   "decided_by": {
+    "port": 2001
+   },
+   "distinct_screens": 1434,
+   "resets": 17,
+   "game_overs": 17,
+   "attempt_actions": [
+    181,
+    114,
+    122,
+    109,
+    140,
+    108,
+    84,
+    120,
+    104,
+    117,
+    104,
+    110,
+    99,
+    104,
+    126,
+    129,
+    92
+   ],
+   "level_actions_at_game_over": [
+    92,
+    114,
+    122,
+    109,
+    140,
+    108,
+    84,
+    120,
+    104,
+    117,
+    104,
+    110,
+    99,
+    104,
+    126,
+    129,
+    92
+   ],
+   "level_up_at_action": [
+    89
+   ],
+   "theory_run_id": "theory-ar25-1790307272-2111046",
+   "theory": {
+    "moves": 1984,
+    "calls": 25,
+    "cost_usd": 0.329884,
+    "calls_by_phase": {
+     "between_moves": 25
+    },
+    "level_ups": 1,
+    "win_guessed_before_win": "0/1",
+    "moves_without_guess": 1984,
+    "win_test_moves": 0,
+    "refuted_before_level_up": [
+     0
+    ],
+    "refuted_on_unfinished_level": 0,
+    "admitted_prediction": {
+     "moves": 0,
+     "exact": 0
+    },
+    "later_accuracy": [
+     {
+      "version": 1,
+      "trigger": "C1",
+      "admitted": false,
+      "written_at_move": 17,
+      "later_moves": 1948,
+      "exact": 5,
+      "cell_accuracy": 0.1978
+     },
+     {
+      "version": 2,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 17,
+      "later_moves": 1948,
+      "exact": 360,
+      "cell_accuracy": 0.9592
+     },
+     {
+      "version": 3,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 20,
+      "later_moves": 1945,
+      "exact": 360,
+      "cell_accuracy": 0.9628
+     },
+     {
+      "version": 4,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 20,
+      "later_moves": 1945,
+      "exact": 69,
+      "cell_accuracy": 0.953
+     },
+     {
+      "version": 5,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 24,
+      "later_moves": 1941,
+      "exact": 65,
+      "cell_accuracy": 0.9432
+     },
+     {
+      "version": 6,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 24,
+      "later_moves": 1941,
+      "exact": 65,
+      "cell_accuracy": 0.9432
+     },
+     {
+      "version": 7,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 54,
+      "later_moves": 1911,
+      "exact": 0,
+      "cell_accuracy": 0.9358
+     },
+     {
+      "version": 8,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 54,
+      "later_moves": 1911,
+      "exact": 0,
+      "cell_accuracy": 0.0
+     },
+     {
+      "version": 9,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 84,
+      "later_moves": 1881,
+      "exact": 0,
+      "cell_accuracy": 0.9555
+     },
+     {
+      "version": 10,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 84,
+      "later_moves": 1881,
+      "exact": 0,
+      "cell_accuracy": 0.8987
+     },
+     {
+      "version": 11,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 88,
+      "later_moves": 1877,
+      "exact": null,
+      "cell_accuracy": null
+     },
+     {
+      "version": 12,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 88,
+      "later_moves": 1877,
+      "exact": 3,
+      "cell_accuracy": 0.3857
+     },
+     {
+      "version": 13,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 92,
+      "later_moves": 1873,
+      "exact": 3,
+      "cell_accuracy": 0.9447
+     },
+     {
+      "version": 14,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 92,
+      "later_moves": 1873,
+      "exact": 3,
+      "cell_accuracy": 0.9447
+     },
+     {
+      "version": 15,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 95,
+      "later_moves": 1870,
+      "exact": 3,
+      "cell_accuracy": 0.9446
+     },
+     {
+      "version": 16,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 95,
+      "later_moves": 1870,
+      "exact": 1,
+      "cell_accuracy": 0.946
+     },
+     {
+      "version": 17,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 125,
+      "later_moves": 1840,
+      "exact": 410,
+      "cell_accuracy": 0.7772
+     },
+     {
+      "version": 18,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 125,
+      "later_moves": 1840,
+      "exact": 410,
+      "cell_accuracy": 0.9632
+     },
+     {
+      "version": 19,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 155,
+      "later_moves": 1810,
+      "exact": 230,
+      "cell_accuracy": 0.9602
+     },
+     {
+      "version": 20,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 155,
+      "later_moves": 1810,
+      "exact": 29,
+      "cell_accuracy": 0.9552
+     },
+     {
+      "version": 21,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 184,
+      "later_moves": 1781,
+      "exact": 268,
+      "cell_accuracy": 0.8111
+     },
+     {
+      "version": 22,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 184,
+      "later_moves": 1781,
+      "exact": 0,
+      "cell_accuracy": 0.9319
+     },
+     {
+      "version": 23,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 214,
+      "later_moves": 1751,
+      "exact": 0,
+      "cell_accuracy": 0.9238
+     },
+     {
+      "version": 24,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 214,
+      "later_moves": 1751,
+      "exact": 0,
+      "cell_accuracy": 0.9239
+     },
+     {
+      "version": 25,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 244,
+      "later_moves": 1721,
+      "exact": 0,
+      "cell_accuracy": 0.9239
+     }
+    ],
+    "sandbox_restarts": 0
+   }
+  },
+  {
+   "game": "bp35",
+   "actions": 2001,
+   "seconds": 182.88,
+   "state": "NOT_FINISHED",
+   "levels_completed": 0,
+   "win_levels": 9,
+   "decided_by": {
+    "port": 2001
+   },
+   "distinct_screens": 198,
+   "resets": 33,
+   "game_overs": 33,
+   "attempt_actions": [
+    32,
+    24,
+    16,
+    16,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64
+   ],
+   "level_actions_at_game_over": [
+    32,
+    24,
+    16,
+    16,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64,
+    64
+   ],
+   "level_up_at_action": [],
+   "theory_run_id": "theory-bp35-1790306085",
+   "theory": {
+    "moves": 1968,
+    "calls": 15,
+    "cost_usd": 0.200368,
+    "calls_by_phase": {
+     "between_moves": 15
+    },
+    "level_ups": 0,
+    "win_guessed_before_win": "0/0",
+    "moves_without_guess": 1968,
+    "win_test_moves": 0,
+    "refuted_before_level_up": [],
+    "refuted_on_unfinished_level": 0,
+    "admitted_prediction": {
+     "moves": 0,
+     "exact": 0
+    },
+    "later_accuracy": [
+     {
+      "version": 1,
+      "trigger": "C1",
+      "admitted": false,
+      "written_at_move": 11,
+      "later_moves": 1923,
+      "exact": 0,
+      "cell_accuracy": 0.9857
+     },
+     {
+      "version": 2,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 11,
+      "later_moves": 1923,
+      "exact": 0,
+      "cell_accuracy": 0.9854
+     },
+     {
+      "version": 3,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 14,
+      "later_moves": 1920,
+      "exact": 0,
+      "cell_accuracy": 0.9881
+     },
+     {
+      "version": 4,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 14,
+      "later_moves": 1920,
+      "exact": 0,
+      "cell_accuracy": 0.9878
+     },
+     {
+      "version": 5,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 17,
+      "later_moves": 1917,
+      "exact": 5,
+      "cell_accuracy": 0.9885
+     },
+     {
+      "version": 6,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 17,
+      "later_moves": 1917,
+      "exact": 1202,
+      "cell_accuracy": 0.9949
+     },
+     {
+      "version": 7,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 20,
+      "later_moves": 1914,
+      "exact": 1060,
+      "cell_accuracy": 0.9938
+     },
+     {
+      "version": 8,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 20,
+      "later_moves": 1914,
+      "exact": 1060,
+      "cell_accuracy": 0.9938
+     },
+     {
+      "version": 9,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 23,
+      "later_moves": 1911,
+      "exact": 1263,
+      "cell_accuracy": 0.9954
+     },
+     {
+      "version": 10,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 23,
+      "later_moves": 1911,
+      "exact": 1263,
+      "cell_accuracy": 0.9954
+     },
+     {
+      "version": 11,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 26,
+      "later_moves": 1908,
+      "exact": 1341,
+      "cell_accuracy": 0.9958
+     },
+     {
+      "version": 12,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 26,
+      "later_moves": 1908,
+      "exact": 0,
+      "cell_accuracy": 0.9971
+     },
+     {
+      "version": 13,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 29,
+      "later_moves": 1905,
+      "exact": 1,
+      "cell_accuracy": 0.998
+     },
+     {
+      "version": 14,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 29,
+      "later_moves": 1905,
+      "exact": 1,
+      "cell_accuracy": 0.998
+     },
+     {
+      "version": 15,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 32,
+      "later_moves": 1902,
+      "exact": 1,
+      "cell_accuracy": 0.9981
+     }
+    ],
+    "sandbox_restarts": 0
+   }
+  },
+  {
+   "game": "cd82",
+   "actions": 2001,
+   "seconds": 180.19,
+   "state": "NOT_FINISHED",
+   "levels_completed": 0,
+   "win_levels": 6,
+   "decided_by": {
+    "port": 2001
+   },
+   "distinct_screens": 259,
+   "resets": 19,
+   "game_overs": 19,
+   "attempt_actions": [
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100
+   ],
+   "level_actions_at_game_over": [
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100
+   ],
+   "level_up_at_action": [],
+   "theory_run_id": "theory-cd82-1790306268",
+   "theory": {
+    "moves": 1982,
+    "calls": 15,
+    "cost_usd": 0.185161,
+    "calls_by_phase": {
+     "between_moves": 15
+    },
+    "level_ups": 0,
+    "win_guessed_before_win": "0/0",
+    "moves_without_guess": 1982,
+    "win_test_moves": 0,
+    "refuted_before_level_up": [],
+    "refuted_on_unfinished_level": 0,
+    "admitted_prediction": {
+     "moves": 0,
+     "exact": 0
+    },
+    "later_accuracy": [
+     {
+      "version": 1,
+      "trigger": "C1",
+      "admitted": false,
+      "written_at_move": 15,
+      "later_moves": 1947,
+      "exact": 197,
+      "cell_accuracy": 0.9711
+     },
+     {
+      "version": 2,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 15,
+      "later_moves": 1947,
+      "exact": 292,
+      "cell_accuracy": 0.9619
+     },
+     {
+      "version": 3,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 19,
+      "later_moves": 1943,
+      "exact": 367,
+      "cell_accuracy": 0.9626
+     },
+     {
+      "version": 4,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 19,
+      "later_moves": 1943,
+      "exact": 367,
+      "cell_accuracy": 0.9643
+     },
+     {
+      "version": 5,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 23,
+      "later_moves": 1939,
+      "exact": 366,
+      "cell_accuracy": 0.9623
+     },
+     {
+      "version": 6,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 23,
+      "later_moves": 1939,
+      "exact": 366,
+      "cell_accuracy": 0.9591
+     },
+     {
+      "version": 7,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 53,
+      "later_moves": 1909,
+      "exact": 386,
+      "cell_accuracy": 0.9617
+     },
+     {
+      "version": 8,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 53,
+      "later_moves": 1909,
+      "exact": 0,
+      "cell_accuracy": 0.9625
+     },
+     {
+      "version": 9,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 83,
+      "later_moves": 1879,
+      "exact": 376,
+      "cell_accuracy": 0.9625
+     },
+     {
+      "version": 10,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 83,
+      "later_moves": 1879,
+      "exact": 72,
+      "cell_accuracy": 0.9623
+     },
+     {
+      "version": 11,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 112,
+      "later_moves": 1850,
+      "exact": 366,
+      "cell_accuracy": 0.9619
+     },
+     {
+      "version": 12,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 112,
+      "later_moves": 1850,
+      "exact": 167,
+      "cell_accuracy": 0.96
+     },
+     {
+      "version": 13,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 142,
+      "later_moves": 1820,
+      "exact": 355,
+      "cell_accuracy": 0.969
+     },
+     {
+      "version": 14,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 142,
+      "later_moves": 1820,
+      "exact": 355,
+      "cell_accuracy": 0.9613
+     },
+     {
+      "version": 15,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 172,
+      "later_moves": 1790,
+      "exact": 344,
+      "cell_accuracy": 0.9611
+     }
+    ],
+    "sandbox_restarts": 0
+   }
+  },
+  {
+   "game": "cn04",
+   "actions": 2001,
+   "seconds": 173.62,
+   "state": "NOT_FINISHED",
+   "levels_completed": 0,
+   "win_levels": 6,
+   "decided_by": {
+    "port": 2001
+   },
+   "distinct_screens": 283,
+   "resets": 26,
+   "game_overs": 26,
+   "attempt_actions": [
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75
+   ],
+   "level_actions_at_game_over": [
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75,
+    75
+   ],
+   "level_up_at_action": [],
+   "theory_run_id": "theory-cn04-1790306448",
+   "theory": {
+    "moves": 1975,
+    "calls": 15,
+    "cost_usd": 0.153537,
+    "calls_by_phase": {
+     "between_moves": 15
+    },
+    "level_ups": 0,
+    "win_guessed_before_win": "0/0",
+    "moves_without_guess": 1975,
+    "win_test_moves": 0,
+    "refuted_before_level_up": [],
+    "refuted_on_unfinished_level": 0,
+    "admitted_prediction": {
+     "moves": 0,
+     "exact": 0
+    },
+    "later_accuracy": [
+     {
+      "version": 1,
+      "trigger": "C1",
+      "admitted": false,
+      "written_at_move": 15,
+      "later_moves": 1933,
+      "exact": 20,
+      "cell_accuracy": 0.9629
+     },
+     {
+      "version": 2,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 15,
+      "later_moves": 1933,
+      "exact": 6,
+      "cell_accuracy": 0.9501
+     },
+     {
+      "version": 3,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 20,
+      "later_moves": 1928,
+      "exact": 23,
+      "cell_accuracy": 0.9592
+     },
+     {
+      "version": 4,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 20,
+      "later_moves": 1928,
+      "exact": 23,
+      "cell_accuracy": 0.9592
+     },
+     {
+      "version": 5,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 27,
+      "later_moves": 1921,
+      "exact": 20,
+      "cell_accuracy": 0.9591
+     },
+     {
+      "version": 6,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 27,
+      "later_moves": 1921,
+      "exact": 20,
+      "cell_accuracy": 0.9591
+     },
+     {
+      "version": 7,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 34,
+      "later_moves": 1914,
+      "exact": 17,
+      "cell_accuracy": 0.9589
+     },
+     {
+      "version": 8,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 34,
+      "later_moves": 1914,
+      "exact": 17,
+      "cell_accuracy": 0.9576
+     },
+     {
+      "version": 9,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 42,
+      "later_moves": 1906,
+      "exact": 14,
+      "cell_accuracy": 0.9596
+     },
+     {
+      "version": 10,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 42,
+      "later_moves": 1906,
+      "exact": 14,
+      "cell_accuracy": 0.9587
+     },
+     {
+      "version": 11,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 49,
+      "later_moves": 1899,
+      "exact": 11,
+      "cell_accuracy": 0.9586
+     },
+     {
+      "version": 12,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 49,
+      "later_moves": 1899,
+      "exact": 11,
+      "cell_accuracy": 0.9586
+     },
+     {
+      "version": 13,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 56,
+      "later_moves": 1892,
+      "exact": 0,
+      "cell_accuracy": 0.0
+     },
+     {
+      "version": 14,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 56,
+      "later_moves": 1892,
+      "exact": 0,
+      "cell_accuracy": 0.9583
+     },
+     {
+      "version": 15,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 63,
+      "later_moves": 1885,
+      "exact": 0,
+      "cell_accuracy": 0.9582
+     }
+    ],
+    "sandbox_restarts": 0
+   }
+  },
+  {
+   "game": "ft09",
+   "actions": 2001,
+   "seconds": 1438.39,
+   "state": "NOT_FINISHED",
+   "levels_completed": 0,
+   "win_levels": 6,
+   "decided_by": {
+    "port": 2001
+   },
+   "distinct_screens": 1,
+   "resets": 0,
+   "game_overs": 0,
+   "attempt_actions": [],
+   "level_actions_at_game_over": [],
+   "level_up_at_action": [],
+   "theory_run_id": "theory-ft09-1790306622",
+   "theory": {
+    "moves": 2001,
+    "calls": 15,
+    "cost_usd": 0.149494,
+    "calls_by_phase": {
+     "between_moves": 15
+    },
+    "level_ups": 0,
+    "win_guessed_before_win": "0/0",
+    "moves_without_guess": 5,
+    "win_test_moves": 0,
+    "refuted_before_level_up": [],
+    "refuted_on_unfinished_level": 3,
+    "admitted_prediction": {
+     "moves": 1995,
+     "exact": 1968
+    },
+    "later_accuracy": [
+     {
+      "version": 1,
+      "trigger": "C1",
+      "admitted": false,
+      "written_at_move": 5,
+      "later_moves": 1995,
+      "exact": 1995,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 2,
+      "trigger": "C4",
+      "admitted": true,
+      "written_at_move": 5,
+      "later_moves": 1995,
+      "exact": 1971,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 3,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 94,
+      "later_moves": 1906,
+      "exact": 1860,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 4,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 94,
+      "later_moves": 1906,
+      "exact": 1906,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 5,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 124,
+      "later_moves": 1876,
+      "exact": 1686,
+      "cell_accuracy": 0.9996
+     },
+     {
+      "version": 6,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 124,
+      "later_moves": 1876,
+      "exact": 1876,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 7,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 154,
+      "later_moves": 1846,
+      "exact": 830,
+      "cell_accuracy": 0.993
+     },
+     {
+      "version": 8,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 154,
+      "later_moves": 1846,
+      "exact": 1846,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 9,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 184,
+      "later_moves": 1816,
+      "exact": 1802,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 10,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 184,
+      "later_moves": 1816,
+      "exact": 1631,
+      "cell_accuracy": 0.9996
+     },
+     {
+      "version": 11,
+      "trigger": "C2",
+      "admitted": true,
+      "written_at_move": 214,
+      "later_moves": 1786,
+      "exact": 1762,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 12,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 223,
+      "later_moves": 1777,
+      "exact": 1754,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 13,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 223,
+      "later_moves": 1777,
+      "exact": 1712,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 14,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 237,
+      "later_moves": 1763,
+      "exact": 1742,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 15,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 237,
+      "later_moves": 1763,
+      "exact": 1665,
+      "cell_accuracy": 1.0
+     }
+    ],
+    "sandbox_restarts": 0
+   }
+  },
+  {
+   "game": "ka59",
+   "actions": 2001,
+   "seconds": 195.71,
+   "state": "NOT_FINISHED",
+   "levels_completed": 0,
+   "win_levels": 7,
+   "decided_by": {
+    "port": 2001
+   },
+   "distinct_screens": 745,
+   "resets": 19,
+   "game_overs": 19,
+   "attempt_actions": [
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100
+   ],
+   "level_actions_at_game_over": [
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100
+   ],
+   "level_up_at_action": [],
+   "theory_run_id": "theory-ka59-1790307621-2115393",
+   "theory": {
+    "moves": 1982,
+    "calls": 15,
+    "cost_usd": 0.203552,
+    "calls_by_phase": {
+     "between_moves": 15
+    },
+    "level_ups": 0,
+    "win_guessed_before_win": "0/0",
+    "moves_without_guess": 1982,
+    "win_test_moves": 0,
+    "refuted_before_level_up": [],
+    "refuted_on_unfinished_level": 0,
+    "admitted_prediction": {
+     "moves": 0,
+     "exact": 0
+    },
+    "later_accuracy": [
+     {
+      "version": 1,
+      "trigger": "C1",
+      "admitted": false,
+      "written_at_move": 13,
+      "later_moves": 1949,
+      "exact": 0,
+      "cell_accuracy": 0.9931
+     },
+     {
+      "version": 2,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 13,
+      "later_moves": 1949,
+      "exact": 0,
+      "cell_accuracy": 0.9931
+     },
+     {
+      "version": 3,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 16,
+      "later_moves": 1946,
+      "exact": 0,
+      "cell_accuracy": 0.995
+     },
+     {
+      "version": 4,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 16,
+      "later_moves": 1946,
+      "exact": 0,
+      "cell_accuracy": 0.9948
+     },
+     {
+      "version": 5,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 19,
+      "later_moves": 1943,
+      "exact": 0,
+      "cell_accuracy": 0.995
+     },
+     {
+      "version": 6,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 19,
+      "later_moves": 1943,
+      "exact": 0,
+      "cell_accuracy": 0.9936
+     },
+     {
+      "version": 7,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 49,
+      "later_moves": 1913,
+      "exact": 0,
+      "cell_accuracy": 0.9937
+     },
+     {
+      "version": 8,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 49,
+      "later_moves": 1913,
+      "exact": 0,
+      "cell_accuracy": 0.9937
+     },
+     {
+      "version": 9,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 79,
+      "later_moves": 1883,
+      "exact": 0,
+      "cell_accuracy": 0.9937
+     },
+     {
+      "version": 10,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 79,
+      "later_moves": 1883,
+      "exact": 0,
+      "cell_accuracy": 0.9921
+     },
+     {
+      "version": 11,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 108,
+      "later_moves": 1854,
+      "exact": 0,
+      "cell_accuracy": 0.9965
+     },
+     {
+      "version": 12,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 108,
+      "later_moves": 1854,
+      "exact": 0,
+      "cell_accuracy": 0.9966
+     },
+     {
+      "version": 13,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 138,
+      "later_moves": 1824,
+      "exact": 0,
+      "cell_accuracy": 0.9967
+     },
+     {
+      "version": 14,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 138,
+      "later_moves": 1824,
+      "exact": 0,
+      "cell_accuracy": 0.9967
+     },
+     {
+      "version": 15,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 168,
+      "later_moves": 1794,
+      "exact": 0,
+      "cell_accuracy": 0.9945
+     }
+    ],
+    "sandbox_restarts": 0
+   }
+  },
+  {
+   "game": "lp85",
+   "actions": 2001,
+   "seconds": 211.16,
+   "state": "NOT_FINISHED",
+   "levels_completed": 1,
+   "win_levels": 8,
+   "decided_by": {
+    "port": 2001
+   },
+   "distinct_screens": 36,
+   "resets": 6,
+   "game_overs": 6,
+   "attempt_actions": [
+    98,
+    57,
+    18,
+    13,
+    18,
+    13
+   ],
+   "level_actions_at_game_over": [
+    98,
+    57,
+    18,
+    13,
+    18,
+    13
+   ],
+   "level_up_at_action": [
+    278
+   ],
+   "theory_run_id": "theory-lp85-1790307817-2115393",
+   "theory": {
+    "moves": 1995,
+    "calls": 17,
+    "cost_usd": 0.184465,
+    "calls_by_phase": {
+     "between_moves": 17
+    },
+    "level_ups": 1,
+    "win_guessed_before_win": "0/1",
+    "moves_without_guess": 1995,
+    "win_test_moves": 0,
+    "refuted_before_level_up": [
+     0
+    ],
+    "refuted_on_unfinished_level": 0,
+    "admitted_prediction": {
+     "moves": 0,
+     "exact": 0
+    },
+    "later_accuracy": [
+     {
+      "version": 1,
+      "trigger": "C1",
+      "admitted": false,
+      "written_at_move": 5,
+      "later_moves": 1982,
+      "exact": 1904,
+      "cell_accuracy": 0.9972
+     },
+     {
+      "version": 2,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 5,
+      "later_moves": 1982,
+      "exact": 1891,
+      "cell_accuracy": 0.9971
+     },
+     {
+      "version": 3,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 24,
+      "later_moves": 1963,
+      "exact": 1888,
+      "cell_accuracy": 0.9973
+     },
+     {
+      "version": 4,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 24,
+      "later_moves": 1963,
+      "exact": 1888,
+      "cell_accuracy": 0.9973
+     },
+     {
+      "version": 5,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 52,
+      "later_moves": 1935,
+      "exact": 1863,
+      "cell_accuracy": 0.9974
+     },
+     {
+      "version": 6,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 52,
+      "later_moves": 1935,
+      "exact": 1863,
+      "cell_accuracy": 0.9974
+     },
+     {
+      "version": 7,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 62,
+      "later_moves": 1925,
+      "exact": 1854,
+      "cell_accuracy": 0.9974
+     },
+     {
+      "version": 8,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 62,
+      "later_moves": 1925,
+      "exact": 1854,
+      "cell_accuracy": 0.9974
+     },
+     {
+      "version": 9,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 77,
+      "later_moves": 1910,
+      "exact": 1842,
+      "cell_accuracy": 0.9975
+     },
+     {
+      "version": 10,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 77,
+      "later_moves": 1910,
+      "exact": 1842,
+      "cell_accuracy": 0.9975
+     },
+     {
+      "version": 11,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 87,
+      "later_moves": 1900,
+      "exact": 734,
+      "cell_accuracy": 0.9757
+     },
+     {
+      "version": 12,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 87,
+      "later_moves": 1900,
+      "exact": 1813,
+      "cell_accuracy": 0.9967
+     },
+     {
+      "version": 13,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 116,
+      "later_moves": 1871,
+      "exact": 710,
+      "cell_accuracy": 0.9777
+     },
+     {
+      "version": 14,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 116,
+      "later_moves": 1871,
+      "exact": 710,
+      "cell_accuracy": 0.9777
+     },
+     {
+      "version": 15,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 146,
+      "later_moves": 1841,
+      "exact": 685,
+      "cell_accuracy": 0.9775
+     },
+     {
+      "version": 16,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 265,
+      "later_moves": 1722,
+      "exact": 1722,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 17,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 265,
+      "later_moves": 1722,
+      "exact": 1722,
+      "cell_accuracy": 1.0
+     }
+    ],
+    "sandbox_restarts": 0
+   }
+  },
+  {
+   "game": "ls20",
+   "actions": 2001,
+   "seconds": 183.59,
+   "state": "NOT_FINISHED",
+   "levels_completed": 0,
+   "win_levels": 7,
+   "decided_by": {
+    "port": 2001
+   },
+   "distinct_screens": 753,
+   "resets": 15,
+   "game_overs": 15,
+   "attempt_actions": [
+    131,
+    129,
+    129,
+    129,
+    129,
+    129,
+    129,
+    129,
+    129,
+    129,
+    129,
+    129,
+    129,
+    129,
+    129
+   ],
+   "level_actions_at_game_over": [
+    131,
+    129,
+    129,
+    129,
+    129,
+    129,
+    129,
+    129,
+    129,
+    129,
+    129,
+    129,
+    129,
+    129,
+    129
+   ],
+   "level_up_at_action": [],
+   "theory_run_id": "theory-ls20-1790308028-2115393",
+   "theory": {
+    "moves": 1986,
+    "calls": 15,
+    "cost_usd": 0.19807,
+    "calls_by_phase": {
+     "between_moves": 15
+    },
+    "level_ups": 0,
+    "win_guessed_before_win": "0/0",
+    "moves_without_guess": 8,
+    "win_test_moves": 0,
+    "refuted_before_level_up": [],
+    "refuted_on_unfinished_level": 0,
+    "admitted_prediction": {
+     "moves": 1962,
+     "exact": 442
+    },
+    "later_accuracy": [
+     {
+      "version": 1,
+      "trigger": "C1",
+      "admitted": false,
+      "written_at_move": 8,
+      "later_moves": 1962,
+      "exact": 0,
+      "cell_accuracy": 0.9857
+     },
+     {
+      "version": 2,
+      "trigger": "C4",
+      "admitted": true,
+      "written_at_move": 8,
+      "later_moves": 1962,
+      "exact": 442,
+      "cell_accuracy": 0.9902
+     },
+     {
+      "version": 3,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 13,
+      "later_moves": 1957,
+      "exact": 590,
+      "cell_accuracy": 0.9911
+     },
+     {
+      "version": 4,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 13,
+      "later_moves": 1957,
+      "exact": 551,
+      "cell_accuracy": 0.9909
+     },
+     {
+      "version": 5,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 19,
+      "later_moves": 1951,
+      "exact": 690,
+      "cell_accuracy": 0.9918
+     },
+     {
+      "version": 6,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 19,
+      "later_moves": 1951,
+      "exact": 181,
+      "cell_accuracy": 0.9828
+     },
+     {
+      "version": 7,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 22,
+      "later_moves": 1948,
+      "exact": 299,
+      "cell_accuracy": 0.9869
+     },
+     {
+      "version": 8,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 22,
+      "later_moves": 1948,
+      "exact": 199,
+      "cell_accuracy": 0.9842
+     },
+     {
+      "version": 9,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 25,
+      "later_moves": 1945,
+      "exact": 70,
+      "cell_accuracy": 0.9832
+     },
+     {
+      "version": 10,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 25,
+      "later_moves": 1945,
+      "exact": 0,
+      "cell_accuracy": 0.9831
+     },
+     {
+      "version": 11,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 43,
+      "later_moves": 1927,
+      "exact": 6,
+      "cell_accuracy": 0.9892
+     },
+     {
+      "version": 12,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 43,
+      "later_moves": 1927,
+      "exact": 182,
+      "cell_accuracy": 0.9865
+     },
+     {
+      "version": 13,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 47,
+      "later_moves": 1923,
+      "exact": 0,
+      "cell_accuracy": 0.9862
+     },
+     {
+      "version": 14,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 47,
+      "later_moves": 1923,
+      "exact": 6,
+      "cell_accuracy": 0.9894
+     },
+     {
+      "version": 15,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 50,
+      "later_moves": 1920,
+      "exact": 6,
+      "cell_accuracy": 0.9893
+     }
+    ],
+    "sandbox_restarts": 0
+   }
+  },
+  {
+   "game": "r11l",
+   "actions": 2001,
+   "seconds": 355.89,
+   "state": "NOT_FINISHED",
+   "levels_completed": 1,
+   "win_levels": 6,
+   "decided_by": {
+    "port": 2001
+   },
+   "distinct_screens": 1829,
+   "resets": 37,
+   "game_overs": 37,
+   "attempt_actions": [
+    79,
+    60,
+    21,
+    60,
+    60,
+    60,
+    60,
+    44,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    48,
+    60,
+    60,
+    60,
+    60,
+    40,
+    6,
+    9,
+    60,
+    25,
+    39,
+    22,
+    19
+   ],
+   "level_actions_at_game_over": [
+    60,
+    60,
+    21,
+    60,
+    60,
+    60,
+    60,
+    44,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    60,
+    48,
+    60,
+    60,
+    60,
+    60,
+    40,
+    6,
+    9,
+    60,
+    25,
+    39,
+    22,
+    19
+   ],
+   "level_up_at_action": [
+    19
+   ],
+   "theory_run_id": "theory-r11l-1790307272-2111048",
+   "theory": {
+    "moves": 1964,
+    "calls": 23,
+    "cost_usd": 0.269079,
+    "calls_by_phase": {
+     "between_moves": 23
+    },
+    "level_ups": 1,
+    "win_guessed_before_win": "0/1",
+    "moves_without_guess": 1964,
+    "win_test_moves": 0,
+    "refuted_before_level_up": [
+     0
+    ],
+    "refuted_on_unfinished_level": 0,
+    "admitted_prediction": {
+     "moves": 0,
+     "exact": 0
+    },
+    "later_accuracy": [
+     {
+      "version": 1,
+      "trigger": "C1",
+      "admitted": false,
+      "written_at_move": 5,
+      "later_moves": 1920,
+      "exact": 221,
+      "cell_accuracy": 0.9954
+     },
+     {
+      "version": 2,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 5,
+      "later_moves": 1920,
+      "exact": 90,
+      "cell_accuracy": 0.8572
+     },
+     {
+      "version": 3,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 8,
+      "later_moves": 1917,
+      "exact": 90,
+      "cell_accuracy": 0.6873
+     },
+     {
+      "version": 4,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 8,
+      "later_moves": 1917,
+      "exact": 466,
+      "cell_accuracy": 0.9128
+     },
+     {
+      "version": 5,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 11,
+      "later_moves": 1914,
+      "exact": 465,
+      "cell_accuracy": 0.913
+     },
+     {
+      "version": 6,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 11,
+      "later_moves": 1914,
+      "exact": 0,
+      "cell_accuracy": 0.2891
+     },
+     {
+      "version": 7,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 14,
+      "later_moves": 1911,
+      "exact": 0,
+      "cell_accuracy": 0.2893
+     },
+     {
+      "version": 8,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 14,
+      "later_moves": 1911,
+      "exact": 0,
+      "cell_accuracy": 0.2893
+     },
+     {
+      "version": 9,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 18,
+      "later_moves": 1907,
+      "exact": 0,
+      "cell_accuracy": 0.0015
+     },
+     {
+      "version": 10,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 18,
+      "later_moves": 1907,
+      "exact": 0,
+      "cell_accuracy": 0.2728
+     },
+     {
+      "version": 11,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 21,
+      "later_moves": 1904,
+      "exact": 0,
+      "cell_accuracy": 0.2818
+     },
+     {
+      "version": 12,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 21,
+      "later_moves": 1904,
+      "exact": 0,
+      "cell_accuracy": 0.2829
+     },
+     {
+      "version": 13,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 51,
+      "later_moves": 1874,
+      "exact": 0,
+      "cell_accuracy": 0.9573
+     },
+     {
+      "version": 14,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 51,
+      "later_moves": 1874,
+      "exact": 0,
+      "cell_accuracy": 0.9573
+     },
+     {
+      "version": 15,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 80,
+      "later_moves": 1845,
+      "exact": 0,
+      "cell_accuracy": 0.4556
+     },
+     {
+      "version": 16,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 80,
+      "later_moves": 1845,
+      "exact": 0,
+      "cell_accuracy": 0.6244
+     },
+     {
+      "version": 17,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 110,
+      "later_moves": 1815,
+      "exact": 0,
+      "cell_accuracy": 0.3376
+     },
+     {
+      "version": 18,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 110,
+      "later_moves": 1815,
+      "exact": 7,
+      "cell_accuracy": 0.5645
+     },
+     {
+      "version": 19,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 139,
+      "later_moves": 1786,
+      "exact": 0,
+      "cell_accuracy": 0.3385
+     },
+     {
+      "version": 20,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 139,
+      "later_moves": 1786,
+      "exact": 0,
+      "cell_accuracy": 0.3385
+     },
+     {
+      "version": 21,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 168,
+      "later_moves": 1757,
+      "exact": 0,
+      "cell_accuracy": 0.3148
+     },
+     {
+      "version": 22,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 168,
+      "later_moves": 1757,
+      "exact": 0,
+      "cell_accuracy": 0.4635
+     },
+     {
+      "version": 23,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 198,
+      "later_moves": 1727,
+      "exact": null,
+      "cell_accuracy": null,
+      "error": "replay: timed out after 38.0s"
+     }
+    ],
+    "sandbox_restarts": 1
+   }
+  },
+  {
+   "game": "re86",
+   "actions": 2001,
+   "seconds": 208.91,
+   "state": "NOT_FINISHED",
+   "levels_completed": 0,
+   "win_levels": 8,
+   "decided_by": {
+    "port": 2001
+   },
+   "distinct_screens": 1764,
+   "resets": 19,
+   "game_overs": 19,
+   "attempt_actions": [
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100
+   ],
+   "level_actions_at_game_over": [
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100,
+    100
+   ],
+   "level_up_at_action": [],
+   "theory_run_id": "theory-re86-1790306110",
+   "theory": {
+    "moves": 1982,
+    "calls": 15,
+    "cost_usd": 0.20317,
+    "calls_by_phase": {
+     "between_moves": 15
+    },
+    "level_ups": 0,
+    "win_guessed_before_win": "0/0",
+    "moves_without_guess": 1982,
+    "win_test_moves": 0,
+    "refuted_before_level_up": [],
+    "refuted_on_unfinished_level": 0,
+    "admitted_prediction": {
+     "moves": 0,
+     "exact": 0
+    },
+    "later_accuracy": [
+     {
+      "version": 1,
+      "trigger": "C1",
+      "admitted": false,
+      "written_at_move": 10,
+      "later_moves": 1952,
+      "exact": 45,
+      "cell_accuracy": 0.9518
+     },
+     {
+      "version": 2,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 10,
+      "later_moves": 1952,
+      "exact": 1,
+      "cell_accuracy": 0.9834
+     },
+     {
+      "version": 3,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 13,
+      "later_moves": 1949,
+      "exact": 0,
+      "cell_accuracy": 0.9855
+     },
+     {
+      "version": 4,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 13,
+      "later_moves": 1949,
+      "exact": 1,
+      "cell_accuracy": 0.6643
+     },
+     {
+      "version": 5,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 16,
+      "later_moves": 1946,
+      "exact": 21,
+      "cell_accuracy": 0.9718
+     },
+     {
+      "version": 6,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 16,
+      "later_moves": 1946,
+      "exact": 19,
+      "cell_accuracy": 0.9821
+     },
+     {
+      "version": 7,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 46,
+      "later_moves": 1916,
+      "exact": 0,
+      "cell_accuracy": 0.9804
+     },
+     {
+      "version": 8,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 46,
+      "later_moves": 1916,
+      "exact": 51,
+      "cell_accuracy": 0.9638
+     },
+     {
+      "version": 9,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 76,
+      "later_moves": 1886,
+      "exact": 0,
+      "cell_accuracy": 0.9551
+     },
+     {
+      "version": 10,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 76,
+      "later_moves": 1886,
+      "exact": 0,
+      "cell_accuracy": 0.9557
+     },
+     {
+      "version": 11,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 105,
+      "later_moves": 1857,
+      "exact": 0,
+      "cell_accuracy": 0.9734
+     },
+     {
+      "version": 12,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 105,
+      "later_moves": 1857,
+      "exact": 0,
+      "cell_accuracy": 0.9657
+     },
+     {
+      "version": 13,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 135,
+      "later_moves": 1827,
+      "exact": 0,
+      "cell_accuracy": 0.9881
+     },
+     {
+      "version": 14,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 135,
+      "later_moves": 1827,
+      "exact": 0,
+      "cell_accuracy": 0.9887
+     },
+     {
+      "version": 15,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 165,
+      "later_moves": 1797,
+      "exact": 0,
+      "cell_accuracy": 0.9886
+     }
+    ],
+    "sandbox_restarts": 0
+   }
+  },
+  {
+   "game": "sp80",
+   "actions": 2001,
+   "seconds": 265.2,
+   "state": "NOT_FINISHED",
+   "levels_completed": 1,
+   "win_levels": 6,
+   "decided_by": {
+    "port": 2001
+   },
+   "distinct_screens": 278,
+   "resets": 45,
+   "game_overs": 45,
+   "attempt_actions": [
+    20,
+    17,
+    30,
+    20,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45
+   ],
+   "level_actions_at_game_over": [
+    20,
+    17,
+    30,
+    14,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45,
+    45
+   ],
+   "level_up_at_action": [
+    76
+   ],
+   "theory_run_id": "theory-sp80-1790306319",
+   "theory": {
+    "moves": 1956,
+    "calls": 23,
+    "cost_usd": 0.290161,
+    "calls_by_phase": {
+     "between_moves": 23
+    },
+    "level_ups": 1,
+    "win_guessed_before_win": "0/1",
+    "moves_without_guess": 1956,
+    "win_test_moves": 0,
+    "refuted_before_level_up": [
+     0
+    ],
+    "refuted_on_unfinished_level": 0,
+    "admitted_prediction": {
+     "moves": 0,
+     "exact": 0
+    },
+    "later_accuracy": [
+     {
+      "version": 1,
+      "trigger": "C1",
+      "admitted": false,
+      "written_at_move": 15,
+      "later_moves": 1894,
+      "exact": 0,
+      "cell_accuracy": 0.9647
+     },
+     {
+      "version": 2,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 15,
+      "later_moves": 1894,
+      "exact": 11,
+      "cell_accuracy": 0.9647
+     },
+     {
+      "version": 3,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 18,
+      "later_moves": 1891,
+      "exact": 11,
+      "cell_accuracy": 0.9647
+     },
+     {
+      "version": 4,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 18,
+      "later_moves": 1891,
+      "exact": 9,
+      "cell_accuracy": 0.9647
+     },
+     {
+      "version": 5,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 21,
+      "later_moves": 1888,
+      "exact": 2,
+      "cell_accuracy": 0.9646
+     },
+     {
+      "version": 6,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 21,
+      "later_moves": 1888,
+      "exact": 8,
+      "cell_accuracy": 0.9646
+     },
+     {
+      "version": 7,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 50,
+      "later_moves": 1859,
+      "exact": 2,
+      "cell_accuracy": 0.9701
+     },
+     {
+      "version": 8,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 50,
+      "later_moves": 1859,
+      "exact": 2,
+      "cell_accuracy": 0.9691
+     },
+     {
+      "version": 9,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 69,
+      "later_moves": 1840,
+      "exact": 0,
+      "cell_accuracy": 0.971
+     },
+     {
+      "version": 10,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 69,
+      "later_moves": 1840,
+      "exact": 0,
+      "cell_accuracy": 0.9719
+     },
+     {
+      "version": 11,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 98,
+      "later_moves": 1811,
+      "exact": 0,
+      "cell_accuracy": 0.0
+     },
+     {
+      "version": 12,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 98,
+      "later_moves": 1811,
+      "exact": 0,
+      "cell_accuracy": 0.9688
+     },
+     {
+      "version": 13,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 127,
+      "later_moves": 1782,
+      "exact": 0,
+      "cell_accuracy": 0.9594
+     },
+     {
+      "version": 14,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 127,
+      "later_moves": 1782,
+      "exact": 0,
+      "cell_accuracy": 0.9686
+     },
+     {
+      "version": 15,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 157,
+      "later_moves": 1752,
+      "exact": 0,
+      "cell_accuracy": 0.9686
+     },
+     {
+      "version": 16,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 157,
+      "later_moves": 1752,
+      "exact": 155,
+      "cell_accuracy": 0.9692
+     },
+     {
+      "version": 17,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 186,
+      "later_moves": 1723,
+      "exact": 108,
+      "cell_accuracy": 0.9807
+     },
+     {
+      "version": 18,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 186,
+      "later_moves": 1723,
+      "exact": 108,
+      "cell_accuracy": 0.9807
+     },
+     {
+      "version": 19,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 215,
+      "later_moves": 1694,
+      "exact": 294,
+      "cell_accuracy": 0.9789
+     },
+     {
+      "version": 20,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 215,
+      "later_moves": 1694,
+      "exact": 0,
+      "cell_accuracy": 0.9763
+     },
+     {
+      "version": 21,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 245,
+      "later_moves": 1664,
+      "exact": 0,
+      "cell_accuracy": 0.9828
+     },
+     {
+      "version": 22,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 245,
+      "later_moves": 1664,
+      "exact": 0,
+      "cell_accuracy": 0.9807
+     },
+     {
+      "version": 23,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 274,
+      "later_moves": 1635,
+      "exact": 0,
+      "cell_accuracy": 0.9807
+     }
+    ],
+    "sandbox_restarts": 0
+   }
+  },
+  {
+   "game": "su15",
+   "actions": 2001,
+   "seconds": 161.71,
+   "state": "NOT_FINISHED",
+   "levels_completed": 0,
+   "win_levels": 9,
+   "decided_by": {
+    "port": 2001
+   },
+   "distinct_screens": 4,
+   "resets": 0,
+   "game_overs": 0,
+   "attempt_actions": [],
+   "level_actions_at_game_over": [],
+   "level_up_at_action": [],
+   "theory_run_id": "theory-su15-1790306584",
+   "theory": {
+    "moves": 2001,
+    "calls": 15,
+    "cost_usd": 0.138742,
+    "calls_by_phase": {
+     "between_moves": 15
+    },
+    "level_ups": 0,
+    "win_guessed_before_win": "0/0",
+    "moves_without_guess": 7,
+    "win_test_moves": 0,
+    "refuted_before_level_up": [],
+    "refuted_on_unfinished_level": 3,
+    "admitted_prediction": {
+     "moves": 1993,
+     "exact": 1993
+    },
+    "later_accuracy": [
+     {
+      "version": 1,
+      "trigger": "C1",
+      "admitted": false,
+      "written_at_move": 7,
+      "later_moves": 1993,
+      "exact": 1993,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 2,
+      "trigger": "C4",
+      "admitted": true,
+      "written_at_move": 7,
+      "later_moves": 1993,
+      "exact": 1993,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 3,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 96,
+      "later_moves": 1904,
+      "exact": 1904,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 4,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 96,
+      "later_moves": 1904,
+      "exact": 1904,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 5,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 126,
+      "later_moves": 1874,
+      "exact": 1874,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 6,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 126,
+      "later_moves": 1874,
+      "exact": 1874,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 7,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 156,
+      "later_moves": 1844,
+      "exact": 1844,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 8,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 156,
+      "later_moves": 1844,
+      "exact": 1844,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 9,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 186,
+      "later_moves": 1814,
+      "exact": 1814,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 10,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 186,
+      "later_moves": 1814,
+      "exact": 1814,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 11,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 216,
+      "later_moves": 1784,
+      "exact": 1784,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 12,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 216,
+      "later_moves": 1784,
+      "exact": 1784,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 13,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 246,
+      "later_moves": 1754,
+      "exact": 1754,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 14,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 246,
+      "later_moves": 1754,
+      "exact": 1754,
+      "cell_accuracy": 1.0
+     },
+     {
+      "version": 15,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 276,
+      "later_moves": 1724,
+      "exact": 1724,
+      "cell_accuracy": 1.0
+     }
+    ],
+    "sandbox_restarts": 0
+   }
+  },
+  {
+   "game": "tn36",
+   "actions": 2001,
+   "seconds": 295.99,
+   "state": "NOT_FINISHED",
+   "levels_completed": 1,
+   "win_levels": 7,
+   "decided_by": {
+    "port": 2001
+   },
+   "distinct_screens": 445,
+   "resets": 32,
+   "game_overs": 32,
+   "attempt_actions": [
+    61,
+    74,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61
+   ],
+   "level_actions_at_game_over": [
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61,
+    61
+   ],
+   "level_up_at_action": [
+    75
+   ],
+   "theory_run_id": "theory-tn36-1790306746",
+   "theory": {
+    "moves": 1969,
+    "calls": 25,
+    "cost_usd": 0.261734,
+    "calls_by_phase": {
+     "between_moves": 25
+    },
+    "level_ups": 1,
+    "win_guessed_before_win": "0/1",
+    "moves_without_guess": 1969,
+    "win_test_moves": 0,
+    "refuted_before_level_up": [
+     0
+    ],
+    "refuted_on_unfinished_level": 0,
+    "admitted_prediction": {
+     "moves": 0,
+     "exact": 0
+    },
+    "later_accuracy": [
+     {
+      "version": 1,
+      "trigger": "C1",
+      "admitted": false,
+      "written_at_move": 5,
+      "later_moves": 1930,
+      "exact": 0,
+      "cell_accuracy": 0.9996
+     },
+     {
+      "version": 2,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 5,
+      "later_moves": 1930,
+      "exact": 0,
+      "cell_accuracy": 0.9993
+     },
+     {
+      "version": 3,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 8,
+      "later_moves": 1927,
+      "exact": 0,
+      "cell_accuracy": 0.9992
+     },
+     {
+      "version": 4,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 8,
+      "later_moves": 1927,
+      "exact": 0,
+      "cell_accuracy": 0.9992
+     },
+     {
+      "version": 5,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 11,
+      "later_moves": 1924,
+      "exact": 0,
+      "cell_accuracy": 0.9996
+     },
+     {
+      "version": 6,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 11,
+      "later_moves": 1924,
+      "exact": 0,
+      "cell_accuracy": 0.9996
+     },
+     {
+      "version": 7,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 41,
+      "later_moves": 1894,
+      "exact": 0,
+      "cell_accuracy": 0.9996
+     },
+     {
+      "version": 8,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 41,
+      "later_moves": 1894,
+      "exact": 0,
+      "cell_accuracy": 0.9993
+     },
+     {
+      "version": 9,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 70,
+      "later_moves": 1865,
+      "exact": 0,
+      "cell_accuracy": 0.9993
+     },
+     {
+      "version": 10,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 70,
+      "later_moves": 1865,
+      "exact": 0,
+      "cell_accuracy": 0.9993
+     },
+     {
+      "version": 11,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 89,
+      "later_moves": 1846,
+      "exact": 0,
+      "cell_accuracy": 0.9996
+     },
+     {
+      "version": 12,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 89,
+      "later_moves": 1846,
+      "exact": 0,
+      "cell_accuracy": 0.9996
+     },
+     {
+      "version": 13,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 92,
+      "later_moves": 1843,
+      "exact": 0,
+      "cell_accuracy": 0.9996
+     },
+     {
+      "version": 14,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 92,
+      "later_moves": 1843,
+      "exact": 0,
+      "cell_accuracy": 0.9683
+     },
+     {
+      "version": 15,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 122,
+      "later_moves": 1813,
+      "exact": 0,
+      "cell_accuracy": 0.9996
+     },
+     {
+      "version": 16,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 122,
+      "later_moves": 1813,
+      "exact": 0,
+      "cell_accuracy": 0.9996
+     },
+     {
+      "version": 17,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 151,
+      "later_moves": 1784,
+      "exact": 0,
+      "cell_accuracy": 0.9996
+     },
+     {
+      "version": 18,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 151,
+      "later_moves": 1784,
+      "exact": 0,
+      "cell_accuracy": 0.9996
+     },
+     {
+      "version": 19,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 181,
+      "later_moves": 1754,
+      "exact": 0,
+      "cell_accuracy": 0.9996
+     },
+     {
+      "version": 20,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 181,
+      "later_moves": 1754,
+      "exact": 0,
+      "cell_accuracy": 0.9996
+     },
+     {
+      "version": 21,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 210,
+      "later_moves": 1725,
+      "exact": 0,
+      "cell_accuracy": 0.9964
+     },
+     {
+      "version": 22,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 210,
+      "later_moves": 1725,
+      "exact": 0,
+      "cell_accuracy": 0.9964
+     },
+     {
+      "version": 23,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 240,
+      "later_moves": 1695,
+      "exact": 0,
+      "cell_accuracy": 0.9996
+     },
+     {
+      "version": 24,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 240,
+      "later_moves": 1695,
+      "exact": 0,
+      "cell_accuracy": 0.9964
+     },
+     {
+      "version": 25,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 269,
+      "later_moves": 1666,
+      "exact": 0,
+      "cell_accuracy": 0.9964
+     }
+    ],
+    "sandbox_restarts": 0
+   }
+  },
+  {
+   "game": "vc33",
+   "actions": 2001,
+   "seconds": 382.47,
+   "state": "NOT_FINISHED",
+   "levels_completed": 1,
+   "win_levels": 7,
+   "decided_by": {
+    "port": 2001
+   },
+   "distinct_screens": 691,
+   "resets": 39,
+   "game_overs": 39,
+   "attempt_actions": [
+    50,
+    50,
+    61,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50
+   ],
+   "level_actions_at_game_over": [
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50
+   ],
+   "level_up_at_action": [
+    113
+   ],
+   "theory_run_id": "theory-vc33-1790305406",
+   "theory": {
+    "moves": 1962,
+    "calls": 30,
+    "cost_usd": 0.356422,
+    "calls_by_phase": {
+     "between_moves": 30
+    },
+    "level_ups": 1,
+    "win_guessed_before_win": "0/1",
+    "moves_without_guess": 1962,
+    "win_test_moves": 0,
+    "refuted_before_level_up": [
+     0
+    ],
+    "refuted_on_unfinished_level": 0,
+    "admitted_prediction": {
+     "moves": 0,
+     "exact": 0
+    },
+    "later_accuracy": [
+     {
+      "version": 1,
+      "trigger": "C1",
+      "admitted": false,
+      "written_at_move": 5,
+      "later_moves": 1916,
+      "exact": 0,
+      "cell_accuracy": 0.9851
+     },
+     {
+      "version": 2,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 5,
+      "later_moves": 1916,
+      "exact": 220,
+      "cell_accuracy": 0.9685
+     },
+     {
+      "version": 3,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 8,
+      "later_moves": 1913,
+      "exact": 227,
+      "cell_accuracy": 0.9685
+     },
+     {
+      "version": 4,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 8,
+      "later_moves": 1913,
+      "exact": 863,
+      "cell_accuracy": 0.9685
+     },
+     {
+      "version": 5,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 11,
+      "later_moves": 1910,
+      "exact": 861,
+      "cell_accuracy": 0.9685
+     },
+     {
+      "version": 6,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 11,
+      "later_moves": 1910,
+      "exact": 861,
+      "cell_accuracy": 0.9448
+     },
+     {
+      "version": 7,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 14,
+      "later_moves": 1907,
+      "exact": 89,
+      "cell_accuracy": 0.9421
+     },
+     {
+      "version": 8,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 14,
+      "later_moves": 1907,
+      "exact": 575,
+      "cell_accuracy": 0.9447
+     },
+     {
+      "version": 9,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 17,
+      "later_moves": 1904,
+      "exact": 16,
+      "cell_accuracy": 0.9437
+     },
+     {
+      "version": 10,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 17,
+      "later_moves": 1904,
+      "exact": 12,
+      "cell_accuracy": 0.9418
+     },
+     {
+      "version": 11,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 47,
+      "later_moves": 1874,
+      "exact": 12,
+      "cell_accuracy": 0.9631
+     },
+     {
+      "version": 12,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 47,
+      "later_moves": 1874,
+      "exact": 6,
+      "cell_accuracy": 0.9639
+     },
+     {
+      "version": 13,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 76,
+      "later_moves": 1845,
+      "exact": 0,
+      "cell_accuracy": 0.9432
+     },
+     {
+      "version": 14,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 76,
+      "later_moves": 1845,
+      "exact": 0,
+      "cell_accuracy": 0.9425
+     },
+     {
+      "version": 15,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 105,
+      "later_moves": 1816,
+      "exact": 0,
+      "cell_accuracy": 0.9242
+     },
+     {
+      "version": 16,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 108,
+      "later_moves": 1813,
+      "exact": 0,
+      "cell_accuracy": 0.9242
+     },
+     {
+      "version": 17,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 108,
+      "later_moves": 1813,
+      "exact": 0,
+      "cell_accuracy": 0.9244
+     },
+     {
+      "version": 18,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 138,
+      "later_moves": 1783,
+      "exact": 17,
+      "cell_accuracy": 0.9864
+     },
+     {
+      "version": 19,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 138,
+      "later_moves": 1783,
+      "exact": 28,
+      "cell_accuracy": 0.9862
+     },
+     {
+      "version": 20,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 167,
+      "later_moves": 1754,
+      "exact": 3,
+      "cell_accuracy": 0.978
+     },
+     {
+      "version": 21,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 167,
+      "later_moves": 1754,
+      "exact": 3,
+      "cell_accuracy": 0.9786
+     },
+     {
+      "version": 22,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 197,
+      "later_moves": 1724,
+      "exact": 0,
+      "cell_accuracy": 0.9789
+     },
+     {
+      "version": 23,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 197,
+      "later_moves": 1724,
+      "exact": 3,
+      "cell_accuracy": 0.8472
+     },
+     {
+      "version": 24,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 226,
+      "later_moves": 1695,
+      "exact": 5,
+      "cell_accuracy": 0.9421
+     },
+     {
+      "version": 25,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 226,
+      "later_moves": 1695,
+      "exact": 15,
+      "cell_accuracy": 0.977
+     },
+     {
+      "version": 26,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 255,
+      "later_moves": 1666,
+      "exact": 7,
+      "cell_accuracy": 0.9772
+     },
+     {
+      "version": 27,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 255,
+      "later_moves": 1666,
+      "exact": 7,
+      "cell_accuracy": 0.9747
+     },
+     {
+      "version": 28,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 285,
+      "later_moves": 1636,
+      "exact": 68,
+      "cell_accuracy": 0.9865
+     },
+     {
+      "version": 29,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 285,
+      "later_moves": 1636,
+      "exact": 310,
+      "cell_accuracy": 0.9868
+     },
+     {
+      "version": 30,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 314,
+      "later_moves": 1607,
+      "exact": 743,
+      "cell_accuracy": 0.9728
+     }
+    ],
+    "sandbox_restarts": 0
+   }
+  },
+  {
+   "game": "wa30",
+   "actions": 2001,
+   "seconds": 163.93,
+   "state": "NOT_FINISHED",
+   "levels_completed": 0,
+   "win_levels": 9,
+   "decided_by": {
+    "port": 2001
+   },
+   "distinct_screens": 899,
+   "resets": 9,
+   "game_overs": 9,
+   "attempt_actions": [
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200
+   ],
+   "level_actions_at_game_over": [
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200,
+    200
+   ],
+   "level_up_at_action": [],
+   "theory_run_id": "theory-wa30-1790307042",
+   "theory": {
+    "moves": 1992,
+    "calls": 15,
+    "cost_usd": 0.156655,
+    "calls_by_phase": {
+     "between_moves": 15
+    },
+    "level_ups": 0,
+    "win_guessed_before_win": "0/0",
+    "moves_without_guess": 1992,
+    "win_test_moves": 0,
+    "refuted_before_level_up": [],
+    "refuted_on_unfinished_level": 0,
+    "admitted_prediction": {
+     "moves": 0,
+     "exact": 0
+    },
+    "later_accuracy": [
+     {
+      "version": 1,
+      "trigger": "C1",
+      "admitted": false,
+      "written_at_move": 10,
+      "later_moves": 1972,
+      "exact": 5,
+      "cell_accuracy": 0.9972
+     },
+     {
+      "version": 2,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 10,
+      "later_moves": 1972,
+      "exact": 5,
+      "cell_accuracy": 0.9971
+     },
+     {
+      "version": 3,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 13,
+      "later_moves": 1969,
+      "exact": 179,
+      "cell_accuracy": 0.9963
+     },
+     {
+      "version": 4,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 13,
+      "later_moves": 1969,
+      "exact": 225,
+      "cell_accuracy": 0.9971
+     },
+     {
+      "version": 5,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 16,
+      "later_moves": 1966,
+      "exact": 243,
+      "cell_accuracy": 0.9972
+     },
+     {
+      "version": 6,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 16,
+      "later_moves": 1966,
+      "exact": 243,
+      "cell_accuracy": 0.9972
+     },
+     {
+      "version": 7,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 21,
+      "later_moves": 1961,
+      "exact": 10,
+      "cell_accuracy": 0.9976
+     },
+     {
+      "version": 8,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 21,
+      "later_moves": 1961,
+      "exact": 160,
+      "cell_accuracy": 0.9977
+     },
+     {
+      "version": 9,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 24,
+      "later_moves": 1958,
+      "exact": 10,
+      "cell_accuracy": 0.9925
+     },
+     {
+      "version": 10,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 24,
+      "later_moves": 1958,
+      "exact": 158,
+      "cell_accuracy": 0.9977
+     },
+     {
+      "version": 11,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 27,
+      "later_moves": 1955,
+      "exact": 156,
+      "cell_accuracy": 0.9977
+     },
+     {
+      "version": 12,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 27,
+      "later_moves": 1955,
+      "exact": 386,
+      "cell_accuracy": 0.9977
+     },
+     {
+      "version": 13,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 31,
+      "later_moves": 1951,
+      "exact": 12,
+      "cell_accuracy": 0.9976
+     },
+     {
+      "version": 14,
+      "trigger": "C4",
+      "admitted": false,
+      "written_at_move": 31,
+      "later_moves": 1951,
+      "exact": 12,
+      "cell_accuracy": 0.9978
+     },
+     {
+      "version": 15,
+      "trigger": "C2",
+      "admitted": false,
+      "written_at_move": 61,
+      "later_moves": 1921,
+      "exact": 548,
+      "cell_accuracy": 0.9982
+     }
+    ],
+    "sandbox_restarts": 0
+   }
+  }
+ ]
+}
