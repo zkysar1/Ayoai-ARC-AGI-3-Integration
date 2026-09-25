@@ -208,7 +208,7 @@
   "Z1": [
    {
     "source": "Z1-a.json",
-    "scorecard_id": "859b994a-0977-4f82-9ea2-90ee6be6416d",
+    "scorecard_id": "859b994a",
     "overall_score": 0.0,
     "seconds": 35.7,
     "games": [
@@ -217,7 +217,7 @@
    },
    {
     "source": "Z1-b.json",
-    "scorecard_id": "2f96d8de-ff9a-4ee9-bda3-89adeaa0466b",
+    "scorecard_id": "2f96d8de",
     "overall_score": 0.05278415117804026,
     "seconds": 112.4,
     "games": [
@@ -232,7 +232,7 @@
    },
    {
     "source": "Z1-c.json",
-    "scorecard_id": "2343b76b-8b29-4eee-9748-d0411fe22502",
+    "scorecard_id": "2343b76b",
     "overall_score": 0.9542465457996462,
     "seconds": 111.6,
     "games": [
@@ -249,7 +249,7 @@
   "Z2": [
    {
     "source": "Z2-a.json",
-    "scorecard_id": "2e3eb46e-68f1-42e8-bdb7-fc56ec20b0e9",
+    "scorecard_id": "2e3eb46e",
     "overall_score": 0.0,
     "seconds": 35.6,
     "games": [
@@ -258,7 +258,7 @@
    },
    {
     "source": "Z2-b.json",
-    "scorecard_id": "27daf9aa-1fa6-4f29-8a35-e944da8f70a6",
+    "scorecard_id": "27daf9aa",
     "overall_score": 0.05278415117804026,
     "seconds": 113.2,
     "games": [
@@ -273,7 +273,7 @@
    },
    {
     "source": "Z2-c.json",
-    "scorecard_id": "0d8cc2fc-a7c4-4666-a9d5-5b8b69f69008",
+    "scorecard_id": "0d8cc2fc",
     "overall_score": 0.9542465457996462,
     "seconds": 112.4,
     "games": [
@@ -290,7 +290,7 @@
   "N": [
    {
     "source": "N-a.json",
-    "scorecard_id": "c4cc169a-b08d-4c06-978a-1af10b53ac83",
+    "scorecard_id": "c4cc169a",
     "overall_score": 0.0,
     "seconds": 46.9,
     "games": [
@@ -299,7 +299,7 @@
    },
    {
     "source": "N-b.json",
-    "scorecard_id": "20320fc9-8511-4707-ac99-f22cbb5d42fd",
+    "scorecard_id": "20320fc9",
     "overall_score": 0.05278415117804026,
     "seconds": 1295.7,
     "games": [
@@ -314,7 +314,7 @@
    },
    {
     "source": "N-c.json",
-    "scorecard_id": "70f8f339-5ff9-499c-b364-cbc9e7cc80f6",
+    "scorecard_id": "70f8f339",
     "overall_score": 0.9542465457996462,
     "seconds": 1714.0,
     "games": [
@@ -331,7 +331,7 @@
   "G": [
    {
     "source": "G-a.json",
-    "scorecard_id": "a0551ff0-85d0-49c8-b195-b0f3b97b0800",
+    "scorecard_id": "a0551ff0",
     "overall_score": 0.0,
     "seconds": 186.8,
     "games": [
@@ -340,7 +340,7 @@
    },
    {
     "source": "G-b.json",
-    "scorecard_id": "b579c9a5-80d5-416b-98fc-32e1811912d2",
+    "scorecard_id": "b579c9a5",
     "overall_score": 0.05278415117804026,
     "seconds": 1500.7,
     "games": [
@@ -355,7 +355,7 @@
    },
    {
     "source": "G-c.json",
-    "scorecard_id": "cc00b605-46a6-4141-90a8-a055fa902d91",
+    "scorecard_id": "cc00b605",
     "overall_score": 0.9542465457996462,
     "seconds": 1743.7,
     "games": [
@@ -372,7 +372,7 @@
   "P": [
    {
     "source": "P-a.json",
-    "scorecard_id": "4f764e79-aeb7-43fb-ac24-195f97638ba4",
+    "scorecard_id": "4f764e79",
     "overall_score": 0.0,
     "seconds": 203.0,
     "games": [
@@ -381,7 +381,7 @@
    },
    {
     "source": "P-b.json",
-    "scorecard_id": "d5149cea-3f0f-4376-ac01-9782a94a0261",
+    "scorecard_id": "d5149cea",
     "overall_score": 0.05278415117804026,
     "seconds": 1471.2,
     "games": [
@@ -396,7 +396,7 @@
    },
    {
     "source": "P-c.json",
-    "scorecard_id": "2e2a7bd8-78e3-40eb-9821-9204476ab3be",
+    "scorecard_id": "2e2a7bd8",
     "overall_score": 0.9542465457996462,
     "seconds": 1737.6,
     "games": [
@@ -413,7 +413,7 @@
   "B": [
    {
     "source": "B-a.json",
-    "scorecard_id": "db5823d4-cb41-4437-a644-a43607324cb3",
+    "scorecard_id": "db5823d4",
     "overall_score": 0.0,
     "seconds": 1594.3,
     "games": [
@@ -422,7 +422,7 @@
    },
    {
     "source": "B-b.json",
-    "scorecard_id": "84835b72-e4bd-4b34-baea-cfd0ad02f3d2",
+    "scorecard_id": "84835b72",
     "overall_score": 0.05278415117804026,
     "seconds": 1609.0,
     "games": [
@@ -437,7 +437,7 @@
    },
    {
     "source": "B-c.json",
-    "scorecard_id": "99d26cbc-4852-459c-aa63-d21f089e4f2d",
+    "scorecard_id": "99d26cbc",
     "overall_score": 0.9542465457996462,
     "seconds": 1638.1,
     "games": [

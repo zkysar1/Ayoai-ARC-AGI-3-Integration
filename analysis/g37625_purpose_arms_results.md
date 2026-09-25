@@ -19,6 +19,20 @@ companion: `analysis/g37625_purpose_arms_results.json`.
 | ATTRIBUTION CONTROL | HOLDS: Z1 = Z2 on all 15 games; Z1 = g-376-24 W50 (levels and first level-up) on all 15 |
 | TERTIARY, scorecard score (no pass/fail) | identical in every arm: 0.0 (ft09), 0.0528 (ar25 bp35 cd82 cn04 ka59 lp85 ls20), 0.9542 (r11l re86 sp80 su15 tn36 vc33 wa30) |
 
+## Per arm
+
+Every model call used claude-haiku-4-5-20251001 (the smallest tier) at temperature 0;
+there was no step-up. The 9 games with no level-up in any run cannot score on
+measure 1 or measure 2 and are counted apart.
+
+| arm | win guessed before the win | levels completed | actions to first level-up (ar25 lp85 r11l sp80 tn36 vc33) | games with no level-up | paid calls | spend |
+|---|---|---|---|---|---|---|
+| Z1 (placebo) | - (no model) | 6 | 89 278 19 76 75 113 | 9 (not scored) | 0 | $0 |
+| N | 0 of 6 events | 6 | 89 278 19 76 75 113 | 9 (not scored) | 249 | $2.86 |
+| G | 1 of 6 events | 6 | 89 278 19 76 75 113 | 9 (not scored) | 280 | $3.37 |
+| P | 1 of 6 events | 6 | 89 278 19 76 75 113 | 9 (not scored) | 277 | $3.32 |
+| B | 0 of 6 events | 6 | 89 278 19 76 75 113 | 9 (not scored) | 276 | $3.31 |
+
 ## The win guess (measure 1)
 
 There are six level-up events, and all four model arms reach each one at the same
@@ -103,6 +117,37 @@ CPU by 05:30Z. The plan searches ran inside the sandbox.
 
 $12.86 over 1,082 paid calls (N $2.86, G $3.37, P $3.32, B $3.31), every call through
 `spend_meter`; the ledger read $25.77 of the $250 cap after the runs. Z made no call.
+
+## Runs: scorecards, theory runs, recordings and spend per game
+
+Local scorecards, one per process (a = ft09; b = ar25 bp35 cd82 cn04 ka59 lp85 ls20;
+c = r11l re86 sp80 su15 tn36 vc33 wa30), by 8-character prefix:
+Z1 859b994a / 2f96d8de / 2343b76b; Z2 2e3eb46e / 27daf9aa / 0d8cc2fc;
+N c4cc169a / 20320fc9 / 70f8f339; G a0551ff0 / b579c9a5 / cc00b605;
+P 4f764e79 / d5149cea / 2e2a7bd8; B db5823d4 / 84835b72 / 99d26cbc.
+
+Per game: the theory run (directory `~/.ayoai-arc/theory-runs/theory-<id>`, holding
+the per-call records and the module each call wrote), the recording (8-character
+prefix of `~/.ayoai-arc/recordings/g-376-25/<arm>/<game>.adapterdrive.<prefix>...`)
+and the model spend in dollars. The Z runs' recordings are in the JSON companion.
+
+| game | N: theory run / recording / $ | G: theory run / recording / $ | P: theory run / recording / $ | B: theory run / recording / $ |
+|---|---|---|---|---|
+| ar25 | ar25-N-1790312948-2311421 / 193a63ee / 0.305 | ar25-G-1790312948-2311428 / cce67ff7 / 0.322 | ar25-P-1790312948-2311448 / fec672e1 / 0.332 | ar25-B-1790312948-2311463 / 5e29d30c / 0.346 |
+| bp35 | bp35-N-1790313219-2311421 / 673c8445 / 0.196 | bp35-G-1790313306-2311428 / 8df98fdc / 0.226 | bp35-P-1790313260-2311448 / 7279fc7d / 0.199 | bp35-B-1790313291-2311463 / 66a52b2b / 0.199 |
+| cd82 | cd82-N-1790313386-2311421 / 3cc58f95 / 0.176 | cd82-G-1790313513-2311428 / 5fc1401e / 0.187 | cd82-P-1790313442-2311448 / 46f785de / 0.178 | cd82-B-1790313474-2311463 / 907ff61e / 0.183 |
+| cn04 | cn04-N-1790313555-2311421 / d4390b46 / 0.155 | cn04-G-1790313706-2311428 / 9e6ddcae / 0.139 | cn04-P-1790313620-2311448 / 619a45ef / 0.179 | cn04-B-1790313658-2311463 / e428c442 / 0.156 |
+| ft09 | ft09-N-1790312948-2311419 / 5b0f1f66 / 0.006 | ft09-G-1790312948-2311426 / d5bc8de5 / 0.157 | ft09-P-1790312948-2311439 / 8edc5be4 / 0.156 | ft09-B-1790312948-2311450 / 35274e44 / 0.146 |
+| ka59 | ka59-N-1790313733-2311421 / 5b048546 / 0.183 | ka59-G-1790313865-2311428 / 11815dd5 / 0.197 | ka59-P-1790313848-2311448 / 6b73e532 / 0.211 | ka59-B-1790313824-2311463 / c260edec / 0.186 |
+| lp85 | lp85-N-1790313903-2311421 / 23adc5bb / 0.177 | lp85-G-1790314063-2311428 / 07817fa2 / 0.204 | lp85-P-1790314048-2311448 / 3b03b6f8 / 0.188 | lp85-B-1790313999-2311463 / e1a98643 / 0.307 |
+| ls20 | ls20-N-1790314061-2311421 / afc9bea4 / 0.192 | ls20-G-1790314260-2311428 / 39e6a275 / 0.216 | ls20-P-1790314231-2311448 / df41582b / 0.208 | ls20-B-1790314357-2311463 / b00a36ef / 0.200 |
+| r11l | r11l-N-1790312948-2311427 / 19b52f9b / 0.252 | r11l-G-1790312948-2311444 / 7cc749b4 / 0.254 | r11l-P-1790312948-2311447 / ff3681d2 / 0.266 | r11l-B-1790312948-2311455 / deaee49b / 0.256 |
+| re86 | re86-N-1790313466-2311427 / d44e9fa9 / 0.232 | re86-G-1790313176-2311444 / 133d7810 / 0.221 | re86-P-1790313234-2311447 / caa897c9 / 0.206 | re86-B-1790313197-2311455 / 9c0925f8 / 0.229 |
+| sp80 | sp80-N-1790313687-2311427 / c6c781fb / 0.266 | sp80-G-1790313377-2311444 / 8257db48 / 0.326 | sp80-P-1790313427-2311447 / 73c2337d / 0.292 | sp80-B-1790313430-2311455 / bb78fc75 / 0.330 |
+| su15 | su15-N-1790313941-2311427 / d999a1a4 / 0.014 | su15-G-1790313691-2311444 / a63d64f2 / 0.144 | su15-P-1790313720-2311447 / 864b0197 / 0.138 | su15-B-1790313769-2311455 / edbea1b4 / 0.016 |
+| tn36 | tn36-N-1790313965-2311427 / db2ad30a / 0.222 | tn36-G-1790313879-2311444 / 61e959f9 / 0.259 | tn36-P-1790313887-2311447 / 6a053aa6 / 0.265 | tn36-B-1790313799-2311455 / 376b78ea / 0.267 |
+| vc33 | vc33-N-1790314154-2311427 / 7d6c35f4 / 0.339 | vc33-G-1790314127-2311444 / e0470f6c / 0.361 | vc33-P-1790314169-2311447 / 6da048c2 / 0.336 | vc33-B-1790314069-2311455 / 4b72c77f / 0.328 |
+| wa30 | wa30-N-1790314512-2311427 / 30a7a3a9 / 0.145 | wa30-G-1790314533-2311444 / 26ba146b / 0.156 | wa30-P-1790314524-2311447 / 2d8865b9 / 0.166 | wa30-B-1790314416-2311455 / f53dbfa7 / 0.159 |
 
 ## Deviations from the preregistration (all forced by the data format, none chosen after seeing results)
 
