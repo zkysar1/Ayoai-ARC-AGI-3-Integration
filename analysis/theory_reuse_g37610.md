@@ -15,12 +15,14 @@ between null, helps, and hurts.
 
 ## Why zero admission
 
-The `--max-actions 300` budget gives each run roughly 20 theory-arm
-calls (one per 15 moves). Each call proposes a candidate theory and
-replays it against the move window. With only ~20 calls and 300 moves
-of history, the replay accuracy threshold (0.9 at check 4) was never
-met. By contrast, the integration test (g-376-11) used the default
-~2000-action budget with 15 calls per level and admitted 2 of 3 games.
+Observed: 251 paid model calls over the 10 runs proposed 22 theories,
+and all 22 failed admission check 4 (replay accuracy below 0.9).
+
+Plausible mechanism (inferred, not verified): a 300-action run gives a
+theory too little play to reach the 0.9 replay threshold. The integration
+test (g-376-11) admitted 2 of its 45 paid calls, but it ran about 2000
+actions per game on three other dev games (ls20, re86, ft09). Both the
+budget and the games differ, so this batch cannot tell which one matters.
 
 ## Primary measure
 
@@ -47,6 +49,15 @@ load or store).
 | r11l | SEED | 19 | 1/6 | 4.7619 | 296 | 5 | 30acf8e9 |
 | tn36 | OFF | 74 | 1/7 | 3.5714 | 296 | 5 | b4454024 |
 | tn36 | SEED | 74 | 1/7 | 3.5714 | 296 | 5 | 9c2068da |
+
+## Teardown
+
+All 10 run logs (`/tmp/echo-arc/g37610c-<game>-<arm>.log` on cc-03) contain
+`AyoAI send_delete completed — grid-env unit deleted`, and every scorecard
+was closed (`SCORECARD REPORT (close response)`). ARC does not stop the
+AyoAI server session itself. The env-server's inactivity reaper
+(STREAM_INACTIVITY_TIMEOUT_S, default 180 s) ends it, a known gap filed as
+g-376-39. The sessions were not probed after the batch.
 
 ## Spend
 
