@@ -33,11 +33,13 @@ distinguish between null, helps, and hurts.
 | su15 | 0 loaded, 0 stored | 0 | -- | none |
 | lp85 | 0 loaded, 0 stored | 0 | -- | none |
 
-ft09 had 37 admitted theories in the census but only 1 returned by
-`GET /ArcTheories limit=5`. ls20 had 5 admitted but returned 3 (2 filtered
-as bad signature). su15 and lp85 returned 0 theories despite having 5 and 3
-admitted respectively -- the theory-memory GET returned nothing for these
-games during the WARM-A runs.
+The census admissions (ft09 37, ls20 5, su15 5, lp85 3) come from OFFLINE runs
+(g-376-24, g-376-25). Offline runs have no AyoAI session, so they store nothing
+in AyoAI memory. What the GET returned matches the LIVE warm runs before this
+batch: g-376-11 ran ft09 and ls20 warm and stored admitted theories, and ls20
+also found 2 theories stored by another box, which it refused as bad
+signatures. su15 and lp85 had never run warm live, so 0 stored is the expected
+reading.
 
 ## Primary measure
 
@@ -80,13 +82,16 @@ was closed. Exit code 0 for all 8 runs.
    hard enough that most runs never complete level 1. Only lp85 finished
    within budget.
 
-2. **Theory retrieval sparse.** ft09 and ls20 loaded theories; su15 and lp85
-   did not, despite all 4 having prior admissions. The GET endpoint may
-   filter by signature freshness or game version.
+2. **Only games that had already run warm and live could be seeded.** ft09 and
+   ls20 loaded theories stored by g-376-11's live warm runs. su15 and lp85
+   loaded nothing because no live warm run had ever stored a theory for them.
+   Offline admissions never reach AyoAI memory. The earlier guess that the GET
+   endpoint filters by signature freshness or game version is withdrawn: the
+   store's own history explains the readings.
 
-3. **su15 anomaly.** su15 WARM-A cost only $0.0163 vs $0.1330 for OFF. The
-   warm arm ran for about 5 minutes vs 8 minutes for OFF, and the theory
-   pipeline apparently short-circuited early with no theories to load.
+3. **su15 cost gap (cause not established).** su15 WARM-A cost $0.0163 against
+   $0.1330 for OFF and ran about 5 minutes against 8. The theory arm did not
+   switch off: there is no `[theory-arm] switched off` line in any run log.
 
 ## Hypothesis status
 
