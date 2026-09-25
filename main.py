@@ -1166,11 +1166,14 @@ def main() -> int:
         if args.use_port_client:
             # g-376-30: same session, and the port decides every move
             # (design/g-376-30-route.md). The port does not read the session seed.
+            # g-376-40: the session URL lets it report each frame to the session.
             import port_streaming_client
 
             streaming_client = port_streaming_client.PortStreamingClient(
+                streaming_url=streaming_url,
                 ayo_server_key=card_id,
                 arc_game_id=args.game,
+                api_key=resolve_api_key() if not args.mock_url else "",
             )
         else:
             streaming_client = SolverV2StreamingAdapter(

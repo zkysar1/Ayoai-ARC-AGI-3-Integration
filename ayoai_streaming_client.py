@@ -457,6 +457,17 @@ class AyoaiStreamingClient:
         payload = self._encode_frame(frame, op="ADD", pending_decision=False)
         self._post(payload)
 
+    def send_update(self, frame: FrameData) -> None:
+        """Send a report-only UPDATE: the frame and the action that produced it,
+        with `pending_decision=false`, so no decision is asked for or returned.
+        The port-backed player uses it to report each move to the session
+        (g-376-40).
+
+        Raises AyoaiStreamingApiError on transport / non-200 / status=fail.
+        """
+        payload = self._encode_frame(frame, op="UPDATE", pending_decision=False)
+        self._post(payload)
+
     def send_delete(self) -> None:
         """Send the DELETE op for the grid-env unit (scorecard-close).
 

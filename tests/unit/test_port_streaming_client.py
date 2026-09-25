@@ -8,6 +8,8 @@ eval/adapter_run.py --player port (eval/port-client-2026-09-25.json)."""
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 import subprocess
 import sys
@@ -22,7 +24,7 @@ import pytest
 arcengine = pytest.importorskip("arcengine")
 
 from port_streaming_client import PortStreamingClient  # noqa: E402
-from structs import FrameData, GameAction, GameState  # noqa: E402
+from structs import ActionInput, FrameData, GameAction, GameState  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -177,6 +179,108 @@ def test_close_keeps_the_arms_game_measures(monkeypatch: pytest.MonkeyPatch) -> 
     assert client.theory_measures is None
     client.close()
     assert client.theory_measures == {"moves": 1}
+
+
+class _Resp:
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+        self.text = '{"status": "success"}'
+
+    def json(self) -> dict[str, Any]:
+        return {"status": "success"}
+
+
+class _RecordingSession:
+    """requests.Session stand-in: keeps each POSTed body and answers with the next
+    scripted status code (200 once the script runs out)."""
+
+    def __init__(self, statuses: list[int] | None = None) -> None:
+        self.bodies: list[dict[str, Any]] = []
+        self._statuses = list(statuses or [])
+
+    def post(self, url: str, json: dict[str, Any], **_: Any) -> _Resp:
+        self.bodies.append(json)
+        return _Resp(self._statuses.pop(0) if self._statuses else 200)
+
+    def close(self) -> None:
+        pass
+
+
+def _reporting_client(
+    port_moves: list[Any], monkeypatch: pytest.MonkeyPatch, session: _RecordingSession
+) -> PortStreamingClient:
+    client = PortStreamingClient(
+        streaming_url="http://session.test/AyoStreamingUpdates",
+        ayo_server_key="card",
+        arc_game_id="test",
+        api_key="",
+        session=session,
+        retry_sleep=lambda _s: None,
+    )
+    moves = iter(port_moves)
+    monkeypatch.setattr(client._agent, "choose_action", lambda frames, latest: next(moves))
+    return client
+
+
+def test_each_frame_is_reported_and_the_moves_do_not_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    # g-376-40: the report carries the action that produced the frame, asks for no
+    # decision, and the move is the one the same port picks with no session.
+    moves = [arcengine.GameAction.ACTION1, arcengine.GameAction.ACTION3]
+    frames = [_frame(), _frame()]
+    frames[1].action_input = ActionInput(id=GameAction.ACTION6, data={"x": 3, "y": 5})
+    frames[1].frame = [[[0, 1], [1, 0]], [[1, 1], [0, 0]]]  # two layers; only the top one is sent
+    plain_client = _client(list(moves), monkeypatch)
+    plain = [plain_client.choose_action(f) for f in frames]
+    session = _RecordingSession()
+    client = _reporting_client(list(moves), monkeypatch, session)
+    reported = [client.choose_action(f) for f in frames]
+    assert [(d.action, d.x, d.y, d.provenance) for d in reported] == [
+        (d.action, d.x, d.y, d.provenance) for d in plain
+    ]
+    attrs = [body["operations"][0]["attributes"] for body in session.bodies]
+    assert [body["operations"][0]["op"] for body in session.bodies] == ["UPDATE", "UPDATE"]
+    assert [a["pending_decision"] for a in attrs] == [False, False]
+    assert (attrs[1]["last_action_id"], attrs[1]["last_action_x"], attrs[1]["last_action_y"]) == (6, 3, 5)
+    assert (attrs[1]["frame_layers"], json.loads(attrs[1]["frame"])) == (1, [[[1, 1], [0, 0]]])
+    assert len(frames[1].frame) == 2  # the frame the loop holds is not changed
+    assert (client.reports_sent, client.reports_failed) == (2, 0)
+
+
+def test_failed_reports_keep_the_move_and_three_in_a_row_stop_reporting(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = _RecordingSession([400, 200, 400, 400, 400])
+    client = _reporting_client([arcengine.GameAction.ACTION1] * 6, monkeypatch, session)
+    decisions = [client.choose_action(_frame()) for _ in range(6)]
+    assert [d.action for d in decisions] == [GameAction.ACTION1] * 6
+    assert (client.reports_sent, client.reports_failed) == (1, 4)
+    assert len(session.bodies) == 5  # the success reset the streak; the 3rd failure in a row stopped it
+
+
+def test_add_delete_and_dns_go_to_the_session_and_close_logs_the_count(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    session = _RecordingSession()
+    client = _reporting_client([arcengine.GameAction.ACTION1], monkeypatch, session)
+    assert client._reporter is not None
+    dns_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(client._reporter, "warm_dns", lambda **kw: dns_calls.append(kw) or "host")
+    assert client.warm_dns() is True
+    client.send_add(_frame())
+    client.choose_action(_frame())
+    client.send_delete()
+    with caplog.at_level(logging.INFO, logger="port_streaming_client"):
+        client.close()
+    assert dns_calls == [{}]
+    assert [body["operations"][0]["op"] for body in session.bodies] == ["ADD", "UPDATE", "DELETE"]
+    assert "[port-report] 1 of 1 frames reported to the AyoAI session, 0 failed" in caplog.text
+
+
+def test_without_a_streaming_url_nothing_is_sent(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client([arcengine.GameAction.ACTION1], monkeypatch)
+    client.send_add(_frame())
+    client.choose_action(_frame())
+    client.send_delete()
+    assert client._reporter is None
+    assert (client.reports_sent, client.reports_failed) == (0, 0)
 
 
 def _adapter_run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:

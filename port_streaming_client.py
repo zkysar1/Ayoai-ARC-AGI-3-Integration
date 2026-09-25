@@ -17,6 +17,13 @@ move produced is appended before the next choice, and action_counter counts move
 The opt-in theory step (g-376-09) attaches through `set_theory_arm`, the same contract
 SolverV2StreamingAdapter has, and the port's move is the arm's fallback. A RESET is
 never offered to the arm: it ends an attempt, so the next consult is marked `reset`.
+
+Given a streaming_url, the client also reports to the AyoAI session (g-376-40):
+send_add, send_delete and warm_dns go to an inner AyoaiStreamingClient, and
+choose_action sends each frame's top layer as a report-only UPDATE
+(pending_decision=false) that carries the action that produced it. A report never
+changes a move: its response is ignored, a failure is counted, and after
+REPORT_FAILURE_LIMIT failures in a row reporting stops for the rest of the game.
 """
 
 from __future__ import annotations
@@ -37,11 +44,13 @@ for _p in (_ROOT / "vendor" / "ARC-AGI-3-Agents", _ROOT / "kaggle_salvage"):
 import arcengine  # noqa: E402
 from my_agent import MyAgent  # type: ignore[import-not-found]  # noqa: E402
 
-from ayoai_streaming_client import AyoaiDecision  # noqa: E402
+from ayoai_streaming_client import AyoaiDecision, AyoaiStreamingClient  # noqa: E402
 from primitives.theory_arm import TheoryArm  # noqa: E402
 from structs import FrameData, GameAction, GameState  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+REPORT_FAILURE_LIMIT = 3  # failed reports in a row before reporting stops for the game
 
 
 def to_engine_frame(frame: FrameData) -> arcengine.FrameData:
@@ -59,7 +68,8 @@ def to_engine_frame(frame: FrameData) -> arcengine.FrameData:
 
 
 class PortStreamingClient:
-    """Decides every move with the port; network parameters are accepted and ignored."""
+    """Decides every move with the port. Given a streaming_url it also reports each
+    frame to the AyoAI session; no move depends on a report."""
 
     def __init__(
         self,
@@ -67,10 +77,19 @@ class PortStreamingClient:
         ayo_server_key: str = "",
         arc_game_id: str = "",
         api_key: str | None = None,
-        **_network_kwargs: Any,
+        **network_kwargs: Any,
     ) -> None:
         self.ayo_server_key = ayo_server_key
         self.arc_game_id = arc_game_id
+        self._reporter: AyoaiStreamingClient | None = (
+            AyoaiStreamingClient(streaming_url, ayo_server_key, arc_game_id, api_key, **network_kwargs)
+            if streaming_url
+            else None
+        )
+        self.reports_sent = 0
+        self.reports_failed = 0
+        self._report_failure_streak = 0
+        self._reports_stopped: str | None = None
         self._agent = MyAgent(
             card_id=ayo_server_key,
             game_id=arc_game_id,
@@ -106,6 +125,7 @@ class PortStreamingClient:
         return self._theory_arm
 
     def choose_action(self, frame: FrameData) -> AyoaiDecision:
+        self._report(frame)
         latest = to_engine_frame(frame)
         if self._tick > 0:
             self._agent.append_frame(latest)  # the frame the previous move produced
@@ -120,6 +140,29 @@ class PortStreamingClient:
         if self._theory_arm_factory is not None:
             move, x, y = self._theory_step(frame, move, x, y, provenance)
         return AyoaiDecision(action=move, x=x, y=y, provenance=provenance)
+
+    def _report(self, frame: FrameData) -> None:
+        """Send the frame's top layer, the screen the last move left, to the session as
+        a report-only UPDATE; one layer keeps each report small. Any error is counted
+        and swallowed; REPORT_FAILURE_LIMIT errors in a row stop reporting for the game,
+        so a dead session cannot slow play with retries."""
+        if self._reporter is None or self._reports_stopped is not None:
+            return
+        try:
+            self._reporter.send_update(frame.model_copy(update={"frame": frame.frame[-1:]}))
+        except Exception as exc:
+            self.reports_failed += 1
+            self._report_failure_streak += 1
+            if self._report_failure_streak >= REPORT_FAILURE_LIMIT:
+                self._reports_stopped = f"{type(exc).__name__}: {exc}"[:300]
+                logger.warning(
+                    "[port-report] stopped after %d failures in a row: %s",
+                    self._report_failure_streak,
+                    self._reports_stopped,
+                )
+            return
+        self.reports_sent += 1
+        self._report_failure_streak = 0
 
     def _theory_step(
         self,
@@ -177,19 +220,34 @@ class PortStreamingClient:
         return picked, out_x, out_y
 
     def send_add(self, frame: FrameData) -> None:
-        return None
+        if self._reporter is not None:
+            self._reporter.send_add(frame)
 
     def send_delete(self, *args: Any, **kwargs: Any) -> None:
-        return None
+        if self._reporter is not None:
+            self._reporter.send_delete()
 
     def warm_dns(self, *args: Any, **kwargs: Any) -> bool:
+        if self._reporter is not None:
+            self._reporter.warm_dns(*args, **kwargs)
         return True
 
     def close(self) -> None:
-        """Game end for the theory arm: emit its game-end memory record, keep its game
-        measures in ``theory_measures`` and stop its sandbox child (same steps as
+        """Game end. Log how many frames were reported and close the reporter. For the
+        theory arm: emit its game-end memory record, keep its game measures in
+        ``theory_measures`` and stop its sandbox child (same steps as
         SolverV2StreamingAdapter._finish_theory_arm). A finish error is logged, not
         raised."""
+        reporter, self._reporter = self._reporter, None
+        if reporter is not None:
+            logger.info(
+                "[port-report] %d of %d frames reported to the AyoAI session, %d failed%s",
+                self.reports_sent,
+                self._tick,
+                self.reports_failed,
+                f"; stopped: {self._reports_stopped}" if self._reports_stopped else "",
+            )
+            reporter.close()
         arm, self._theory_arm = self._theory_arm, None
         if arm is None:
             return
