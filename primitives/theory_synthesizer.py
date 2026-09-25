@@ -344,7 +344,7 @@ class TheorySynthesizer:
             )
             self.latest_code = code
         self.latest_report = self._report(verdict)
-        self._record(context, trigger, verdict=verdict.check, result=result, admission=verdict)
+        self._record(context, trigger, verdict=verdict.check, result=result, admission=verdict, code=code)
         return verdict
 
     def adopt(self, code: str, current: Grid, simple: Sequence[str], click: bool, *, source: str) -> Admission:
@@ -516,7 +516,10 @@ class TheorySynthesizer:
         verdict: str,
         result: Optional[WriteResult] = None,
         admission: Optional[Admission] = None,
+        code: Optional[str] = None,
     ) -> None:
+        # ``code`` is the module the model wrote, admitted or not, so a win guess can be
+        # read off every call and not only off admitted theories (g-376-25 measure 1).
         plan = (admission.plan if admission is not None else None) or {}
         self.records.append(
             {
@@ -537,6 +540,7 @@ class TheorySynthesizer:
                 "plan_reason": plan.get("reason"),
                 "plan_length": len(plan.get("path") or []) if plan.get("status") == "found" else None,
                 "advisory": list(admission.advisory) if admission is not None else [],
+                "code": code,
             }
         )
 

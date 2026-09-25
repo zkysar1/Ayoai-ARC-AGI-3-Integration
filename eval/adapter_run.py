@@ -23,6 +23,12 @@ records go to a run directory under ARC_THEORY_RUN_DIR (default
 ~/.ayoai-arc/theory-runs). The port-only run, without --theory-share, is the
 coverage arm: a share of 0 still lets the arm follow one plan per level.
 
+`--theory-arm A` (with --theory-share) builds the arm with the switches of arm A of
+g-376-25 (adapters/arc_theory.THEORY_ARMS): N neutral prompt, G win guess asked,
+P G plus the purpose block, B P plus the code binding (the default arm), Z the
+placebo (probe on, model off). `--record` writes each game's recording through the
+toolkit's Recorder (into RECORDINGS_DIR) and names it in the game's row.
+
 Each row counts `distinct_screens`, the distinct top layers the player was shown:
 under the fixed action budget, a proxy for how large the game's reachable state
 space is (g-376-24 reports small and large games apart).
@@ -39,7 +45,7 @@ import time
 from collections import Counter
 from importlib.metadata import version
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -58,7 +64,7 @@ from baseline_run import (  # type: ignore[import-not-found]  # noqa: E402
 
 import spend_meter  # noqa: E402
 from action_budget import DEFAULT_ACTION_BUDGET  # noqa: E402
-from adapters.arc_theory import make_theory_arm  # noqa: E402
+from adapters.arc_theory import THEORY_ARMS, make_theory_arm  # noqa: E402
 from house_rules import make_game  # noqa: E402
 from port_streaming_client import PortStreamingClient  # noqa: E402
 from primitives.theory_arm import ArmConfig, freeze  # noqa: E402
@@ -109,6 +115,25 @@ class AdapterDrive(Agent):  # type: ignore[misc]
         return action
 
 
+def theory_arm_factory(
+    game: str, share: float, arm: Optional[str], root: Path
+) -> tuple[str, Callable[..., Any]]:
+    """One game's theory run id and arm factory: the g-376-24 share plus, when given,
+    the switches of g-376-25 arm ``arm``. The pid keeps parallel runs of one game (one
+    process per arm) apart: three shares once started ar25 in the same second and
+    shared a run directory."""
+    run_id = f"theory-{game}{'-' + arm if arm else ''}-{int(time.time())}-{os.getpid()}"
+    return run_id, functools.partial(
+        make_theory_arm,
+        client=spend_meter.metered_anthropic(game_id=game, run_id=run_id),
+        game_key=game,
+        run_id=run_id,
+        run_dir=root / run_id,
+        config=ArmConfig(win_test_share=share),
+        **(THEORY_ARMS[arm] if arm else {}),
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--max-actions", type=int, default=DEFAULT_ACTION_BUDGET)
@@ -126,12 +151,23 @@ def main() -> None:
         default=None,
         help="attach the theory arm with this win-test share, 0 to 1 (--player port only, g-376-24)",
     )
+    parser.add_argument(
+        "--theory-arm",
+        choices=sorted(THEORY_ARMS),
+        default=None,
+        help="build the theory arm as this g-376-25 arm (needs --theory-share)",
+    )
+    parser.add_argument(
+        "--record", action="store_true", help="record each game (RECORDINGS_DIR) and name it in the row"
+    )
     args = parser.parse_args()
     if args.theory_share is not None:
         if args.player != "port":
             parser.error("--theory-share needs --player port")
         if not 0.0 <= args.theory_share <= 1.0:
             parser.error("--theory-share must be a number from 0 to 1")
+    if args.theory_arm is not None and args.theory_share is None:
+        parser.error("--theory-arm needs --theory-share")
     theory_root = Path(os.environ.get("ARC_THEORY_RUN_DIR", str(Path.home() / ".ayoai-arc" / "theory-runs")))
 
     games = args.games or dev_games()
@@ -153,25 +189,14 @@ def main() -> None:
         )
         theory_run_id = None
         if args.theory_share is not None:
-            # The pid keeps parallel runs of one game (one process per share) apart:
-            # three shares started ar25 in the same second and shared a run directory.
-            theory_run_id = f"theory-{game}-{int(time.time())}-{os.getpid()}"
-            adapter.set_theory_arm(
-                functools.partial(
-                    make_theory_arm,
-                    client=spend_meter.metered_anthropic(game_id=game, run_id=theory_run_id),
-                    game_key=game,
-                    run_id=theory_run_id,
-                    run_dir=theory_root / theory_run_id,
-                    config=ArmConfig(win_test_share=args.theory_share),
-                )
-            )
+            theory_run_id, factory = theory_arm_factory(game, args.theory_share, args.theory_arm, theory_root)
+            adapter.set_theory_arm(factory)
         agent = AdapterDrive(
             card_id="offline-adapter",
             game_id=game,
             agent_name=f"adapter.{game}",
             ROOT_URL="http://localhost",
-            record=False,
+            record=args.record,
             arc_env=env,
             tags=["adapter-baseline"],
             adapter=adapter,
@@ -194,6 +219,8 @@ def main() -> None:
         if theory_run_id is not None and isinstance(adapter, PortStreamingClient):
             row["theory_run_id"] = theory_run_id
             row["theory"] = adapter.theory_measures
+        if args.record:
+            row["recording"] = agent.recorder.filename
         rows.append(row)
         print(json.dumps(rows[-1]), file=sys.stderr, flush=True)
 
@@ -210,6 +237,8 @@ def main() -> None:
         "arcengine": version("arcengine"),
         "max_actions": args.max_actions,
         "theory_share": args.theory_share,
+        "theory_arm": args.theory_arm,
+        "theory_arm_switches": THEORY_ARMS.get(args.theory_arm or ""),
         "games": rows,
         "overall_score": scorecard.score,
         "scorecard": card,

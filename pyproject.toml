@@ -89,10 +89,6 @@ ignore_missing_imports = true
 # and every other module gets full strict, so `mypy .` is a working gate again.
 # Delete a module's entry once its errors are fixed.
 [[tool.mypy.overrides]]
-module = "analysis.win_condition_llm"
-disable_error_code = ["union-attr", "arg-type", "return-value"]  # 15, 3, 1
-
-[[tool.mypy.overrides]]
 module = "kaggle_salvage.my_agent"
 disable_error_code = ["no-untyped-call", "union-attr", "attr-defined", "import-not-found", "misc"]  # 2, 2, 1, 1, 1
 

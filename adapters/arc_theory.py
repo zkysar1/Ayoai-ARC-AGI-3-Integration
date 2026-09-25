@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TypedDict
 
 import spend_meter
 from primitives.theory_arm import ArmConfig, TheoryArm
@@ -190,6 +190,49 @@ PURPOSE_BLOCK = """I am a player. My job is to finish levels. A level is finishe
 counter goes up. I always keep a written guess of what finishes the level, and I
 spend moves testing it. Exploring without a guess is not progress."""
 
+# Arm N of g-376-25: INSTRUCTIONS with every request for a win guess taken out, so the
+# arms differ in that alone. Derived rather than copied: each edit must match exactly
+# once, so an INSTRUCTIONS change that an edit no longer matches fails at import
+# instead of leaving a win-guess line in the neutral prompt.
+_NEUTRAL_EDITS = (
+    (
+        "kind of object, including your best guess of what finishes a level. A planner\n"
+        "will use your module to choose moves that test your guess. Your guess is wrong\n"
+        "if the level did not finish on a screen already seen, so it must be false on all\n"
+        "of them. If several guesses fit what you have seen, choose the one that can be\n"
+        "reached in the fewest moves.\n",
+        "kind of object.\n",
+    ),
+    (
+        'WIN_GUESS = """What finishes the level, in plain words."""\n'
+        'TEST_PLAN = """The screen a planner should reach to test WIN_GUESS, and what would refute it."""\n',
+        "",
+    ),
+    (
+        "\ndef is_win(grid):\n"
+        "    # True only for a grid on which you believe the level is finished.\n"
+        "\ndef test_target(grid):  # optional\n"
+        "    # A screen to reach first when the win itself is far away.\n",
+        "",
+    ),
+    (
+        "is_win must be false on every screen seen so far, and a planner must be able to\n"
+        "reach it (or test_target) under your own rules.\n",
+        "",
+    ),
+)
+
+
+def _without_win_guess(text: str) -> str:
+    for old, new in _NEUTRAL_EDITS:
+        if text.count(old) != 1:
+            raise ValueError(f"a neutral-prompt edit no longer matches INSTRUCTIONS once: {old[:50]!r}")
+        text = text.replace(old, new)
+    return text
+
+
+NEUTRAL_INSTRUCTIONS = _without_win_guess(INSTRUCTIONS)
+
 MAX_OBJECTS_SHOWN = 40
 MAX_CHANGE_GROUPS = 6
 
@@ -278,10 +321,15 @@ def _describe_counterexample(ce: Counterexample) -> str:
     return f"{act}: {len(wrong)} cells wrong: {shown}. What really changed: {describe_change(ce.before, ce.actual)}"
 
 
-def build_prompt(context: TheoryContext, *, purpose_block: bool = True) -> tuple[str, str]:
+def build_prompt(
+    context: TheoryContext, *, purpose_block: bool = True, win_guess_asked: bool = True
+) -> tuple[str, str]:
     """(system, user) for one theory call. Sections A-B go in the system prompt,
-    C-I in the user message (design §5)."""
-    system = INSTRUCTIONS + ("\n\n" + PURPOSE_BLOCK if purpose_block else "")
+    C-I in the user message (design §5). ``win_guess_asked=False`` swaps in
+    NEUTRAL_INSTRUCTIONS (arm N of g-376-25)."""
+    system = (INSTRUCTIONS if win_guess_asked else NEUTRAL_INSTRUCTIONS) + (
+        "\n\n" + PURPOSE_BLOCK if purpose_block else ""
+    )
     simple = [a for a in context.actions if a not in ("ACTION6", "RESET")]
     actions_line = "Allowed actions: " + (", ".join(simple) or "none")
     if context.click_allowed:
@@ -370,6 +418,38 @@ class MeteredTheoryWriter:
         )
 
 
+class NoCallWriter:
+    """The placebo arm's writer (arm Z of g-376-25): the arm keeps its opening probe and
+    its fallback moves but calls no model. The first call attempt stops the
+    synthesizer for the rest of the game, so nothing is sent or billed."""
+
+    model = "none"
+
+    def estimate(self, system: str, prompt: str) -> float:
+        return 0.0
+
+    def write(self, system: str, prompt: str) -> WriteResult:
+        raise WriterStopped("model calls are off (placebo arm)")
+
+
+class ArmSwitches(TypedDict, total=False):
+    purpose_block: bool
+    win_guess_asked: bool
+    require_win_guess: bool
+    model_calls: bool
+
+
+# The arms of g-376-25 as make_theory_arm switches. B is the default arm as shipped by
+# g-376-09; G, P and N are its ablations; Z is the placebo: probe on, model off.
+THEORY_ARMS: dict[str, ArmSwitches] = {
+    "N": {"purpose_block": False, "win_guess_asked": False, "require_win_guess": False},
+    "G": {"purpose_block": False, "win_guess_asked": True, "require_win_guess": False},
+    "P": {"purpose_block": True, "win_guess_asked": True, "require_win_guess": False},
+    "B": {"purpose_block": True, "win_guess_asked": True, "require_win_guess": True},
+    "Z": {"model_calls": False},
+}
+
+
 # ---- composition ------------------------------------------------------------------------ #
 
 
@@ -393,19 +473,22 @@ def make_theory_arm(
     run_dir: Optional[Path] = None,
     purpose_block: bool = True,
     require_win_guess: bool = True,
+    win_guess_asked: bool = True,
+    model_calls: bool = True,
     config: Optional[ArmConfig] = None,
     budget: Optional[GameBudget] = None,
     memory: Optional[TheoryMemory] = None,
 ) -> TheoryArm:
     """One game's theory arm: sandbox + synthesizer + arm (design §14 module map).
-    ``memory`` makes the run warm (design §12); None keeps it cold."""
+    ``model_calls=False`` is the placebo arm (NoCallWriter). ``memory`` makes the run
+    warm (design §12); None keeps it cold."""
     sandbox = TheorySandbox(
         HELPERS_SOURCE, {"H": len(first_grid), "W": len(first_grid[0]) if len(first_grid) else 0}
     )
     synthesizer = TheorySynthesizer(
-        MeteredTheoryWriter(client),
+        MeteredTheoryWriter(client) if model_calls else NoCallWriter(),
         sandbox,
-        lambda ctx: build_prompt(ctx, purpose_block=purpose_block),
+        lambda ctx: build_prompt(ctx, purpose_block=purpose_block, win_guess_asked=win_guess_asked),
         budget=budget,
         require_win_guess=require_win_guess,
     )
