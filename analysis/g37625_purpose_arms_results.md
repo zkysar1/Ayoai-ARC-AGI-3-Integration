@@ -17,7 +17,7 @@ companion: `analysis/g37625_purpose_arms_results.json`.
 | SECONDARY B, more levels? | NOT MORE for every arm: 6 levels each, the same as Z1 (ratio 1.0); per game 15 ties in each arm |
 | ADMISSION (hypothesis 2026-09-25_g37625-arms-admission-below-10pct) | CONFIRMED: every arm made 249-280 paid calls and admitted under 10% |
 | ATTRIBUTION CONTROL | HOLDS: Z1 = Z2 on all 15 games; Z1 = g-376-24 W50 (levels and first level-up) on all 15 |
-| TERTIARY, scorecard score (no pass/fail) | identical in every arm: 0.0 (ft09), 0.0528 (ar25 bp35 cd82 cn04 ka59 lp85 ls20), 0.9542 (r11l re86 sp80 su15 tn36 vc33 wa30) |
+| TERTIARY, scorecard score (reported with no pass or fail threshold) | identical in every arm: 0.0 (ft09), 0.0528 (ar25 bp35 cd82 cn04 ka59 lp85 ls20), 0.9542 (r11l re86 sp80 su15 tn36 vc33 wa30) |
 
 ## Per arm
 
