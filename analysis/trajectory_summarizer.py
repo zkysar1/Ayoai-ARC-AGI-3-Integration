@@ -19,6 +19,19 @@ Design-spec adaptation (10 KB compactness):
   CrossEpisodeAnalysis and LLM hypothesiser (Increment IV) require,
   well within the 10 KB budget.
 
+Size rule for multi-attempt recordings (g-376-32):
+  The flat 10 KB bound was argued for ~12 episodes. Since g-376-05 a run
+  spends a 2000-action budget and RESETs after every GAME_OVER, so one
+  recording can hold dozens of attempts (sp80: 66 GAME_OVERs, a 14,056-byte
+  summary). What the bound protects is that the summary never grows with
+  FRAMES; it may grow with EPISODES, because every episode keeps one
+  fixed-shape EpisodeSummary. Measured on 26 cc-03 recordings (81 to 2001
+  frames, 1 to 20 episodes): each episode costs 184-202 bytes of compact
+  JSON and everything else 303-718 bytes, whatever the frame count. So the
+  rule is summary_size_budget(): SUMMARY_FIXED_BYTES plus
+  SUMMARY_BYTES_PER_EPISODE per episode. No consumer needs the flat 10 KB:
+  the LLM prompt builder caps itself at 8 episodes (win_condition_llm.py).
+
 API deviation from design spec:
   The design references ``FrameProcessor.hash_frame()`` as the public
   hashing method.  The real API is ``FrameProcessor.hash(features)``
@@ -40,6 +53,17 @@ from solver_v2.state_graph import (
     _config_symmetry,
 )
 from structs import FrameData, GameState
+
+# Compact-JSON size rule for one SessionSummary (see the module docstring).
+SUMMARY_FIXED_BYTES = 1024
+SUMMARY_BYTES_PER_EPISODE = 256
+
+
+def summary_size_budget(total_episodes: int) -> int:
+    """Largest compact-JSON size, in bytes, a SessionSummary with this many
+    episodes may have."""
+    return SUMMARY_FIXED_BYTES + SUMMARY_BYTES_PER_EPISODE * max(1, total_episodes)
+
 
 # ---------------------------------------------------------------------------
 # Data structures

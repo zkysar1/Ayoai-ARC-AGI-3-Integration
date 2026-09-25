@@ -1,4 +1,8 @@
-"""Offline verification of the trajectory summarizer against real recordings.
+"""Offline verification of the trajectory summarizer against generated recordings.
+
+The recordings are written by the test (g-376-32), so the result does not depend
+on which live runs a box happens to hold in its local recordings folder. One of
+them is a multi-attempt recording shaped like a 2000-action run.
 
 Seven verification criteria from design/win-condition-discovery.md section 5.4,
 adapted for the compact serialisation (see trajectory_summarizer.py module
@@ -15,10 +19,10 @@ from __future__ import annotations
 
 import json
 import pathlib
+import shutil
 import sys
+import tempfile
 from dataclasses import asdict
-
-import pytest
 
 # Ensure repo root is on sys.path so imports resolve
 _REPO = pathlib.Path(__file__).resolve().parents[2]
@@ -28,10 +32,28 @@ if str(_REPO) not in sys.path:
 from analysis.trajectory_summarizer import (  # noqa: E402
     summarize_all_recordings,
     summarize_recording,
+    summary_size_budget,
 )
 from solver_v2.state_graph import _CONFIG_PRIORS  # noqa: E402
 
-RECORDINGS_DIR = _REPO / "recordings"
+
+def _write_recording(path: pathlib.Path, episodes: int, frames_per_episode: int) -> None:
+    """A recording in the live format: a metadata line, then frame lines; every
+    episode but the last ends on a GAME_OVER frame."""
+    lines = [{"timestamp": "t0", "data": {"kind": "ayoai_session_open"}}]
+    for e in range(episodes):
+        for i in range(frames_per_episode):
+            over = i == frames_per_episode - 1 and e < episodes - 1
+            grid = [[(e + i + r * c) % 10 if (r + c) % 2 else 0 for c in range(6)] for r in range(6)]
+            lines.append({"timestamp": f"t{e}.{i}", "data": {
+                "game_id": "synthetic",
+                "frame": [grid],
+                "state": "GAME_OVER" if over else "NOT_FINISHED",
+                "levels_completed": 0,
+                "win_levels": 3,
+                "available_actions": [1, 2, 3],
+            }})
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines))
 
 
 def _count_frame_lines(path: pathlib.Path) -> int:
@@ -63,15 +85,18 @@ class TestTrajectorySummarizer:
 
     @classmethod
     def setup_class(cls):
-        """Run summarizer once; reuse results across criteria."""
-        cls.recording_paths = sorted(RECORDINGS_DIR.glob("*.recording.jsonl"))
-        if not cls.recording_paths:
-            # Data-dependent suite: these criteria verify the summarizer against
-            # REAL gameplay recordings, which are produced by a recorded run and
-            # are deliberately not committed. Absent data is a skip, not a
-            # failure - an assert here reports 7 errors on every fresh clone.
-            pytest.skip(f"no *.recording.jsonl in {RECORDINGS_DIR}")
-        cls.summaries = summarize_all_recordings(str(RECORDINGS_DIR))
+        """Write the recordings, run the summarizer once, reuse the results."""
+        cls.recordings_dir = pathlib.Path(tempfile.mkdtemp(prefix="summarizer-"))
+        # One short run, and one shaped like a 2000-action run: 60 attempts of 33
+        # frames, 59 of them ending in GAME_OVER (sp80 had 66, g-376-32).
+        _write_recording(cls.recordings_dir / "short.recording.jsonl", 3, 20)
+        _write_recording(cls.recordings_dir / "multi.recording.jsonl", 60, 33)
+        cls.recording_paths = sorted(cls.recordings_dir.glob("*.recording.jsonl"))
+        cls.summaries = summarize_all_recordings(str(cls.recordings_dir))
+
+    @classmethod
+    def teardown_class(cls):
+        shutil.rmtree(cls.recordings_dir, ignore_errors=True)
 
     # -- Criterion 1: Completeness ------------------------------------------
     def test_c1_completeness(self):
@@ -161,15 +186,21 @@ class TestTrajectorySummarizer:
 
     # -- Criterion 6: Compactness -------------------------------------------
     def test_c6_compactness(self):
-        """Each SessionSummary serializes to under 10 KB of JSON
-        (compact separators)."""
+        """Each SessionSummary's compact JSON fits summary_size_budget(): a fixed
+        part plus a fixed amount per episode, never growing with frames."""
+        sizes = []
         for summary in self.summaries:
             j = json.dumps(asdict(summary), separators=(",", ":"))
             size = len(j.encode("utf-8"))
-            assert size < 10_240, (
-                f"{summary.recording_id}: JSON size={size} bytes, "
-                f"exceeds 10 KB limit"
+            sizes.append(size)
+            budget = summary_size_budget(summary.total_episodes)
+            assert size <= budget, (
+                f"{summary.recording_id}: JSON size={size} bytes for "
+                f"{summary.total_episodes} episodes, over the {budget}-byte budget"
             )
+        # The multi-attempt recording must be past the old flat 10 KB bound, or
+        # this test would not exercise the per-episode rule at all.
+        assert max(sizes) > 10_240, sizes
 
     # -- Criterion 7: Round-trip serialization ------------------------------
     def test_c7_round_trip(self):
