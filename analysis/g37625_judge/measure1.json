@@ -1,0 +1,44 @@
+{
+ "per_run": {
+  "B": {
+   "guessed": 0,
+   "events": 6,
+   "no_theory_yet": 0
+  },
+  "G": {
+   "guessed": 1,
+   "events": 6,
+   "no_theory_yet": 0
+  },
+  "N": {
+   "guessed": 0,
+   "events": 6,
+   "no_theory_yet": 0
+  },
+  "P": {
+   "guessed": 1,
+   "events": 6,
+   "no_theory_yet": 0
+  }
+ },
+ "pairs": {
+  "G_vs_N": {
+   "shared_events": 6,
+   "G": 1,
+   "N": 0,
+   "verdict": "NO MEASURABLE CHANGE"
+  },
+  "P_vs_G": {
+   "shared_events": 6,
+   "P": 1,
+   "G": 1,
+   "verdict": "NO MEASURABLE CHANGE"
+  },
+  "B_vs_P": {
+   "shared_events": 6,
+   "B": 0,
+   "P": 1,
+   "verdict": "NO MEASURABLE CHANGE"
+  }
+ }
+}

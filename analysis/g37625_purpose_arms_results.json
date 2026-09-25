@@ -1,0 +1,1280 @@
+{
+ "goal": "g-376-25",
+ "run_at": "2026-09-25T05:09Z..05:36Z",
+ "runner": "echo",
+ "code_under_test": "153499b",
+ "preregistration": "analysis/g37625_purpose_arms_preregistration.md",
+ "causes_and_analyzers_commit": "05fc986",
+ "verdicts": {
+  "primary": {
+   "G_vs_N": "NO MEASURABLE CHANGE",
+   "P_vs_G": "NO MEASURABLE CHANGE",
+   "B_vs_P": "NO MEASURABLE CHANGE"
+  },
+  "secondary_a": {
+   "N": "PLAYS THE SAME",
+   "G": "PLAYS THE SAME",
+   "P": "PLAYS THE SAME",
+   "B": "PLAYS DIFFERENTLY"
+  },
+  "secondary_b": {
+   "N": "NOT MORE",
+   "G": "NOT MORE",
+   "P": "NOT MORE",
+   "B": "NOT MORE"
+  },
+  "admission_hypothesis_2026-09-25_g37625-arms-admission-below-10pct": "CONFIRMED",
+  "attribution": "HOLDS"
+ },
+ "measure1": {
+  "per_run": {
+   "B": {
+    "guessed": 0,
+    "events": 6,
+    "no_theory_yet": 0
+   },
+   "G": {
+    "guessed": 1,
+    "events": 6,
+    "no_theory_yet": 0
+   },
+   "N": {
+    "guessed": 0,
+    "events": 6,
+    "no_theory_yet": 0
+   },
+   "P": {
+    "guessed": 1,
+    "events": 6,
+    "no_theory_yet": 0
+   }
+  },
+  "pairs": {
+   "G_vs_N": {
+    "shared_events": 6,
+    "G": 1,
+    "N": 0,
+    "verdict": "NO MEASURABLE CHANGE"
+   },
+   "P_vs_G": {
+    "shared_events": 6,
+    "P": 1,
+    "G": 1,
+    "verdict": "NO MEASURABLE CHANGE"
+   },
+   "B_vs_P": {
+    "shared_events": 6,
+    "B": 0,
+    "P": 1,
+    "verdict": "NO MEASURABLE CHANGE"
+   }
+  }
+ },
+ "arm_table": {
+  "games": [
+   "ar25",
+   "bp35",
+   "cd82",
+   "cn04",
+   "ft09",
+   "ka59",
+   "lp85",
+   "ls20",
+   "r11l",
+   "re86",
+   "sp80",
+   "su15",
+   "tn36",
+   "vc33",
+   "wa30"
+  ],
+  "arms": {
+   "N": {
+    "levels": 6,
+    "levels_ratio_vs_control": 1.0,
+    "secondary_b": "NOT MORE",
+    "per_game": {
+     "beats": 0,
+     "loses": 0,
+     "tie": 15
+    },
+    "secondary_a": "PLAYS THE SAME",
+    "games_differing": 0,
+    "differing_win_seeking": 0,
+    "differing_unexplained": 0,
+    "paid_calls": 249,
+    "admitted": 2,
+    "admission_rate": 0.008,
+    "refusals_by_check": {
+     "1": 7,
+     "4": 240,
+     "admitted": 2
+    },
+    "check2_refusals": 0,
+    "spend_usd": 2.85974
+   },
+   "G": {
+    "levels": 6,
+    "levels_ratio_vs_control": 1.0,
+    "secondary_b": "NOT MORE",
+    "per_game": {
+     "beats": 0,
+     "loses": 0,
+     "tie": 15
+    },
+    "secondary_a": "PLAYS THE SAME",
+    "games_differing": 0,
+    "differing_win_seeking": 0,
+    "differing_unexplained": 0,
+    "paid_calls": 280,
+    "admitted": 15,
+    "admission_rate": 0.0536,
+    "refusals_by_check": {
+     "1": 2,
+     "4": 263,
+     "admitted": 15
+    },
+    "check2_refusals": 0,
+    "spend_usd": 3.36732
+   },
+   "P": {
+    "levels": 6,
+    "levels_ratio_vs_control": 1.0,
+    "secondary_b": "NOT MORE",
+    "per_game": {
+     "beats": 0,
+     "loses": 0,
+     "tie": 15
+    },
+    "secondary_a": "PLAYS THE SAME",
+    "games_differing": 0,
+    "differing_win_seeking": 0,
+    "differing_unexplained": 0,
+    "paid_calls": 277,
+    "admitted": 17,
+    "admission_rate": 0.0614,
+    "refusals_by_check": {
+     "4": 260,
+     "admitted": 17
+    },
+    "check2_refusals": 0,
+    "spend_usd": 3.31953
+   },
+   "B": {
+    "levels": 6,
+    "levels_ratio_vs_control": 1.0,
+    "secondary_b": "NOT MORE",
+    "per_game": {
+     "beats": 0,
+     "loses": 0,
+     "tie": 15
+    },
+    "secondary_a": "PLAYS DIFFERENTLY",
+    "games_differing": 1,
+    "differing_win_seeking": 1,
+    "differing_unexplained": 0,
+    "paid_calls": 276,
+    "admitted": 4,
+    "admission_rate": 0.0145,
+    "refusals_by_check": {
+     "1": 2,
+     "4": 266,
+     "7": 4,
+     "admitted": 4
+    },
+    "check2_refusals": 0,
+    "spend_usd": 3.30895
+   }
+  },
+  "attribution": {
+   "Z1_vs_Z2_screen_hash_differs_on": [],
+   "Z1_vs_W50_levels_or_first_up_differs_on": [],
+   "verdict": "HOLDS"
+  },
+  "differs": [
+   {
+    "arm": "B",
+    "game": "ft09",
+    "win_test_moves": 1
+   }
+  ],
+  "admission_hypothesis": "CONFIRMED",
+  "control_levels": {
+   "Z1": 6,
+   "Z2": 6
+  }
+ },
+ "scorecards": {
+  "Z1": [
+   {
+    "source": "Z1-a.json",
+    "scorecard_id": "859b994a-0977-4f82-9ea2-90ee6be6416d",
+    "overall_score": 0.0,
+    "seconds": 35.7,
+    "games": [
+     "ft09"
+    ]
+   },
+   {
+    "source": "Z1-b.json",
+    "scorecard_id": "2f96d8de-ff9a-4ee9-bda3-89adeaa0466b",
+    "overall_score": 0.05278415117804026,
+    "seconds": 112.4,
+    "games": [
+     "ar25",
+     "bp35",
+     "cd82",
+     "cn04",
+     "ka59",
+     "lp85",
+     "ls20"
+    ]
+   },
+   {
+    "source": "Z1-c.json",
+    "scorecard_id": "2343b76b-8b29-4eee-9748-d0411fe22502",
+    "overall_score": 0.9542465457996462,
+    "seconds": 111.6,
+    "games": [
+     "r11l",
+     "re86",
+     "sp80",
+     "su15",
+     "tn36",
+     "vc33",
+     "wa30"
+    ]
+   }
+  ],
+  "Z2": [
+   {
+    "source": "Z2-a.json",
+    "scorecard_id": "2e3eb46e-68f1-42e8-bdb7-fc56ec20b0e9",
+    "overall_score": 0.0,
+    "seconds": 35.6,
+    "games": [
+     "ft09"
+    ]
+   },
+   {
+    "source": "Z2-b.json",
+    "scorecard_id": "27daf9aa-1fa6-4f29-8a35-e944da8f70a6",
+    "overall_score": 0.05278415117804026,
+    "seconds": 113.2,
+    "games": [
+     "ar25",
+     "bp35",
+     "cd82",
+     "cn04",
+     "ka59",
+     "lp85",
+     "ls20"
+    ]
+   },
+   {
+    "source": "Z2-c.json",
+    "scorecard_id": "0d8cc2fc-a7c4-4666-a9d5-5b8b69f69008",
+    "overall_score": 0.9542465457996462,
+    "seconds": 112.4,
+    "games": [
+     "r11l",
+     "re86",
+     "sp80",
+     "su15",
+     "tn36",
+     "vc33",
+     "wa30"
+    ]
+   }
+  ],
+  "N": [
+   {
+    "source": "N-a.json",
+    "scorecard_id": "c4cc169a-b08d-4c06-978a-1af10b53ac83",
+    "overall_score": 0.0,
+    "seconds": 46.9,
+    "games": [
+     "ft09"
+    ]
+   },
+   {
+    "source": "N-b.json",
+    "scorecard_id": "20320fc9-8511-4707-ac99-f22cbb5d42fd",
+    "overall_score": 0.05278415117804026,
+    "seconds": 1295.7,
+    "games": [
+     "ar25",
+     "bp35",
+     "cd82",
+     "cn04",
+     "ka59",
+     "lp85",
+     "ls20"
+    ]
+   },
+   {
+    "source": "N-c.json",
+    "scorecard_id": "70f8f339-5ff9-499c-b364-cbc9e7cc80f6",
+    "overall_score": 0.9542465457996462,
+    "seconds": 1714.0,
+    "games": [
+     "r11l",
+     "re86",
+     "sp80",
+     "su15",
+     "tn36",
+     "vc33",
+     "wa30"
+    ]
+   }
+  ],
+  "G": [
+   {
+    "source": "G-a.json",
+    "scorecard_id": "a0551ff0-85d0-49c8-b195-b0f3b97b0800",
+    "overall_score": 0.0,
+    "seconds": 186.8,
+    "games": [
+     "ft09"
+    ]
+   },
+   {
+    "source": "G-b.json",
+    "scorecard_id": "b579c9a5-80d5-416b-98fc-32e1811912d2",
+    "overall_score": 0.05278415117804026,
+    "seconds": 1500.7,
+    "games": [
+     "ar25",
+     "bp35",
+     "cd82",
+     "cn04",
+     "ka59",
+     "lp85",
+     "ls20"
+    ]
+   },
+   {
+    "source": "G-c.json",
+    "scorecard_id": "cc00b605-46a6-4141-90a8-a055fa902d91",
+    "overall_score": 0.9542465457996462,
+    "seconds": 1743.7,
+    "games": [
+     "r11l",
+     "re86",
+     "sp80",
+     "su15",
+     "tn36",
+     "vc33",
+     "wa30"
+    ]
+   }
+  ],
+  "P": [
+   {
+    "source": "P-a.json",
+    "scorecard_id": "4f764e79-aeb7-43fb-ac24-195f97638ba4",
+    "overall_score": 0.0,
+    "seconds": 203.0,
+    "games": [
+     "ft09"
+    ]
+   },
+   {
+    "source": "P-b.json",
+    "scorecard_id": "d5149cea-3f0f-4376-ac01-9782a94a0261",
+    "overall_score": 0.05278415117804026,
+    "seconds": 1471.2,
+    "games": [
+     "ar25",
+     "bp35",
+     "cd82",
+     "cn04",
+     "ka59",
+     "lp85",
+     "ls20"
+    ]
+   },
+   {
+    "source": "P-c.json",
+    "scorecard_id": "2e2a7bd8-78e3-40eb-9821-9204476ab3be",
+    "overall_score": 0.9542465457996462,
+    "seconds": 1737.6,
+    "games": [
+     "r11l",
+     "re86",
+     "sp80",
+     "su15",
+     "tn36",
+     "vc33",
+     "wa30"
+    ]
+   }
+  ],
+  "B": [
+   {
+    "source": "B-a.json",
+    "scorecard_id": "db5823d4-cb41-4437-a644-a43607324cb3",
+    "overall_score": 0.0,
+    "seconds": 1594.3,
+    "games": [
+     "ft09"
+    ]
+   },
+   {
+    "source": "B-b.json",
+    "scorecard_id": "84835b72-e4bd-4b34-baea-cfd0ad02f3d2",
+    "overall_score": 0.05278415117804026,
+    "seconds": 1609.0,
+    "games": [
+     "ar25",
+     "bp35",
+     "cd82",
+     "cn04",
+     "ka59",
+     "lp85",
+     "ls20"
+    ]
+   },
+   {
+    "source": "B-c.json",
+    "scorecard_id": "99d26cbc-4852-459c-aa63-d21f089e4f2d",
+    "overall_score": 0.9542465457996462,
+    "seconds": 1638.1,
+    "games": [
+     "r11l",
+     "re86",
+     "sp80",
+     "su15",
+     "tn36",
+     "vc33",
+     "wa30"
+    ]
+   }
+  ]
+ },
+ "per_game": {
+  "Z1": {
+   "ar25": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     89
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ar25-Z-1790312948-2311400",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z1/ar25.adapterdrive.9be9cf6c-ec31-404e-a9f9-83b8a855190f.recording.jsonl"
+   },
+   "bp35": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-bp35-Z-1790312965-2311400",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z1/bp35.adapterdrive.d6842a5d-727d-43ec-a9a0-80de3319f308.recording.jsonl"
+   },
+   "cd82": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-cd82-Z-1790312990-2311400",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z1/cd82.adapterdrive.41b229be-844c-495f-aa2e-de9a1db4adeb.recording.jsonl"
+   },
+   "cn04": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-cn04-Z-1790313005-2311400",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z1/cn04.adapterdrive.8efe5f17-b4bc-422a-9fc9-9c2879359ece.recording.jsonl"
+   },
+   "ft09": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ft09-Z-1790312948-2311396",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z1/ft09.adapterdrive.30611f63-2231-4091-ac3c-a2a54f2c3b38.recording.jsonl"
+   },
+   "ka59": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ka59-Z-1790313018-2311400",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z1/ka59.adapterdrive.f0b50d5d-9e32-4f32-8b4a-404036ae7120.recording.jsonl"
+   },
+   "lp85": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     278
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-lp85-Z-1790313032-2311400",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z1/lp85.adapterdrive.0e33a938-19c4-466b-8bb4-910fa10d5db4.recording.jsonl"
+   },
+   "ls20": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ls20-Z-1790313046-2311400",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z1/ls20.adapterdrive.d2eb291a-7e46-4956-9dea-491d5ffc2070.recording.jsonl"
+   },
+   "r11l": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     19
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-r11l-Z-1790312948-2311409",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z1/r11l.adapterdrive.81ed54ef-25f3-4e33-b73d-16844348ecd9.recording.jsonl"
+   },
+   "re86": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-re86-Z-1790312971-2311409",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z1/re86.adapterdrive.80a80c32-5cbb-4cda-9f7f-1fcc199ccae4.recording.jsonl"
+   },
+   "sp80": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     76
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-sp80-Z-1790312989-2311409",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z1/sp80.adapterdrive.b69dadea-3f9e-4cc1-b1fa-10b26eee59dd.recording.jsonl"
+   },
+   "su15": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-su15-Z-1790313003-2311409",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z1/su15.adapterdrive.78d5a601-0ad6-4fb4-a192-1ca482133773.recording.jsonl"
+   },
+   "tn36": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     75
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-tn36-Z-1790313017-2311409",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z1/tn36.adapterdrive.31756a6e-ebfe-4c21-bc0c-eed97705f662.recording.jsonl"
+   },
+   "vc33": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     113
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-vc33-Z-1790313032-2311409",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z1/vc33.adapterdrive.b6915691-bc68-48a3-9419-ba65a0bcbece.recording.jsonl"
+   },
+   "wa30": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-wa30-Z-1790313047-2311409",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z1/wa30.adapterdrive.ad25faa6-99b4-4dbc-8994-0a32969f842a.recording.jsonl"
+   }
+  },
+  "Z2": {
+   "ar25": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     89
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ar25-Z-1790312948-2311413",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z2/ar25.adapterdrive.e5235d1c-28a5-45b4-8432-e0b56dc0eb08.recording.jsonl"
+   },
+   "bp35": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-bp35-Z-1790312964-2311413",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z2/bp35.adapterdrive.3b0a9128-f1af-4aee-881a-d0262250979a.recording.jsonl"
+   },
+   "cd82": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-cd82-Z-1790312990-2311413",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z2/cd82.adapterdrive.e2316f84-5d68-4211-81c8-22ccdd30c559.recording.jsonl"
+   },
+   "cn04": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-cn04-Z-1790313005-2311413",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z2/cn04.adapterdrive.f76e1bec-48b1-4f33-bf02-f2dbeb26110f.recording.jsonl"
+   },
+   "ft09": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ft09-Z-1790312949-2311407",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z2/ft09.adapterdrive.54ed13bb-02f4-43b5-bd1e-c993655a2af4.recording.jsonl"
+   },
+   "ka59": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ka59-Z-1790313018-2311413",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z2/ka59.adapterdrive.0800dcf3-a3db-4bf9-9858-47abef4ef173.recording.jsonl"
+   },
+   "lp85": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     278
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-lp85-Z-1790313032-2311413",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z2/lp85.adapterdrive.be8ef226-761e-4761-b526-29e2a0dd1243.recording.jsonl"
+   },
+   "ls20": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ls20-Z-1790313047-2311413",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z2/ls20.adapterdrive.553f3228-153c-4e9f-b26c-31f8217de649.recording.jsonl"
+   },
+   "r11l": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     19
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-r11l-Z-1790312948-2311415",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z2/r11l.adapterdrive.c58606f7-cffd-45df-b2a6-d064e416d3d0.recording.jsonl"
+   },
+   "re86": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-re86-Z-1790312972-2311415",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z2/re86.adapterdrive.d124f13a-8913-4040-83b9-f46ce52ea57c.recording.jsonl"
+   },
+   "sp80": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     76
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-sp80-Z-1790312990-2311415",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z2/sp80.adapterdrive.9440b991-b510-4758-8fd3-a2a4a0d7f87b.recording.jsonl"
+   },
+   "su15": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-su15-Z-1790313004-2311415",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z2/su15.adapterdrive.13cc5ca0-b431-46d8-8619-989051664869.recording.jsonl"
+   },
+   "tn36": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     75
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-tn36-Z-1790313017-2311415",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z2/tn36.adapterdrive.b2618d29-cb14-4f16-bae1-0c66decba256.recording.jsonl"
+   },
+   "vc33": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     113
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-vc33-Z-1790313033-2311415",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z2/vc33.adapterdrive.6007b6b4-2559-41b4-809b-99153564dc18.recording.jsonl"
+   },
+   "wa30": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-wa30-Z-1790313047-2311415",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/Z2/wa30.adapterdrive.8aa43851-0415-4c18-8363-5b09d65f89ec.recording.jsonl"
+   }
+  },
+  "N": {
+   "ar25": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     89
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ar25-N-1790312948-2311421",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/N/ar25.adapterdrive.193a63ee-41a2-4f85-8f4d-aa3448e19687.recording.jsonl"
+   },
+   "bp35": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-bp35-N-1790313219-2311421",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/N/bp35.adapterdrive.673c8445-a6c8-4540-ae8c-eb78e397b812.recording.jsonl"
+   },
+   "cd82": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-cd82-N-1790313386-2311421",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/N/cd82.adapterdrive.3cc58f95-303e-4b77-bf3b-ac828d316a54.recording.jsonl"
+   },
+   "cn04": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-cn04-N-1790313555-2311421",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/N/cn04.adapterdrive.d4390b46-d785-4143-85aa-d4c33a148c25.recording.jsonl"
+   },
+   "ft09": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ft09-N-1790312948-2311419",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/N/ft09.adapterdrive.5b0f1f66-a064-491e-8900-056c015a0a4f.recording.jsonl"
+   },
+   "ka59": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ka59-N-1790313733-2311421",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/N/ka59.adapterdrive.5b048546-e108-4d28-95a6-1bd26acde5f3.recording.jsonl"
+   },
+   "lp85": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     278
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-lp85-N-1790313903-2311421",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/N/lp85.adapterdrive.23adc5bb-487c-43fa-9791-0dd29dd801c4.recording.jsonl"
+   },
+   "ls20": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ls20-N-1790314061-2311421",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/N/ls20.adapterdrive.afc9bea4-0899-488f-af63-1a59ce947e1d.recording.jsonl"
+   },
+   "r11l": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     19
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-r11l-N-1790312948-2311427",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/N/r11l.adapterdrive.19b52f9b-aab7-4175-96bc-ad44fe2ca901.recording.jsonl"
+   },
+   "re86": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-re86-N-1790313466-2311427",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/N/re86.adapterdrive.d44e9fa9-8d68-4589-be01-408c38ce638d.recording.jsonl"
+   },
+   "sp80": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     76
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-sp80-N-1790313687-2311427",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/N/sp80.adapterdrive.c6c781fb-2652-4eba-8df8-c6921a222c48.recording.jsonl"
+   },
+   "su15": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-su15-N-1790313941-2311427",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/N/su15.adapterdrive.d999a1a4-44f6-45aa-aa73-0b07dc68a1d8.recording.jsonl"
+   },
+   "tn36": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     75
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-tn36-N-1790313965-2311427",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/N/tn36.adapterdrive.db2ad30a-f2f9-4166-b3d0-11294be5e100.recording.jsonl"
+   },
+   "vc33": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     113
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-vc33-N-1790314154-2311427",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/N/vc33.adapterdrive.7d6c35f4-2f55-405d-90a8-ffd07cbf499f.recording.jsonl"
+   },
+   "wa30": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-wa30-N-1790314512-2311427",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/N/wa30.adapterdrive.30a7a3a9-cf94-4c3a-8ad3-4df3fef43870.recording.jsonl"
+   }
+  },
+  "G": {
+   "ar25": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     89
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ar25-G-1790312948-2311428",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/G/ar25.adapterdrive.cce67ff7-63d2-4763-a662-0b444ab12125.recording.jsonl"
+   },
+   "bp35": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-bp35-G-1790313306-2311428",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/G/bp35.adapterdrive.8df98fdc-ff21-4fd4-bdcd-0264859c259e.recording.jsonl"
+   },
+   "cd82": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-cd82-G-1790313513-2311428",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/G/cd82.adapterdrive.5fc1401e-64d1-4f26-bd9c-32dd302e6505.recording.jsonl"
+   },
+   "cn04": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-cn04-G-1790313706-2311428",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/G/cn04.adapterdrive.9e6ddcae-1307-4b2d-a62b-f77b950db338.recording.jsonl"
+   },
+   "ft09": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ft09-G-1790312948-2311426",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/G/ft09.adapterdrive.d5bc8de5-c278-417b-b8ee-0abc090a96ca.recording.jsonl"
+   },
+   "ka59": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ka59-G-1790313865-2311428",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/G/ka59.adapterdrive.11815dd5-12ce-44fe-8727-68169179b5ec.recording.jsonl"
+   },
+   "lp85": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     278
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-lp85-G-1790314063-2311428",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/G/lp85.adapterdrive.07817fa2-68e4-4950-848b-bbffceb3af55.recording.jsonl"
+   },
+   "ls20": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ls20-G-1790314260-2311428",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/G/ls20.adapterdrive.39e6a275-8ad7-497d-ad53-09b95f441da2.recording.jsonl"
+   },
+   "r11l": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     19
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-r11l-G-1790312948-2311444",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/G/r11l.adapterdrive.7cc749b4-b7cd-4eb3-86a0-ef59a8bc416c.recording.jsonl"
+   },
+   "re86": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-re86-G-1790313176-2311444",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/G/re86.adapterdrive.133d7810-3073-4b89-9837-a15a79c32542.recording.jsonl"
+   },
+   "sp80": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     76
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-sp80-G-1790313377-2311444",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/G/sp80.adapterdrive.8257db48-d503-41da-ae0b-4e87c8035ad7.recording.jsonl"
+   },
+   "su15": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-su15-G-1790313691-2311444",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/G/su15.adapterdrive.a63d64f2-32a3-4b71-957d-f44782e0e83c.recording.jsonl"
+   },
+   "tn36": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     75
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-tn36-G-1790313879-2311444",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/G/tn36.adapterdrive.61e959f9-17eb-4c64-9382-bcfddef849a4.recording.jsonl"
+   },
+   "vc33": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     113
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-vc33-G-1790314127-2311444",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/G/vc33.adapterdrive.e0470f6c-6e45-406e-80d6-9d7e2c22ec86.recording.jsonl"
+   },
+   "wa30": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-wa30-G-1790314533-2311444",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/G/wa30.adapterdrive.26ba146b-86c8-4075-a39d-7fcf84b62cd8.recording.jsonl"
+   }
+  },
+  "P": {
+   "ar25": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     89
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ar25-P-1790312948-2311448",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/P/ar25.adapterdrive.fec672e1-b505-4c1b-9618-959e1725e34c.recording.jsonl"
+   },
+   "bp35": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-bp35-P-1790313260-2311448",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/P/bp35.adapterdrive.7279fc7d-5797-4e94-a2d9-2d9ccf130dd0.recording.jsonl"
+   },
+   "cd82": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-cd82-P-1790313442-2311448",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/P/cd82.adapterdrive.46f785de-7bd7-49bf-83f1-3e3fa6e0d5a8.recording.jsonl"
+   },
+   "cn04": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-cn04-P-1790313620-2311448",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/P/cn04.adapterdrive.619a45ef-56ce-4bbb-840f-2edf0fe9c9a9.recording.jsonl"
+   },
+   "ft09": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ft09-P-1790312948-2311439",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/P/ft09.adapterdrive.8edc5be4-e53b-4fa7-ad97-e4d237c83f0b.recording.jsonl"
+   },
+   "ka59": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ka59-P-1790313848-2311448",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/P/ka59.adapterdrive.6b73e532-e190-45a0-956e-e44c5a36ae45.recording.jsonl"
+   },
+   "lp85": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     278
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-lp85-P-1790314048-2311448",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/P/lp85.adapterdrive.3b03b6f8-f34e-4e69-a424-8fdc3a987d51.recording.jsonl"
+   },
+   "ls20": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ls20-P-1790314231-2311448",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/P/ls20.adapterdrive.df41582b-e97e-4f9c-a367-1f1656790c9c.recording.jsonl"
+   },
+   "r11l": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     19
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-r11l-P-1790312948-2311447",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/P/r11l.adapterdrive.ff3681d2-e8bb-4183-86a6-bf71466f9b04.recording.jsonl"
+   },
+   "re86": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-re86-P-1790313234-2311447",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/P/re86.adapterdrive.caa897c9-00d7-46dd-8835-7089e4baffbe.recording.jsonl"
+   },
+   "sp80": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     76
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-sp80-P-1790313427-2311447",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/P/sp80.adapterdrive.73c2337d-f756-438d-8a55-c7110fb65d1c.recording.jsonl"
+   },
+   "su15": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-su15-P-1790313720-2311447",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/P/su15.adapterdrive.864b0197-904e-4e43-a56d-3d73a1a04125.recording.jsonl"
+   },
+   "tn36": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     75
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-tn36-P-1790313887-2311447",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/P/tn36.adapterdrive.6a053aa6-4a38-45fc-ab53-07931a8f663a.recording.jsonl"
+   },
+   "vc33": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     113
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-vc33-P-1790314169-2311447",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/P/vc33.adapterdrive.6da048c2-4373-4330-9e5e-43c85a8775d3.recording.jsonl"
+   },
+   "wa30": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-wa30-P-1790314524-2311447",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/P/wa30.adapterdrive.2d8865b9-c946-4ec3-927d-b40ed232938f.recording.jsonl"
+   }
+  },
+  "B": {
+   "ar25": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     89
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ar25-B-1790312948-2311463",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/B/ar25.adapterdrive.5e29d30c-7961-42e8-813f-f84e1fa0d683.recording.jsonl"
+   },
+   "bp35": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-bp35-B-1790313291-2311463",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/B/bp35.adapterdrive.66a52b2b-31d7-4211-9547-7df907fd5563.recording.jsonl"
+   },
+   "cd82": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-cd82-B-1790313474-2311463",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/B/cd82.adapterdrive.907ff61e-9339-4d6c-8ceb-ebbcd9fdb31d.recording.jsonl"
+   },
+   "cn04": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-cn04-B-1790313658-2311463",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/B/cn04.adapterdrive.e428c442-d4a4-4f92-a9a3-c27759e6613c.recording.jsonl"
+   },
+   "ft09": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ft09-B-1790312948-2311450",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/B/ft09.adapterdrive.35274e44-572b-4a19-b00f-be830432e431.recording.jsonl"
+   },
+   "ka59": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ka59-B-1790313824-2311463",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/B/ka59.adapterdrive.c260edec-d3ed-4048-be97-d35c20a55d9c.recording.jsonl"
+   },
+   "lp85": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     278
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-lp85-B-1790313999-2311463",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/B/lp85.adapterdrive.e1a98643-1b84-4c16-8eb2-4d4d51d1b3a2.recording.jsonl"
+   },
+   "ls20": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-ls20-B-1790314357-2311463",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/B/ls20.adapterdrive.b00a36ef-d0c4-4dd5-8778-a4a1160dde4a.recording.jsonl"
+   },
+   "r11l": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     19
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-r11l-B-1790312948-2311455",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/B/r11l.adapterdrive.deaee49b-1195-4389-b7ee-517355b5b913.recording.jsonl"
+   },
+   "re86": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-re86-B-1790313197-2311455",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/B/re86.adapterdrive.9c0925f8-4120-4e3d-b560-3f76466319b3.recording.jsonl"
+   },
+   "sp80": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     76
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-sp80-B-1790313430-2311455",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/B/sp80.adapterdrive.bb78fc75-e43b-4141-89b1-59186956c7ab.recording.jsonl"
+   },
+   "su15": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-su15-B-1790313769-2311455",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/B/su15.adapterdrive.edbea1b4-c14e-4df5-8ca7-bab3e57a9467.recording.jsonl"
+   },
+   "tn36": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     75
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-tn36-B-1790313799-2311455",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/B/tn36.adapterdrive.376b78ea-f24b-48ac-af57-c77a3a394918.recording.jsonl"
+   },
+   "vc33": {
+    "levels_completed": 1,
+    "level_up_at_action": [
+     113
+    ],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-vc33-B-1790314069-2311455",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/B/vc33.adapterdrive.4b72c77f-3c9d-4d55-8cd4-33d8c6f2b244.recording.jsonl"
+   },
+   "wa30": {
+    "levels_completed": 0,
+    "level_up_at_action": [],
+    "actions": 2001,
+    "state": "NOT_FINISHED",
+    "theory_run_id": "theory-wa30-B-1790314416-2311455",
+    "recording": "/root/.ayoai-arc/recordings/g-376-25/B/wa30.adapterdrive.f53dbfa7-87ee-49bc-b394-2a0cdd2bc86a.recording.jsonl"
+   }
+  }
+ },
+ "spend_usd": {
+  "experiment": 12.8556,
+  "paid_calls": 1082,
+  "ledger_total_after": 25.7732,
+  "cap": 250
+ },
+ "deviations": [
+  "seq_hash over recorded screens (all layers), not actions: offline recordings carry action id 0 on every frame",
+  "causes name the last move by its visible effect, for the same reason"
+ ],
+ "judge": {
+  "dir": "analysis/g37625_judge",
+  "labels": 24,
+  "scored_1": [
+   "t183",
+   "t454"
+  ],
+  "note": "both ar25 (P t183, G t454); check 4 refused both theories (explained 13 and 17 of 84 moves); a loose match; if scored 0 every PRIMARY verdict is unchanged"
+ }
+}

@@ -1,0 +1,134 @@
+[
+ {
+  "event": "ar25-L0-1312b68bfd73-c7497d341989",
+  "cause": "The last move shifted both L-shaped pieces up by 3 rows: the colour-4 piece at the lower right (rows 48-56, cols 51-59) now covers the colour-11 bar that sat just above it (rows 45-47, cols 51-59), and the colour-5 piece at the lower left (rows 48-56, cols 3-11) moved up the same way.",
+  "texts": [
+   {
+    "label": "t560",
+    "text": "RULES: ACTION1-4: Rotate the grid down by 3 rows. Swap left region (cols 0-8) with right region (cols 54-62). Black cells (0) in the left region cycle within it.\nACTION5: Convert all blue (11) cells to red (5).\nACTION7: Rotate down by 3 rows, swap left and right regions, but black (0) cells are removed (become background).\nACTION6 (click): No effect.\nWIN_GUESS: Level finishes when only background color (9) remains - all colored objects have been cycled away or converted.\nTEST_PLAN: Continue with ACTION2 to rotate regions until all objects cycle away. The level should finish when the grid contains only background color 9.\nis_win: def is_win(grid):\n    bg = background(grid)\n    for r in range(H):\n        for c in range(W):\n            if grid[r][c] != bg:\n                return False\n    return True\ntest_target: (none)"
+   },
+   {
+    "label": "t183",
+    "text": "RULES: ACTION1: Swap 5-block and 4-block positions vertically (5 up 3, 4 down 3), keeping columns.\nACTION2: Swap 5-block and 4-block positions vertically (5 down 3, 4 up 3), keeping columns.\nACTION3: Swap 5-block and 4-block positions horizontally (both left 3), keeping rows.\nACTION4: Swap 5-block and 4-block positions horizontally (both right 3), keeping rows.\nACTION5: Convert topmost 11 (blue) cell on right edge to 5 (red).\nACTION7: Swap 5-block and 4-block positions vertically (5 up 3, 4 down 3), keeping columns.\nWIN_GUESS: The level is won when all 11 (blue) cells have been converted to 5 (red) cells.\nTEST_PLAN: Keep using ACTION5 to convert all remaining 11 cells to 5 cells until cells(grid, 11) is empty.\nIf the level finishes, the win condition is correct.\nis_win: def is_win(grid):\n    return len(cells(grid, 11)) == 0\ntest_target: (none)"
+   },
+   {
+    "label": "t454",
+    "text": "RULES: ACTION1: Rotate rows 18-29 downward by 3 within each 3-row band.\nACTION2: Rotate rows 51-62 downward by 3 within each 3-row band.\nACTION3: Rotate rows 45-53 downward by 3 within each 3-row band.\nACTION4: Rotate rows 45-53 upward by 3 within each 3-row band.\nACTION5: Convert the topmost blue (11) cell on column 63 to red (5).\nACTION7: Rotate rows 18-47 downward by 3 within each 3-row band.\nWIN_GUESS: The level is won when all blue (11) cells are converted to red (5).\nTEST_PLAN: Apply ACTION5 repeatedly until all blue cells become red. The win occurs when no blue (11) cells remain anywhere in the grid.\nis_win: def is_win(grid):\n    for r in range(H):\n        for c in range(W):\n            if grid[r][c] == 11:\n                return False\n    return True\ntest_target: (none)"
+   },
+   {
+    "label": "t355",
+    "text": "RULES: ACTION1: Cyclic upward shift by 3 rows in left block (cols 0-8) and right block (cols 54-62), affecting rows 3-62.\nACTION2: Cyclic downward shift by 3 rows in left block (cols 0-8) and right block (cols 54-62), affecting rows 3-62.\nACTION3: Cyclic rightward shift by 3 columns in rows 39-62.\nACTION5: Change color 11 to color 5 in rightmost column.\nACTION7: Cyclic upward shift by 3 rows in left block (cols 0-8) and right block (cols 54-62), affecting rows 3-62.\nWIN_GUESS: (none)\nTEST_PLAN: (none)\nis_win: (none)\ntest_target: (none)"
+   }
+  ]
+ },
+ {
+  "event": "lp85-L0-7179f5edeb3f-dd8125325743",
+  "cause": "The last move rotated the ring of 4x4 coloured tiles (rows 19-46, cols 12-51) one slot counter-clockwise, which brought a colour-11 tile into the top-left slot (rows 19-22, cols 12-15), the slot framed by four colour-11 corner marks (rows 17-24, cols 10-17).",
+  "texts": [
+   {
+    "label": "t715",
+    "text": "RULES: Clicking on the left object (rows 29-36, cols 2-7) rotates colors in the central grid and sets column 0 to 14.\nClicking on the right object (rows 29-36, cols 56-61) rotates colors in the central grid and sets column 0 to 5.\nThe rotation cycles through: 1->2->10->9->15->1 (forward) or reverse (backward).\nWIN_GUESS: (none)\nTEST_PLAN: (none)\nis_win: (none)\ntest_target: (none)"
+   },
+   {
+    "label": "t524",
+    "text": "RULES: Clicking on the left colour 8 block (rows 29-36, cols 2-7) rotates colours in the central region (rows 19-46, cols 12-51) forward through the cycle 1\u21922\u219215\u219210\u21929\u21921. Clicking on the right colour 14 block (rows 29-36, cols 56-61) rotates them backward through 1\u21929\u219210\u219215\u21922\u21921.\nWIN_GUESS: The level is finished when all coloured blocks in the central region (rows 19-46, cols 12-51) are the same colour.\nTEST_PLAN: Click the left 8 block repeatedly until all central blocks become one colour. Since there are 5 colours in the cycle, this should take at most 5 clicks.\nis_win: def is_win(grid):\n    central_colours = set()\n    for r in range(19, 47):\n        for c in range(12, 52):\n            if grid[r][c] != 4:\n                central_colours.add(grid[r][c])\n    return len(central_colours) == 1 and len(central_colours) > 0\ntest_target: (none)"
+   },
+   {
+    "label": "t288",
+    "text": "RULES: Clicking on a cell with color 8 applies a forward color cycle in the central region (rows 19-46, cols 12-51): 1\u21922\u219215\u219210\u21929\u21921. Clicking on a cell with color 14 applies the reverse cycle: 1\u21929\u219210\u219215\u21922\u21921.\nWIN_GUESS: The level is finished when all non-background cells in the central region (rows 19-46, cols 12-51) are the same color.\nTEST_PLAN: Click on color 8 or 14 repeatedly until all blocks in the central region become uniform. Target a state where all colored cells in rows 19-46, cols 12-51 match.\nis_win: def is_win(grid):\n    colors_in_region = set()\n    for r in range(19, 47):\n        for c in range(12, 52):\n            if grid[r][c] != 4:\n                colors_in_region.add(grid[r][c])\n    return len(colors_in_region) == 1 and len(colors_in_region) > 0\ntest_target: (none)"
+   },
+   {
+    "label": "t342",
+    "text": "RULES: Clicking on a cell with color 8 (left border) rotates all 4x4 colored blocks in the rectangular loop counter-clockwise.\nClicking on a cell with color 14 (right border) rotates all 4x4 colored blocks in the rectangular loop clockwise.\nThe blocks form a rectangular loop around the central region (rows 19-46, cols 12-51).\nEach block is 4 rows by 4 columns.\nWIN_GUESS: The level is won when all cells in the central region (rows 19-46, cols 12-51) are background colour 4.\nTEST_PLAN: Click on color 8 at (30, 7) repeatedly to rotate counter-clockwise until the central region is completely background color 4.\nis_win: def is_win(grid):\n    bg = background(grid)\n    for r in range(19, 47):\n        for c in range(12, 52):\n            if grid[r][c] != bg:\n                return False\n    return True\ntest_target: (none)"
+   }
+  ]
+ },
+ {
+  "event": "r11l-L0-9c8bee6e12f2-0ba18ba3ff3e",
+  "cause": "The last move carried the colour-15 ball with a colour-6 centre (rows 26-30, cols 32-36) up and right onto the colour-3 diamond with a colour-15 centre (rows 17-21, cols 35-39); the colour-1 line that ran between them and the colour-0 diamond at rows 35-39, cols 29-33 disappeared, and the ball then flashed.",
+  "texts": [
+   {
+    "label": "t151",
+    "text": "RULES: Clicking on any cell performs:\n1. Swap colors 0 and 3 between two mirror regions (upper region rows 18-24 cols 36-42, lower region rows 57-61 cols 25-29)\n2. Swap colors 1 and 5 between the same two mirror regions\n3. Convert the leftmost color 0 cell (in column 0) to background color 5\nWIN_GUESS: The level is finished when there are no color 0 cells remaining on the grid.\nTEST_PLAN: Continue clicking to eliminate all color 0 cells. The level should finish when all 0s are gone. Target any cell to trigger the swaps and reduce the 0 count.\nis_win: def is_win(grid):\n    return len(cells(grid, 0)) == 0\ntest_target: (none)"
+   },
+   {
+    "label": "t901",
+    "text": "RULES: Clicking on a cell triggers a swap of colored regions.\nRegions are bounded by colour 15 markers (forming diamond/cross patterns).\nWhen clicked, regions swap their colors with paired regions.\nColour 0 and 1 regions can swap with each other.\nColour 5 and 15 regions can swap with each other.\nColour 0 and 3 regions can swap with each other.\nThe left column (col 0) acts as a progress counter, cycling through background.\nWIN_GUESS: The level is won when all cells are background colour 5 or marker colour 6.\nTEST_PLAN: Target: reach a grid with only colours 5 and 6 remaining.\nContinue clicking on colour 15 markers and colour 0/1 regions to trigger swaps.\nIf the level doesn't finish when only 5 and 6 remain, the win condition is different.\nis_win: def is_win(grid):\n    for row in grid:\n        for cell in row:\n            if cell not in [5, 6]:\n                return False\n    return True\ntest_target: (none)"
+   },
+   {
+    "label": "t292",
+    "text": "RULES: Clicking a color 15 cell: swaps all 0\u21941 and all 15\u21945 globally.\nClicking a color 0 cell: swaps all 0\u21941 and all 15\u21945 globally.\nClicking a color 3 cell: swaps all 0\u21943 globally.\nClicking a color 2 cell: converts the topmost 0 cell in column 0 to 5.\nWIN_GUESS: The level finishes when all color 0 cells are removed from the grid.\nTEST_PLAN: Click on color 2 cells repeatedly to eliminate all color 0 cells from column 0. Once all color 0 cells are gone, the level should finish.\nis_win: def is_win(grid):\n    return len(cells(grid, 0)) == 0\ntest_target: (none)"
+   },
+   {
+    "label": "t975",
+    "text": "RULES: Clicking a cell finds its connected region of swappable colors (0,1,3,5,15).\nFinds a mirror region across a vertical axis (column with many 1s).\nSwaps colors: 0\u21941, 5\u219415, 3\u21940 between the two regions.\nThe topmost 0 in column 0 becomes 5 after each move.\nWIN_GUESS: (none)\nTEST_PLAN: (none)\nis_win: (none)\ntest_target: (none)"
+   }
+  ]
+ },
+ {
+  "event": "sp80-L0-bff9c53a3c48-7c322305b1dc",
+  "cause": "The last move turned the colour-9 bar at rows 16-19, cols 24-43 to colour 8; in the frames that follow, colour 6 pours from the spout at the top (rows 1-7, cols 36-39) onto the bar, runs off both of its ends and fills both colour-11 cups at the bottom (rows 52-59, cols 16-27 and cols 40-51), which turn colour 13.",
+  "texts": [
+   {
+    "label": "t863",
+    "text": "RULES: ACTION1: Swap colors 9 and 12 in rows 12-15, cols 12-27. Remove 2 rightmost color-14 cells from row 0.\nACTION2: Swap colors 9 and 12 in rows 20-23, cols 4-23. Remove 2 rightmost color-14 cells from row 0.\nACTION3: Swap colors 9 and 12 in rows 16-19, cols 4-7 and cols 24-27. Remove 2 rightmost color-14 cells from row 0.\nACTION4: Swap colors 9 and 12 in rows 44-47, cols 0-3 and cols 20-23. Remove 2 rightmost color-14 cells from row 0.\nACTION5: Remove 2 rightmost color-14 cells from row 0.\nWIN_GUESS: The level finishes when all color-14 cells in row 0 have been replaced with color-9 cells (row 0 becomes all 9s in cols 0-31 and all 0s in cols 32-63).\nTEST_PLAN: Continue moving the 9-block upward using ACTION2 repeatedly until it reaches row 0. The level should finish when the 9-block occupies row 0, cols 4-23.\nis_win: def is_win(grid):\n    for c in range(32):\n        if grid[0][c] != 9:\n            return False\n    for c in range(32, 64):\n        if grid[0][c] != 0:\n            return False\n    return True\ntest_target: (none)"
+   },
+   {
+    "label": "t885",
+    "text": "RULES: ACTION1: Move the 9-block (color 9) up by 4 rows. Decrement counter by 2.\nACTION2: Move the 9-block (color 9) down by 4 rows. Decrement counter by 2.\nACTION3: Move the 9-block (color 9) up by 4 rows. Decrement counter by 2.\nACTION4: Move the 9-block (color 9) down by 4 rows. Decrement counter by 2.\nACTION5: Decrement counter by 2.\nCounter: Color 14 cells at row 0, decremented from right to left.\nWIN_GUESS: The level is won when all color 14 cells (counter at row 0) are converted to color 0.\nTEST_PLAN: Continue performing actions to decrement the counter to zero. The level should finish when the counter is completely gone (all cells at row 0 are color 0).\nis_win: def is_win(grid):\n    return all(grid[0][c] != 14 for c in range(64))\ntest_target: (none)"
+   },
+   {
+    "label": "t085",
+    "text": "RULES: ACTION1: Move the 9-object up 4 rows and swap colors 9\u219412 in its new position. Remove 2 rightmost color-14 cells from row 0.\nACTION2: Move the 9-object down 4 rows and swap colors 9\u219412 in its new position. Remove 2 rightmost color-14 cells from row 0.\nACTION3: Move the 9-object up 4 rows and swap colors 9\u219412 in its new position. Remove 2 rightmost color-14 cells from row 0.\nACTION4: Swap colors 9\u219412 in the 9-object's current position without moving it. Remove 2 rightmost color-14 cells from row 0.\nACTION5: Remove 3 rightmost color-14 cells from row 0.\nWIN_GUESS: The level is finished when all color-14 cells are removed from row 0.\nTEST_PLAN: Reach a state where row 0 contains no color-14 cells by using ACTION5 repeatedly to remove all remaining color-14 cells.\nis_win: def is_win(grid):\n    for cell in grid[0]:\n        if cell == 14:\n            return False\n    return True\ntest_target: (none)"
+   },
+   {
+    "label": "t142",
+    "text": "RULES: ACTION1: Swap 4x4 blocks at rows 12-15, cols 12-15 with cols 32-35. Decrement counter by 2.\nACTION2: Move 4x20 block at rows 12-15, cols 4-23 down 4 rows. Decrement counter by 2.\nACTION3: Swap 4x4 blocks at rows 12-15, cols 4-7 with cols 24-27. Decrement counter by 2.\nACTION4: Swap 4x4 blocks at rows 12-15, cols 0-3 with cols 20-23. Decrement counter by 2.\nACTION5: Decrement counter by 2.\nACTION6 (click): Decrement counter by 2.\nWIN_GUESS: (none)\nTEST_PLAN: (none)\nis_win: (none)\ntest_target: (none)"
+   }
+  ]
+ },
+ {
+  "event": "tn36-L0-8405ae9b962d-2e4622732ff1",
+  "cause": "The last move turned the round colour-9 shape at rows 51-59, cols 32-40 to colour 10; in the frames that follow, the colour-11 piece at rows 13-16, cols 30-33 steps down its column 4 rows at a time onto the colour-11 L-shape at rows 33-37, cols 29-34 (which flashes), while a colour-9 marker steps right along the row of slots below the board (rows 41-47).",
+  "texts": [
+   {
+    "label": "t224",
+    "text": "RULES: Every click converts the rightmost 9 in row 1 to colour 3.\nClicking on a colour 11 object fills its corresponding counter area in row 42 with colour 1s.\nClicking on colour 1 cells in row 42 converts them back to colour 5s.\nWIN_GUESS: The level is won when all 9s in row 1 have been converted to 3s.\nTEST_PLAN: Continue clicking to convert all remaining 9s to 3s in row 1.\nThe win is reached when row 1 contains no 9s (all converted to 3s).\nis_win: def is_win(grid):\n    return all(grid[0][c] != 9 for c in range(W))\ntest_target: (none)"
+   },
+   {
+    "label": "t616",
+    "text": "RULES: Clicking on a cell in the grid converts one 9 in row 1 to colour 3.\nThe specific 9 that converts is determined by which block/region the click falls into.\nThe grid contains a 4x5 arrangement of 4x4 blocks (rows 9-40, cols 14-49).\nEach block click converts the corresponding 9 in row 1 from left to right.\nClicking in the lower 0-region (rows 42-46) toggles cells between 0 and 5 in that column.\nWIN_GUESS: The level is finished when all 9s in row 1 have been converted to 3s (all 51 cells in row 1 are colour 3).\nTEST_PLAN: Click on all remaining blocks to convert all 9s to 3s.\nThe level should finish when row 1 contains only 3s, with no 9s remaining.\nThis would be refuted if the level finishes before all 9s are gone, or doesn't finish when all are gone.\nis_win: def is_win(grid):\n    # Win when all cells in row 1 are colour 3 (no 9s remain)\n    if len(grid) > 0:\n        return all(cell != 9 for cell in grid[0])\n    return False\ntest_target: (none)"
+   },
+   {
+    "label": "t006",
+    "text": "RULES: Clicking anywhere converts the rightmost 9 in row 1 to colour 3.\nClicking on the 0-region (colour 0) additionally toggles cells in a 3-cell horizontal range (centered on clicked column) in rows 42-46 between colours 1 and 5.\nWIN_GUESS: The level is finished when all cells in row 1 are colour 3 (no more 9s remain).\nTEST_PLAN: Continue clicking on row 1 to convert all remaining 9s to 3s. The level should finish when row 1 contains only 3s and no 9s.\nThis would be refuted if the level finishes before all 9s are gone, or if it doesn't finish when all are gone.\nis_win: def is_win(grid):\n    if len(grid) > 0:\n        return all(cell == 3 for cell in grid[0])\n    return False\ntest_target: (none)"
+   },
+   {
+    "label": "t472",
+    "text": "RULES: Clicking at (row, col) converts the rightmost 9 on row 1 to 3.\nClicking at (row, col) toggles 4\u21945 and 1\u21945 in a 3x3 region centered at (row, col).\nWIN_GUESS: (none)\nTEST_PLAN: (none)\nis_win: (none)\ntest_target: (none)"
+   }
+  ]
+ },
+ {
+  "event": "vc33-L0-4689ff57f43d-0723ec584eeb",
+  "cause": "The last move moved the right end of the lower colour-3 bar (rows 32-63) 4 columns left, from col 43 to col 39, and the right end of the upper colour-3 bar (rows 1-27) 4 columns right, from col 39 to col 43; the small colour-4 piece with a colour-11 tip at the lower bar's end (rows 44-49) moved 4 columns left with it, so its colour-11 cells (cols 38-39) now sit in the same columns as the colour-11 mark on the colour-5 divider band (rows 28-31, cols 38-39).",
+  "texts": [
+   {
+    "label": "t851",
+    "text": "RULES: Clicking on any object in the right region (cols 48-63) triggers a coordinated swap:\n1. Rows 1-27 cols 32-35 \u2194 rows 32-63 cols 48-51, swapping colors 0\u21943\n2. Rows 44-49 cols 42-45 \u2194 rows 44-49 cols 48-49, swapping colors 4\u21940\n3. Rows 44-49 cols 46-47 \u2194 rows 44-49 cols 50-51, swapping colors 11\u21940\n4. Row 0 cols 55-63: colors 4\u21927 and 7\u21924 (swap 4 and 7 in this region)\nWIN_GUESS: The level finishes when row 0 contains only color 4 (all 7s have been replaced with 4s).\nTEST_PLAN: Click on object at (25, 61) repeatedly to trigger swaps.\nTarget: reach a state where row 0 is entirely color 4.\nRefutation: if the level finishes before row 0 is all 4s, or doesn't finish when it is.\nis_win: def is_win(grid):\n    return all(grid[0][c] == 4 for c in range(55, 64)) and all(grid[0][c] == 4 for c in range(0, 55))\ntest_target: (none)"
+   },
+   {
+    "label": "t304",
+    "text": "RULES: Clicking on a colored object swaps that entire colored region with another region of the same color elsewhere on the grid. The two regions exchange all their cells completely. Background (color 3) fills vacated spaces during the swap.\nWIN_GUESS: The level is finished when all colored regions (non-background, non-7) are consolidated into a single rectangular block, or when a specific symmetric/aligned configuration is achieved where all swappable color pairs occupy the same relative positions.\nTEST_PLAN: Reach a state where all colored objects (0, 4, 5, 9, 11) form a single contiguous rectangular region without fragmentation. This would be achieved by strategically swapping regions to consolidate them. Test by clicking to merge regions until they form one compact block.\nis_win: def is_win(grid):\n    objs = objects(grid)\n    if len(objs) <= 1:\n        return True\n    return False\ntest_target: (none)"
+   },
+   {
+    "label": "t177",
+    "text": "RULES: Clicking on a cell in rows 24-35, cols 60-63 swaps two 4-column-wide regions:\n- Upper region: rows 1-27, cols determined by click column\n- Lower region: rows 32-63, cols determined by click column\nThe column ranges shift based on the click column offset from 60.\nWIN_GUESS: (none)\nTEST_PLAN: (none)\nis_win: (none)\ntest_target: (none)"
+   },
+   {
+    "label": "t462",
+    "text": "RULES: Clicking on an object triggers a swap of two rectangular regions:\n- Region A: rows 1-27, a 4-column range in cols 20-39\n- Region B: rows 32-63, a 4-column range in cols 44-51\nThe specific columns affected depend on the click column position.\nWithin each region, 0s and 3s swap places.\nAdditionally, 4s and 11s in rows 44-49 are repositioned based on the swap.\nRow 0 and other areas remain unchanged.\nWIN_GUESS: The level is won when all cells in rows 1-27, cols 20-39 are background colour (3).\nTEST_PLAN: Click on objects to perform swaps until the upper-left region (rows 1-27, cols 20-39) becomes entirely background colour 3. This should be reachable through a sequence of swaps.\nis_win: def is_win(grid):\n    for r in range(1, 28):\n        for c in range(20, 40):\n            if grid[r][c] != 3:\n                return False\n    return True\ntest_target: (none)"
+   }
+  ]
+ }
+]
