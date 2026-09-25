@@ -14,11 +14,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import arcengine
 import pytest
 
-from port_streaming_client import PortStreamingClient
-from structs import FrameData, GameAction, GameState
+# arcengine comes from the optional [offline] extra (pyproject.toml), and
+# port_streaming_client imports it at module level, so skip the whole module on a
+# box without the extra instead of failing collection (g-376-46).
+arcengine = pytest.importorskip("arcengine")
+
+from port_streaming_client import PortStreamingClient  # noqa: E402
+from structs import FrameData, GameAction, GameState  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 
