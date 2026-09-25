@@ -1,0 +1,217 @@
+{
+  "experiment": "g-376-10-c",
+  "hypothesis": "2026-09-25_arc-memory-reuse-null-on-first-level",
+  "prereg_commit": "591b47e",
+  "box": "cc-03",
+  "date": "2026-09-25",
+  "driver_start": "2026-09-25T10:51:28",
+  "driver_end": "2026-09-25T13:43:01",
+  "total_games": 5,
+  "seeded_games": 0,
+  "total_runs": 10,
+  "verdict": "unresolvable",
+  "verdict_reason": "fewer than 3 seeded games (0 of 5 games stored a theory)",
+  "theory_admission": {
+    "total_proposed": 22,
+    "total_admitted": 0,
+    "admission_rate": 0.0,
+    "note": "All 22 proposed theories rejected at admission checks (replay accuracy or test plan). --max-actions 300 limits the move window available for replay verification."
+  },
+  "model_spend": {
+    "total_calls": 251,
+    "total_usd": 2.7112,
+    "fleet_total_before": 33.12,
+    "fleet_total_after": 35.83
+  },
+  "games": [
+    {
+      "game_id": "sp80-589a99af",
+      "game_num": 1,
+      "source": "primary",
+      "seeded": false,
+      "arms": {
+        "OFF": {
+          "level_up_at_action": 73,
+          "levels_completed": 1,
+          "level_count": 6,
+          "score": 4.7619,
+          "total_actions": 290,
+          "runs": 11,
+          "scorecard": "76a9d95c",
+          "rc": 0
+        },
+        "SEED": {
+          "level_up_at_action": 73,
+          "levels_completed": 1,
+          "level_count": 6,
+          "score": 4.7619,
+          "total_actions": 290,
+          "runs": 11,
+          "scorecard": "72725890",
+          "rc": 0
+        },
+        "ON": null
+      },
+      "theory_calls": {
+        "OFF": 24,
+        "SEED": 24
+      },
+      "theory_cost_usd": {
+        "OFF": 0.3019,
+        "SEED": 0.3037
+      }
+    },
+    {
+      "game_id": "ar25-0c556536",
+      "game_num": 2,
+      "source": "primary",
+      "seeded": false,
+      "arms": {
+        "OFF": {
+          "level_up_at_action": 89,
+          "levels_completed": 1,
+          "level_count": 8,
+          "score": 0.3591,
+          "total_actions": 298,
+          "runs": 3,
+          "scorecard": "69dc9da2",
+          "rc": 0
+        },
+        "SEED": {
+          "level_up_at_action": 89,
+          "levels_completed": 1,
+          "level_count": 8,
+          "score": 0.3591,
+          "total_actions": 298,
+          "runs": 3,
+          "scorecard": "8a7ff3c5",
+          "rc": 0
+        },
+        "ON": null
+      },
+      "theory_calls": {
+        "OFF": 27,
+        "SEED": 26
+      },
+      "theory_cost_usd": {
+        "OFF": 0.344,
+        "SEED": 0.3324
+      }
+    },
+    {
+      "game_id": "lp85-305b61c3",
+      "game_num": 3,
+      "source": "primary",
+      "seeded": false,
+      "arms": {
+        "OFF": {
+          "level_up_at_action": 272,
+          "levels_completed": 1,
+          "level_count": 8,
+          "score": 0.2654,
+          "total_actions": 294,
+          "runs": 7,
+          "scorecard": "d22c2818",
+          "rc": 0
+        },
+        "SEED": {
+          "level_up_at_action": 272,
+          "levels_completed": 1,
+          "level_count": 8,
+          "score": 0.2654,
+          "total_actions": 294,
+          "runs": 7,
+          "scorecard": "fcf590f9",
+          "rc": 0
+        },
+        "ON": null
+      },
+      "theory_calls": {
+        "OFF": 23,
+        "SEED": 23
+      },
+      "theory_cost_usd": {
+        "OFF": 0.18,
+        "SEED": 0.1816
+      }
+    },
+    {
+      "game_id": "r11l-495a7899",
+      "game_num": 4,
+      "source": "fallback",
+      "seeded": false,
+      "arms": {
+        "OFF": {
+          "level_up_at_action": 19,
+          "levels_completed": 1,
+          "level_count": 6,
+          "score": 4.7619,
+          "total_actions": 296,
+          "runs": 5,
+          "scorecard": "4946d927",
+          "rc": 0
+        },
+        "SEED": {
+          "level_up_at_action": 19,
+          "levels_completed": 1,
+          "level_count": 6,
+          "score": 4.7619,
+          "total_actions": 296,
+          "runs": 5,
+          "scorecard": "30acf8e9",
+          "rc": 0
+        },
+        "ON": null
+      },
+      "theory_calls": {
+        "OFF": 27,
+        "SEED": 25
+      },
+      "theory_cost_usd": {
+        "OFF": 0.2643,
+        "SEED": 0.2568
+      }
+    },
+    {
+      "game_id": "tn36-ef4dde99",
+      "game_num": 5,
+      "source": "fallback",
+      "seeded": false,
+      "arms": {
+        "OFF": {
+          "level_up_at_action": 74,
+          "levels_completed": 1,
+          "level_count": 7,
+          "score": 3.5714,
+          "total_actions": 296,
+          "runs": 5,
+          "scorecard": "b4454024",
+          "rc": 0
+        },
+        "SEED": {
+          "level_up_at_action": 74,
+          "levels_completed": 1,
+          "level_count": 7,
+          "score": 3.5714,
+          "total_actions": 296,
+          "runs": 5,
+          "scorecard": "9c2068da",
+          "rc": 0
+        },
+        "ON": null
+      },
+      "theory_calls": {
+        "OFF": 26,
+        "SEED": 26
+      },
+      "theory_cost_usd": {
+        "OFF": 0.2785,
+        "SEED": 0.2682
+      }
+    }
+  ],
+  "driver_bug": {
+    "description": "Original driver grep for seeded detection matched 'N stored' in GET lines, producing false SEEDED for sp80. Fixed in continuation driver to match 'POST /ArcTheory.*201' only.",
+    "impact": "sp80 ON arm was queued but driver was killed before it ran. No data was lost."
+  }
+}
