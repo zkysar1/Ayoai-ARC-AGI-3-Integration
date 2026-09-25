@@ -28,7 +28,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "vendor" / "ARC-AGI-3-Agents"))
 sys.path.insert(0, str(ROOT / "kaggle_salvage"))
 
-import arc_agi  # type: ignore[import-untyped]  # noqa: E402
+import arc_agi  # noqa: E402
 from arc_agi import OperationMode  # noqa: E402
 from arcengine import GameState  # noqa: E402
 from my_agent import MyAgent  # type: ignore[import-not-found]  # noqa: E402

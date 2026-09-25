@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "vendor" / "ARC-AGI-3-Agents"))
 
-import arc_agi  # type: ignore[import-untyped]  # noqa: E402
+import arc_agi  # noqa: E402
 from arc_agi import OperationMode  # noqa: E402
 from arcengine import GameAction  # noqa: E402
 

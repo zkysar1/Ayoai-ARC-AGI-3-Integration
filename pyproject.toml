@@ -80,6 +80,14 @@ plugins = []
 module = ["anthropic", "anthropic.*"]
 ignore_missing_imports = true
 
+# arc_agi and arcengine ship only in the optional [offline] extra. Without the
+# extra both are absent (import-not-found); with it arc_agi is untyped
+# (import-untyped). ignore_missing_imports covers both, so `mypy .` passes on a
+# box with or without the extra. (g-376-47)
+[[tool.mypy.overrides]]
+module = ["arc_agi", "arc_agi.*", "arcengine", "arcengine.*"]
+ignore_missing_imports = true
+
 # ── strict baseline (g-376-02) ─────────────────────────────────────────────
 # `mypy .` checked nothing from 2026-08-04 until the vendor/ exclude above. Its
 # first run after that exclude (mypy 1.17.1, on e874c33 plus the two excludes)
