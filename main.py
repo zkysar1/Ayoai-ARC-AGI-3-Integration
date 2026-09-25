@@ -24,6 +24,7 @@ from ayoai_client import (
     open_ayoai_session,
     resolve_api_key,
     resolve_lane,
+    stop_ayoai_server,
 )
 from ayoai_streaming_client import (
     AyoaiStreamingClient,
@@ -425,14 +426,34 @@ def build_v3_refiner_seed_provider(
     return RefinerSeedProvider(inner, library)
 
 
-def main() -> int:
-    """Run one ARC game session. Returns a process exit code (see EXIT_* above).
+class RunServerStop:
+    """Stops the run's AyoAI server once, however the run ends (g-376-39).
 
-    Every early return is a FAILURE path and returns a non-zero code; the
-    successful path falls through to `return EXIT_OK` at the end. Note that
-    "successful" means the game loop ran to completion — a score of 0 is a
-    legitimate 0-exit outcome, since losing is not an error.
+    _play() arms it just before it opens a live session, and main()'s finally
+    fires it. A win, the action cap, an aborted play, an early return and an
+    exception therefore all stop the server the same way. Arming BEFORE the open
+    also covers a session that never reached READY: its cold start may still
+    have launched an instance. Runs that open no session (mock, solver-v0,
+    random) never arm it and send nothing. The env server's idle timer stays the
+    backstop for a stop that fails.
     """
+
+    def __init__(self) -> None:
+        self._keys: tuple[str, str] | None = None
+
+    def arm(self, server_key: str, env_key: str) -> None:
+        self._keys = (server_key, env_key)
+
+    def fire(self) -> None:
+        if self._keys is None:
+            return
+        server_key, env_key = self._keys
+        self._keys = None
+        stop_ayoai_server(server_key, env_key)
+
+
+def _play(server_stop: RunServerStop) -> int:
+    """The body of main(), which owns the server stop (see main)."""
     log_level = logging.INFO
     if os.environ.get("DEBUG", "False") == "True":
         log_level = logging.DEBUG
@@ -1047,6 +1068,7 @@ def main() -> int:
                 f"Opening AyoAI session for solver-v2 (ayoServerKey={card_id}, "
                 f"ayoEnvironmentKey={env_key})..."
             )
+            server_stop.arm(card_id, env_key)
             ayoai_session = open_ayoai_session(card_id, env_key=env_key)
             logger.info(
                 f"AyoAI session OPEN (solver-v2): "
@@ -1085,6 +1107,7 @@ def main() -> int:
                 f"Opening AyoAI session (ayoServerKey={card_id}, "
                 f"ayoEnvironmentKey={env_key})..."
             )
+            server_stop.arm(card_id, env_key)
             ayoai_session = open_ayoai_session(card_id, env_key=env_key)
             logger.info(
                 f"AyoAI session OPEN: hostname={ayoai_session.ayoai_hostname} "
@@ -1620,6 +1643,23 @@ def main() -> int:
         logger.exception("streaming client close failed (non-fatal)")
 
     return EXIT_OK
+
+
+def main() -> int:
+    """Run one ARC game session. Returns a process exit code (see EXIT_* above).
+
+    Every early return is a FAILURE path and returns a non-zero code; the
+    successful path falls through to `return EXIT_OK` at the end. Note that
+    "successful" means the game loop ran to completion — a score of 0 is a
+    legitimate 0-exit outcome, since losing is not an error.
+
+    However the play ends, the AyoAI server it opened is stopped (g-376-39).
+    """
+    server_stop = RunServerStop()
+    try:
+        return _play(server_stop)
+    finally:
+        server_stop.fire()
 
 
 if __name__ == "__main__":

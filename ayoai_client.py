@@ -34,6 +34,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
@@ -101,10 +102,12 @@ def resolve_lane(lane: str | None = None) -> AyoaiLane:
 # 79.5s and 76.8s / 61 (2026-09-24, g-376-06), and one still WARMING when the 90
 # polls ran out at 113.4s (~1.26s per poll with the request): exit 3, the card
 # never played.
-# Giving up early saves nothing on the AyoAI side. main.py sends no stop, and the
-# env server's inactivity monitor ends an idle instance STREAM_INACTIVITY_TIMEOUT_S
-# (180s) after it reaches READY either way. So the costly error is a limit that is
-# too LOW: a lost run, and the exam plays each held-out game once, cold. The
+# Giving up early saves little on the AyoAI side: however the run ends, main.py
+# stops the server it asked for (stop_ayoai_server, g-376-39). The env server's
+# inactivity monitor is only the backstop: nominally STREAM_INACTIVITY_TIMEOUT_S
+# (180s), but on DEV on 2026-09-25 an instance outlived its last update by 14m23s
+# (alpha, board msg-20260925-194857-alpha-6052). So the costly error is a limit
+# that is too LOW: a lost run, and the exam plays each held-out game once, cold. The
 # default therefore errs high: 240 polls, ~5 min. That is ~3.8x the typical cold
 # start and ~2.6x the slowest seen. The poll rate is unchanged; only the budget
 # grew. AYOAI_READY_POLL_ATTEMPTS overrides it, and a bad value falls back here.
@@ -626,3 +629,72 @@ def open_ayoai_session(
         f"AyoAI session did not reach READY in {max_attempts} attempts "
         f"({elapsed:.1f}s elapsed); last status={last_status}"
     )
+
+
+# Per-server stop (g-376-39): the public route Vinheim's gateway and the Mind's
+# env-session teardown already use, DELETE {stage}/environments/{env}/servers/{key}.
+# It terminates the caller's own instance, found by its AccountId, Environment and
+# ServerKey tags. Each lane stops on its own stage, the one its two Lambda URLs sit
+# on. Probed 2026-09-25 with a never-launched key: /httpV1 and /httpV1/dev both
+# answered with the stop Lambda's own 404, so both routes exist.
+SERVER_STOP_TIMEOUT_S = 20.0
+
+
+def stop_ayoai_server(
+    server_key: str,
+    env_key: str = DEFAULT_ENV_KEY,
+    api_key: str | None = None,
+    *,
+    lane: str | None = None,
+    session: requests.Session | None = None,
+    http_timeout_s: float = SERVER_STOP_TIMEOUT_S,
+) -> bool:
+    """Stop the run's AyoAI server now instead of leaving it to the idle timer.
+
+    Returns True when the server is stopped: HTTP 200 (terminated now) or 404 (no
+    running server by that key, so already gone). Anything else returns False and
+    is logged. Nothing raises, because this runs as a play ends and the env
+    server's inactivity monitor stays the backstop: a failed stop costs idle
+    time, not the run's result. A 429 is not retried. The teardown API's rate
+    limit outlasts any retry a run end can afford, and it leaves the instance
+    running (guard-6862).
+
+    ``lane`` and ``api_key`` resolve the way open_ayoai_session resolves them.
+    """
+    resolved_api_key = resolve_api_key(api_key)
+    if not (server_key and env_key and resolved_api_key):
+        logger.warning("AyoAI server stop skipped: no server key, env key or API key")
+        return False
+    try:
+        stage = resolve_lane(lane).resolution_url.rsplit("/", 1)[0]
+    except AyoaiSessionError as e:
+        logger.warning("AyoAI server stop skipped: %s", e)
+        return False
+    url = (
+        f"{stage}/environments/{quote(env_key, safe='')}"
+        f"/servers/{quote(server_key, safe='')}"
+    )
+    owned_session = session is None
+    sess = session or requests.Session()
+    try:
+        r = sess.delete(
+            url, headers={"AYOAI-API-KEY": resolved_api_key}, timeout=http_timeout_s
+        )
+    except requests.exceptions.RequestException as e:
+        logger.warning("AyoAI server stop FAILED: %r (the idle timer remains)", e)
+        return False
+    finally:
+        if owned_session:
+            sess.close()
+    if r.status_code == 200:
+        logger.info("AyoAI server stopped: %s", server_key)
+        return True
+    if r.status_code == 404:
+        logger.info("AyoAI server stop: %s was not running (already gone)", server_key)
+        return True
+    logger.warning(
+        "AyoAI server stop FAILED: HTTP %d %s (the idle timer remains)",
+        r.status_code,
+        r.text[:200],
+    )
+    return False
