@@ -95,5 +95,6 @@ was closed. Exit code 0 for all 8 runs.
 
 ## Hypothesis status
 
-The hypothesis `2026-09-25_arc-stored-theory-no-first-level-gain` remains
-UNRESOLVED. Echo will handle resolution per the pre-registration plan.
+Resolved UNRESOLVABLE on 2026-09-25 by echo: the pre-registered branch for
+fewer than 3 seeded games (pipeline hypothesis
+`2026-09-25_arc-stored-theory-no-first-level-gain`).
