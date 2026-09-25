@@ -46,7 +46,7 @@ import os
 import pytest
 
 from analysis import measure_v4arm_reach_ls20 as reach_harness
-from analysis.measure_seam_real_ls20 import REC_DIR, load_frames
+from analysis.measure_seam_real_ls20 import REC_DIR, REC_GLOB, load_frames
 from primitives.synthesized_world_model import TransitionBuffer, WorldModel
 from primitives.world_model_synthesizer import (
     ContextConditionedModalSynthesizer,
@@ -62,7 +62,7 @@ def _recordings():
     # live port runs land, for other games AND for ls20, so a bare *.recording.jsonl
     # or ls20-* glob lets sorted()[0] be a recording these invariants cannot measure
     # (g-376-43: an ft09 port run turned the ARC gate red on cc-03).
-    return sorted(glob.glob(os.path.join(REC_DIR, "ls20-*.solver-v2.*.recording.jsonl")))
+    return sorted(glob.glob(os.path.join(REC_DIR, REC_GLOB)))
 
 
 def _require_recording():

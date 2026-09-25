@@ -4,7 +4,7 @@
 The CEILING measurement for the g-315-491/492 chain. g-315-492's end-to-end test proved the seam
 (FrameCoordinateDecomposer -> GeneralizingSynthesizer) generalizes on SYNTHETIC schema-faithful
 frames (the FLOOR: 100% vs 0% table). This script runs the SAME seam over REAL solver-v2 ls20
-recordings (recordings/*.recording.jsonl) and reports:
+recordings (recordings/ls20-*.solver-v2.*.recording.jsonl, REC_GLOB) and reports:
 
   1. arity stability   -- fraction of consecutive frames whose decomposed object-count (tuple
                           length) is unchanged. The greedy nearest-centroid tracker's v0 assumption
@@ -33,6 +33,11 @@ from primitives.world_model_synthesizer import GeneralizingSynthesizer, TableSyn
 from solver_v2.frame_coordinate_state import FrameCoordinateDecomposer
 
 REC_DIR = os.path.join(os.path.dirname(__file__), "..", "recordings")
+# The population these harnesses measure: REAL solver-v2 ls20 recordings (the numbers
+# behind g-315-493, g-315-495 and g-315-501). Live port runs, for other games and for
+# ls20, land in the same dir, and a bare *.recording.jsonl glob measured them too and
+# reported the mix as ls20 (g-376-45). The boundary and reach harnesses import this.
+REC_GLOB = "ls20-*.solver-v2.*.recording.jsonl"
 
 
 def load_frames(path):
@@ -129,9 +134,9 @@ def measure_one(path, split=0.8, terrain_top_n=2):
 
 
 def main(argv):
-    paths = sorted(glob.glob(os.path.join(REC_DIR, "*.recording.jsonl")))
+    paths = sorted(glob.glob(os.path.join(REC_DIR, REC_GLOB)))
     if not paths:
-        print("no recordings found in", REC_DIR)
+        print("no ls20 solver-v2 recordings found in", REC_DIR)
         return 1
     limit = int(argv[0]) if argv else 8
     paths = paths[:limit]

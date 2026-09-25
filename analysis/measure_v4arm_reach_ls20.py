@@ -86,7 +86,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from measure_seam_real_ls20 import REC_DIR, load_frames  # noqa: E402
+from measure_seam_real_ls20 import REC_DIR, REC_GLOB, load_frames  # noqa: E402
 
 from primitives.model_planner import plan  # noqa: E402
 from primitives.synthesized_world_model import (  # noqa: E402
@@ -348,9 +348,9 @@ def confirm_via_arm(path, split=0.8, min_dominance=0.5, terrain_top_n=2, horizon
 
 
 def main(argv):
-    paths = sorted(glob.glob(os.path.join(REC_DIR, "*.recording.jsonl")))
+    paths = sorted(glob.glob(os.path.join(REC_DIR, REC_GLOB)))
     if not paths:
-        print("no recordings found in", REC_DIR)
+        print("no ls20 solver-v2 recordings found in", REC_DIR)
         return 1
     limit = int(argv[0]) if len(argv) > 0 else 12
     max_h = int(argv[1]) if len(argv) > 1 else 3

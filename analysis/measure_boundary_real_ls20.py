@@ -26,7 +26,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from measure_seam_real_ls20 import REC_DIR, load_frames  # noqa: E402
+from measure_seam_real_ls20 import REC_DIR, REC_GLOB, load_frames  # noqa: E402
 
 from primitives.synthesized_world_model import (  # noqa: E402
     TransitionBuffer,
@@ -127,9 +127,9 @@ def measure_one(path, split=0.8, min_dominance=0.5):
 
 
 def main(argv):
-    paths = sorted(glob.glob(os.path.join(REC_DIR, "*.recording.jsonl")))
+    paths = sorted(glob.glob(os.path.join(REC_DIR, REC_GLOB)))
     if not paths:
-        print("no recordings found in", REC_DIR)
+        print("no ls20 solver-v2 recordings found in", REC_DIR)
         return 1
     limit = int(argv[0]) if argv else 12
     paths = paths[:limit]
