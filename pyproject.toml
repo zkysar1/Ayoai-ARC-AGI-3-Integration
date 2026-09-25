@@ -89,10 +89,6 @@ ignore_missing_imports = true
 # and every other module gets full strict, so `mypy .` is a working gate again.
 # Delete a module's entry once its errors are fixed.
 [[tool.mypy.overrides]]
-module = "primitives.world_model_synthesizer"
-disable_error_code = ["type-arg", "no-untyped-def", "no-untyped-call", "arg-type", "index"]  # 12, 9, 3, 2, 2
-
-[[tool.mypy.overrides]]
 module = "analysis.win_condition_llm"
 disable_error_code = ["union-attr", "arg-type", "return-value"]  # 15, 3, 1
 

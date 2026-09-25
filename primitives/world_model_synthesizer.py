@@ -45,9 +45,20 @@ keeps this offline-provable.
 from __future__ import annotations
 
 from collections import Counter
-from typing import Protocol, runtime_checkable
+from collections.abc import Iterable
+from typing import Any, Protocol, TypeGuard, runtime_checkable
 
-from primitives.synthesized_world_model import TransitionBuffer, WorldModel
+from primitives.synthesized_world_model import (
+    Action,
+    State,
+    TransitionBuffer,
+    WorldModel,
+)
+
+# A learned per-action / per-slot step: component-wise next_state - state.
+Delta = tuple[float, ...]
+# The memorized floor every synthesizer returns EXACTLY on observed pairs.
+Table = dict[tuple[State, Action], State]
 
 
 @runtime_checkable
@@ -103,7 +114,7 @@ class TableSynthesizer:
     """
 
     def synthesize(self, buffer: TransitionBuffer, model: WorldModel) -> WorldModel:
-        table: dict = {}
+        table: Table = {}
         for t in buffer:
             # De-dup keeps the last observation for a repeated (state, action); a
             # deterministic environment never contradicts, so last-write-wins is exact.
@@ -111,7 +122,7 @@ class TableSynthesizer:
         return WorldModel(lambda s, a: table.get((s, a), s))
 
 
-def _numeric_tuple_delta(state, next_state):
+def _numeric_tuple_delta(state: State, next_state: State) -> Delta | None:
     """Component-wise ``next_state[i] - state[i]`` when BOTH are same-arity,
     non-empty tuples of real numbers (``int``/``float``, but NOT ``bool`` -- in
     Python ``True`` is an ``int`` and must never be treated as a coordinate).
@@ -122,7 +133,7 @@ def _numeric_tuple_delta(state, next_state):
     if (not isinstance(state, tuple) or not isinstance(next_state, tuple)
             or len(state) == 0 or len(state) != len(next_state)):
         return None
-    delta = []
+    delta: list[float] = []
     for a, b in zip(state, next_state):
         if (not isinstance(a, (int, float)) or isinstance(a, bool)
                 or not isinstance(b, (int, float)) or isinstance(b, bool)):
@@ -131,13 +142,13 @@ def _numeric_tuple_delta(state, next_state):
     return tuple(delta)
 
 
-def _apply_numeric_delta(state, delta):
+def _apply_numeric_delta(state: State, delta: Delta) -> Delta | None:
     """``state + delta`` component-wise when ``state`` is a same-arity, non-empty
     numeric tuple; ``None`` otherwise (so an unseen state whose shape does not
     match the learned rule falls through to IDENTITY rather than raising)."""
     if not isinstance(state, tuple) or len(state) == 0 or len(state) != len(delta):
         return None
-    out = []
+    out: list[float] = []
     for a, d in zip(state, delta):
         if not isinstance(a, (int, float)) or isinstance(a, bool):
             return None
@@ -195,9 +206,9 @@ class GeneralizingSynthesizer:
     (the Protocol permits it)."""
 
     def synthesize(self, buffer: TransitionBuffer, model: WorldModel) -> WorldModel:
-        table: dict = {}
-        observed_deltas: dict = {}      # action -> set of per-transition deltas
-        action_has_nontuple: dict = {}  # action -> saw a non-numeric-tuple transition
+        table: Table = {}
+        observed_deltas: dict[Action, set[Delta]] = {}  # action -> set of per-transition deltas
+        action_has_nontuple: dict[Action, bool] = {}    # action -> saw a non-numeric-tuple transition
         for t in buffer:
             # Memorized table: exact on observed pairs -- the TableSynthesizer floor.
             table[(t.state, t.action)] = t.next_state
@@ -209,14 +220,16 @@ class GeneralizingSynthesizer:
         # Adopt a per-action constant delta ONLY under strict unanimity: every
         # observed transition for the action is a numeric-tuple pair AND they all
         # agree on one delta. Otherwise no rule -> degrade to table for that action.
-        deltas: dict = {}
+        deltas: dict[Action, Delta] = {}
         for action, dset in observed_deltas.items():
             if action_has_nontuple.get(action):
                 continue           # mixed shapes -> no rule (degrade to table)
             if len(dset) == 1:
                 deltas[action] = next(iter(dset))
 
-        def program(s, a, _table=table, _deltas=deltas):
+        def program(
+            s: State, a: Action, _table: Table = table, _deltas: dict[Action, Delta] = deltas
+        ) -> State:
             key = (s, a)
             if key in _table:
                 return _table[key]  # observed -> EXACT (never worse than the table floor)
@@ -296,8 +309,9 @@ class SlotwiseModalSynthesizer:
         self.min_dominance = min_dominance
 
     def synthesize(self, buffer: TransitionBuffer, model: WorldModel) -> WorldModel:
-        table: dict = {}
-        slot_delta_counts: dict = {}   # (action, arity) -> [Counter per slot index]
+        table: Table = {}
+        # (action, arity) -> [Counter per slot index]
+        slot_delta_counts: dict[tuple[Action, int], list[Counter[float]]] = {}
         for t in buffer:
             # Memorized table: exact on observed pairs -- the TableSynthesizer floor.
             table[(t.state, t.action)] = t.next_state
@@ -313,9 +327,10 @@ class SlotwiseModalSynthesizer:
                 counters[i][di] += 1
         # Adopt, per (action, arity), the modal delta for each slot that clears the
         # dominance floor. Slots with no dominant mode are omitted (identity for them).
-        adopted: dict = {}         # (action, arity) -> {slot_index: delta}
+        # (action, arity) -> {slot_index: delta}
+        adopted: dict[tuple[Action, int], dict[int, float]] = {}
         for key, counters in slot_delta_counts.items():
-            slot_rules: dict = {}
+            slot_rules: dict[int, float] = {}
             for i, counter in enumerate(counters):
                 total = sum(counter.values())
                 if total == 0:
@@ -329,7 +344,12 @@ class SlotwiseModalSynthesizer:
             if slot_rules:
                 adopted[key] = slot_rules
 
-        def program(s, a, _table=table, _adopted=adopted):
+        def program(
+            s: State,
+            a: Action,
+            _table: Table = table,
+            _adopted: dict[tuple[Action, int], dict[int, float]] = adopted,
+        ) -> State:
             key = (s, a)
             if key in _table:
                 return _table[key]  # observed -> EXACT (never worse than the table floor)
@@ -405,8 +425,8 @@ class ContextConditionedModalSynthesizer:
         self,
         *,
         period: int,
-        dynamic,
-        context,
+        dynamic: Iterable[int],
+        context: Iterable[int],
         min_dominance: float = 0.5,
     ) -> None:
         if period <= 0:
@@ -416,7 +436,7 @@ class ContextConditionedModalSynthesizer:
         self.context = tuple(context)
         self.min_dominance = min_dominance
 
-    def _blocks_ok(self, s) -> bool:
+    def _blocks_ok(self, s: State) -> TypeGuard[tuple[Any, ...]]:
         return (
             isinstance(s, tuple)
             and len(s) > 0
@@ -424,14 +444,14 @@ class ContextConditionedModalSynthesizer:
         )
 
     @staticmethod
-    def _all_numeric(vals) -> bool:
+    def _all_numeric(vals: Iterable[object]) -> bool:
         return all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in vals)
 
     def synthesize(self, buffer: TransitionBuffer, model: WorldModel) -> WorldModel:
-        table: dict = {}
+        table: Table = {}
         # (action, dynamic_offset, context_signature) -> Counter of observed deltas,
         # POOLED across every object block and arity (object-type sharing).
-        counts: dict = {}
+        counts: dict[tuple[Action, int, tuple[Any, ...]], Counter[float]] = {}
         for t in buffer:
             # Memorized table: exact on observed pairs -- the TableSynthesizer floor.
             table[(t.state, t.action)] = t.next_state
@@ -449,7 +469,7 @@ class ContextConditionedModalSynthesizer:
                     counts.setdefault((t.action, off, sig), Counter())[d] += 1
         # Adopt the modal delta per (action, dynamic_offset, context_signature) that
         # clears the dominance floor. Keys with no dominant mode are omitted (identity).
-        adopted: dict = {}
+        adopted: dict[tuple[Action, int, tuple[Any, ...]], float] = {}
         for key, counter in counts.items():
             total = sum(counter.values())
             if total == 0:
@@ -462,7 +482,12 @@ class ContextConditionedModalSynthesizer:
 
         period, dynamic, context = self.period, self.dynamic, self.context
 
-        def program(s, a, _table=table, _adopted=adopted):
+        def program(
+            s: State,
+            a: Action,
+            _table: Table = table,
+            _adopted: dict[tuple[Action, int, tuple[Any, ...]], float] = adopted,
+        ) -> State:
             key = (s, a)
             if key in _table:
                 return _table[key]  # observed -> EXACT (never worse than the table floor)
@@ -489,8 +514,8 @@ def make_world_model_synthesizer(
     name: str,
     *,
     period: int | None = None,
-    dynamic=None,
-    context=None,
+    dynamic: Iterable[int] | None = None,
+    context: Iterable[int] | None = None,
     min_dominance: float = 0.5,
 ) -> WorldModelSynthesizer:
     """Env-AGNOSTIC synthesizer SELECTOR: map a short config name to a concrete
