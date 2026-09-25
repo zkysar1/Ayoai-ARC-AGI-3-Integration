@@ -30,8 +30,14 @@ rejected.
    locally behind the AyoAI streaming surface ("network-related params are
    accepted-and-ignored"). A port-backed client exposes the same surface
    (`choose_action`, `send_add`, `send_delete`, `close`, `warm_dns`, `tick`, context
-   manager), and main.py still opens the session and registers the unit exactly as
-   before. Decision D4 holds.
+   manager), and main.py still opens the AyoAI session exactly as before.
+
+   Correction, 2026-09-25 (step 3): this reason first said main.py also "registers the
+   unit". It does not, for either player: both `send_add` implementations are local
+   no-ops. The adapter's one other use of the session is its BitNet episode seed
+   (`POST /ArcEpisodeSeed`). The port does not read that seed, so with the port the
+   session is opened and then receives nothing. Step 4 records what the session
+   actually sees, and whether that meets decision D4 goes to the owner.
 
 ## What step 3 builds
 
