@@ -13,24 +13,35 @@ as an `arcengine.FrameData`, with enums looked up BY NAME. A name with no match
 raises instead of playing a different move. The port's frame history is kept exactly
 as the kit's Agent.main keeps it: frames[0] is the kit placeholder, the frame each
 move produced is appended before the next choice, and action_counter counts moves.
+
+The opt-in theory step (g-376-09) attaches through `set_theory_arm`, the same contract
+SolverV2StreamingAdapter has, and the port's move is the arm's fallback. A RESET is
+never offered to the arm: it ends an attempt, so the next consult is marked `reset`.
 """
 
 from __future__ import annotations
 
+import logging
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 _ROOT = Path(__file__).resolve().parent
+# Appended, never inserted first: the vendored kit has its own main.py and tests/,
+# which would shadow the repo's for every later import in the same process.
 for _p in (_ROOT / "vendor" / "ARC-AGI-3-Agents", _ROOT / "kaggle_salvage"):
     if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+        sys.path.append(str(_p))
 
 import arcengine  # noqa: E402
 from my_agent import MyAgent  # type: ignore[import-not-found]  # noqa: E402
 
 from ayoai_streaming_client import AyoaiDecision  # noqa: E402
-from structs import FrameData, GameAction  # noqa: E402
+from primitives.theory_arm import TheoryArm  # noqa: E402
+from structs import FrameData, GameAction, GameState  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 
 def to_engine_frame(frame: FrameData) -> arcengine.FrameData:
@@ -70,10 +81,28 @@ class PortStreamingClient:
             tags=["ayoai-session"],
         )
         self._tick = 0
+        self._theory_arm_factory: Callable[[Any], TheoryArm] | None = None
+        self._theory_arm: TheoryArm | None = None
+        self._theory_reset = False
+        self._theory_disabled: str | None = None
 
     @property
     def tick(self) -> int:
         return self._tick
+
+    def set_theory_arm(self, factory: Callable[[Any], TheoryArm] | None) -> None:
+        """Opt-in wire (default OFF) for the theory step (g-376-09). ``factory(grid)``
+        builds the game's TheoryArm from the first frame's top layer; pass ``None`` to
+        disable. An error inside the arm switches it off for the rest of the game and
+        keeps the port's move (guard-7395); the error is stamped into provenance."""
+        self._theory_arm_factory = factory
+        self._theory_arm = None
+        self._theory_reset = False
+        self._theory_disabled = None
+
+    @property
+    def theory_arm(self) -> TheoryArm | None:
+        return self._theory_arm
 
     def choose_action(self, frame: FrameData) -> AyoaiDecision:
         latest = to_engine_frame(frame)
@@ -82,15 +111,68 @@ class PortStreamingClient:
         action = self._agent.choose_action(self._agent.frames, latest)
         self._agent.action_counter += 1
         self._tick += 1
+        move = GameAction[action.name]
         x = y = None
         if action.is_complex():
             x, y = int(action.action_data.x), int(action.action_data.y)
-        return AyoaiDecision(
-            action=GameAction[action.name],
-            x=x,
-            y=y,
-            provenance={"decided_by": "port", "tick": self._tick},
-        )
+        provenance: dict[str, Any] = {"decided_by": "port", "tick": self._tick}
+        if self._theory_arm_factory is not None:
+            move, x, y = self._theory_step(frame, move, x, y, provenance)
+        return AyoaiDecision(action=move, x=x, y=y, provenance=provenance)
+
+    def _theory_step(
+        self,
+        frame: FrameData,
+        move: GameAction,
+        x: int | None,
+        y: int | None,
+        provenance: dict[str, Any],
+    ) -> tuple[GameAction, int | None, int | None]:
+        """Offer the port's move to the theory arm as its fallback; return the move to
+        send. The arm speaks API action names and ("ACTION6", row, col) clicks."""
+        if move is GameAction.RESET or frame.state in (GameState.NOT_PLAYED, GameState.GAME_OVER):
+            self._theory_reset = True
+            return move, x, y
+        if self._theory_disabled is not None:
+            provenance["theory_arm"] = {"consulted": False, "changed": False, "error": self._theory_disabled}
+            return move, x, y
+        if not frame.frame:
+            return move, x, y
+        try:
+            factory = self._theory_arm_factory
+            assert factory is not None
+            grid = frame.frame[-1]
+            if self._theory_arm is None:
+                self._theory_arm = factory(grid)
+            fallback: Any = (
+                ("ACTION6", y, x) if move is GameAction.ACTION6 and x is not None and y is not None else move.name
+            )
+            chosen = self._theory_arm.step(
+                grid,
+                level=int(frame.levels_completed or 0),
+                reset=self._theory_reset,
+                actions=[a.name for a in frame.available_actions if a is not GameAction.RESET],
+                click_allowed=GameAction.ACTION6 in frame.available_actions,
+                fallback=fallback,
+            )
+            self._theory_reset = False
+            if isinstance(chosen, tuple):
+                picked, out_x, out_y = GameAction.ACTION6, int(chosen[2]), int(chosen[1])
+            else:
+                picked, out_x, out_y = GameAction[str(chosen)], None, None
+        except Exception as exc:
+            self._theory_disabled = f"{type(exc).__name__}: {exc}"[:300]
+            logger.warning(
+                "[theory-arm] switched off for the rest of the game: %s", self._theory_disabled, exc_info=True
+            )
+            provenance["theory_arm"] = {"consulted": True, "changed": False, "error": self._theory_disabled}
+            return move, x, y
+        provenance["theory_arm"] = {
+            "consulted": True,
+            "changed": chosen != fallback,
+            "calls": self._theory_arm.synth.budget.calls,
+        }
+        return picked, out_x, out_y
 
     def send_add(self, frame: FrameData) -> None:
         return None
@@ -102,7 +184,18 @@ class PortStreamingClient:
         return True
 
     def close(self) -> None:
-        return None
+        """Game end for the theory arm: emit its game-end memory record and stop its
+        sandbox child (same steps as SolverV2StreamingAdapter._finish_theory_arm). A
+        finish error is logged, not raised."""
+        arm, self._theory_arm = self._theory_arm, None
+        if arm is None:
+            return
+        try:
+            arm.finish()
+        except Exception:
+            logger.warning("[theory-arm] finish failed at close", exc_info=True)
+        finally:
+            arm.synth.sandbox.close()
 
     def __enter__(self) -> PortStreamingClient:
         return self

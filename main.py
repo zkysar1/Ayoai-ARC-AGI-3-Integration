@@ -12,7 +12,7 @@ import random
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import requests
 from pydantic import ValidationError
@@ -46,6 +46,11 @@ from solver_v2.seed_provider import (
 )
 from solver_v2.streaming_adapter import SolverV2StreamingAdapter
 from structs import FrameData, GameAction, GameState
+
+if TYPE_CHECKING:
+    # Imported where it is built (--use-port-client), so other runs never load
+    # the kit and the port.
+    from port_streaming_client import PortStreamingClient
 
 logger = logging.getLogger()
 
@@ -518,6 +523,18 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--use-port-client",
+        action="store_true",
+        help=(
+            "Under --use-solver-v2, the moves inside the same AyoAI session come "
+            "from the port (kaggle_salvage.MyAgent, via PortStreamingClient) "
+            "instead of SolverV2StreamingAdapter (g-376-30, "
+            "design/g-376-30-route.md). SOLVER_V2_THEORY_ARM attaches the theory "
+            "arm with the port's move as its fallback. Adapter-only options and "
+            "SOLVER_V2_V4_ARM are refused."
+        ),
+    )
+    parser.add_argument(
         "--random",
         action="store_true",
         help=(
@@ -797,6 +814,39 @@ def main() -> int:
             "--random is mutually exclusive with --use-solver-v0/--use-solver-v2"
         )
 
+    # --use-port-client swaps the player inside the --use-solver-v2 session
+    # (g-376-30). Options that only the adapter reads would do nothing, so they
+    # are refused rather than silently dropped.
+    if args.use_port_client:
+        if not args.use_solver_v2:
+            parser.error("--use-port-client needs --use-solver-v2")
+        adapter_only = [
+            flag
+            for flag, on in (
+                ("--state-graph", args.state_graph),
+                ("--click-frontier-nav", args.click_frontier_nav),
+                ("--click-salience-priority", args.click_salience_priority),
+                ("--click-effect-salience-priority", args.click_effect_salience_priority),
+                ("--action-value-store", args.action_value_store),
+                ("--novel-tie-conditioning", args.novel_tie_conditioning),
+                ("--novel-tie-episode-varying", args.novel_tie_episode_varying),
+                ("--frontier-coordination", args.frontier_coordination),
+                ("--corridor-penalty", args.corridor_penalty),
+                ("--config-prior", args.config_prior != "orderedness"),
+            )
+            if on
+        ]
+        if adapter_only:
+            parser.error(
+                f"{', '.join(adapter_only)} only affect SolverV2StreamingAdapter; "
+                "not valid with --use-port-client"
+            )
+        # Read into a name first: tests/unit/test_v4_arm_observability.py finds the
+        # arm's composition-root branch as the first `if` whose test names the env.
+        v4_arm_env = os.environ.get("SOLVER_V2_V4_ARM", "")
+        if v4_arm_env.strip().lower() in ("1", "true", "on", "yes"):
+            parser.error("SOLVER_V2_V4_ARM composes with SolverV2StreamingAdapter only")
+
     # --state-graph only takes effect under --use-solver-v2 (the v2 adapter is
     # the sole StateGraphExplorer build site). Warn rather than error so the
     # SOLVER_V2_STATE_GRAPH env-var path and harmless no-op invocations still
@@ -1010,6 +1060,7 @@ def main() -> int:
     streaming_client: (
         SolverV0StreamingAdapter
         | SolverV2StreamingAdapter
+        | PortStreamingClient
         | RandomStreamingAdapter
         | AyoaiStreamingClient
     )
@@ -1073,21 +1124,31 @@ def main() -> int:
                     "--use-refiner requested but the inner v2 seed is None (no "
                     "session); refiner not applied — adapter keeps its oracle."
                 )
-        streaming_client = SolverV2StreamingAdapter(
-            ayo_server_key=card_id,
-            arc_game_id=args.game,
-            seed_provider=seed_provider_for_adapter,
-            use_state_graph=args.state_graph,
-            config_prior=args.config_prior,
-            frontier_nav=args.click_frontier_nav,
-            salience_priority=args.click_salience_priority,
-            effect_salience_priority=args.click_effect_salience_priority,
-            action_value_store=args.action_value_store,
-            novel_tie_conditioning=args.novel_tie_conditioning,
-            novel_tie_episode_varying=args.novel_tie_episode_varying,
-            frontier_coordination=args.frontier_coordination,
-            corridor_penalty=args.corridor_penalty,
-        )
+        if args.use_port_client:
+            # g-376-30: same session, and the port decides every move
+            # (design/g-376-30-route.md). The port does not read the session seed.
+            import port_streaming_client
+
+            streaming_client = port_streaming_client.PortStreamingClient(
+                ayo_server_key=card_id,
+                arc_game_id=args.game,
+            )
+        else:
+            streaming_client = SolverV2StreamingAdapter(
+                ayo_server_key=card_id,
+                arc_game_id=args.game,
+                seed_provider=seed_provider_for_adapter,
+                use_state_graph=args.state_graph,
+                config_prior=args.config_prior,
+                frontier_nav=args.click_frontier_nav,
+                salience_priority=args.click_salience_priority,
+                effect_salience_priority=args.click_effect_salience_priority,
+                action_value_store=args.action_value_store,
+                novel_tie_conditioning=args.novel_tie_conditioning,
+                novel_tie_episode_varying=args.novel_tie_episode_varying,
+                frontier_coordination=args.frontier_coordination,
+                corridor_penalty=args.corridor_penalty,
+            )
         # g-315-445: opt-in v4 synthesized-model arm + reward-state win-recognizer.
         # OFF by default (strict-superset floor: an empty recognizer -> never-goal
         # -> v3, byte-identical to plain --use-solver-v2). Enable for the live
@@ -1199,6 +1260,8 @@ def main() -> int:
                 if v4_goal_predicate is not None
                 else "adapter-internal-reward-recognizer",
             )
+            # main() refuses SOLVER_V2_V4_ARM with --use-port-client.
+            assert isinstance(streaming_client, SolverV2StreamingAdapter)
             streaming_client.set_v4_arm(
                 V4Arm(
                     v4_synth,
@@ -1287,6 +1350,7 @@ def main() -> int:
     if args.record:
         solver_name = args.solver_name or (
             "solver-v0" if args.use_solver_v0
+            else "port" if args.use_port_client
             else "solver-v2" if args.use_solver_v2
             else "random" if args.random
             else "mock" if args.mock_url
