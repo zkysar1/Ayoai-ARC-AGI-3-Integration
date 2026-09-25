@@ -112,6 +112,7 @@ check.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
@@ -162,7 +163,7 @@ GUARD_ABORT_MARKER = "[ARC-ROOT-COLLECTION-GUARD]"
 SKIP_DIRS = {"venv", "__pycache__", "node_modules", "site-packages", "build", "dist", "vendor"}
 
 
-def expected_trees(python_files) -> tuple[str, ...]:
+def expected_trees(python_files: Iterable[str]) -> tuple[str, ...]:
     """Top-level directories that contain test files, derived from the FILESYSTEM.
 
     Imported by tests/test_default_collection_pin.py's consistency test. Takes
