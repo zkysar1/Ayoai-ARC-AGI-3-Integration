@@ -118,9 +118,8 @@ one refusal whose text did not parse is left out of its rows.
 Under the full-screen check, the median refused theory explains 1.8% of the logged moves.
 Under the masked check it explains 36.8%. These are different theories from different
 conversations, so the gap does not measure any one theory. It fits edge cells being wrong
-on most logged moves of most full-screen refusals (inferred). The theories M still refuses
-are wrong outside the band on most of the log, and few are near misses: 29 of 257 miss 3
-moves or fewer.
+on most logged moves of most full-screen refusals (inferred). The median theory M still
+refuses is wrong outside the band on most of the log, and 29 of 257 miss 3 moves or fewer.
 
 M's 4 check-1 refusals (ar25 2, bp35 1, tn36 1) all read "the name '_' is not allowed".
 The static check refuses every name that starts with an underscore
@@ -194,5 +193,5 @@ levels. The whole gain is on three games:
   sp80 theory almost none: each move is still judged on the whole screen, as the goal's
   hazard requires.
 - **What is left.** The edge band was a real lever and a small one. What check 4 still
-  refuses, 91% of paid calls, is wrong outside the band, and few of those refusals are near
-  misses.
+  refuses, 91% of paid calls, is wrong outside the band. 29 of those 257 refusals miss 3
+  moves or fewer; the median one explains about a third of the log.
