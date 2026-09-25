@@ -500,7 +500,7 @@ played.
 | `purpose_block` | on | g-376-25 (purpose vs neutral) |
 | `require_win_guess` | on | g-376-25 (code-bound vs prompt-only): off makes checks 2, 6 and 7 advisory, so a theory can be admitted on replay alone and the planner then has no goal |
 | `win_test_share` | 0.5 | g-376-24 (win-seeking moves vs coverage moves): kept at 0.5, since 0.25, 0.5 and 0.75 played identically on the 15 dev games (win tests ran 2 moves in 45 runs; `eval/win-test-share-2026-09-25.md`, §17) |
-| `memory_regime` | cold | g-376-10 (§12) |
+| `memory_regime` | cold | g-376-10 (§12, §17): `ARC_THEORY_MEMORY=warm` |
 | `model` | `claude-haiku-4-5-20251001` | D1; any other model needs a rate row and a separate report |
 | budgets | 60 per game / 15 per level / $2.00 per game / 4,000 max tokens | §10 |
 
@@ -641,6 +641,46 @@ identically, and the default stays 0.5. Against the port alone the arm netted -2
 probe changing the port's path, not from win-seeking. The arm stays off by default.
 The lever is admission. On ft09 each W run took 23 to 24 minutes against 7 s without the
 arm. Report: `eval/win-test-share-2026-09-25.md`.
+
+**Theory memory, the warm regime (g-376-10-b, 2026-09-25).** `primitives/theory_memory.py`
+is the transport of §12. It runs on the env server's theory routes (g-376-10-a:
+`POST /ArcTheory`, `GET /ArcTheories`), which are on the session's streaming host and
+port (8787), like `/ArcEpisodeSeed`, not on `env_server_url`. It departs from §12 in
+four ways.
+
+- Two regimes exist, not three: `cold`, the default, which builds no memory at all, and
+  `warm` (`ARC_THEORY_MEMORY=warm`, which needs `--use-solver-v2` and
+  `SOLVER_V2_THEORY_ARM`). `cold + library` is not built.
+- Warm reads more than the game's latest record. At each level start (the first step
+  and each level-up) the arm fetches the game's 5 newest stored theories. It drops this
+  run's own, unsigned ones, ones whose signature fails, and repeats of the same code. It
+  offers the rest, newest first, to the seven admission checks at the level's first call
+  point (`TheorySynthesizer.adopt`). The first one admitted becomes the theory in force
+  and that call point makes no model call. If none is admitted, the model is called as
+  in the cold regime.
+- What is stored is not the whole §12 record. It is the theory's code, a one-line
+  evidence summary built from the record, the game's class features (grid size, colours,
+  object count, actions, click), the game id and the run id, with a client signature:
+  HMAC-SHA256 over those fields, keyed by a per-machine key in
+  `~/.ayoai-arc/theory-memory.key` that is never sent. A theory whose signature fails is
+  refused before it reaches the sandbox. So a theory stored from another machine is
+  refused too: warm memory is per machine until keys are shared, which is not built.
+- A theory is stored at each level-up and at game end, then read back. A run does not
+  store the same code twice.
+
+Memory never stops the game. Any memory failure switches memory off for the rest of the
+game and the arm goes on cold (guard-7395). The adapters' `theory_arm` provenance says
+`memory` is `cold`, `on` or `off: <reason>`. The theory requests also hold the session
+open: env-server 37e82628 makes an authorized theory request reset the inactivity clock,
+and `TheoryMemory.tick`, called once per move and never from a timer, makes one when
+none was made for 45 s. The ARC players send the session nothing else. `AYOAI_LANE=dev`
+opens the session through the `/dev` stage and boots the dev jar.
+
+Measured on the DEV lane with ls20 (2026-09-25). Run 1 stored its admitted theory at
+game end and read it back. Run 2, on a new session, admitted that theory at level 0's
+first call point with no model call there. Both runs completed 0 levels. A run stores a
+theory it reused again, so repeated warm runs fill the 5-newest window with one theory.
+Report: `eval/theory-memory-dev-2026-09-25.md`.
 
 ## 18. Cross-references
 
