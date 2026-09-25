@@ -361,8 +361,9 @@ the same deterministic model, so this is the existing loop):
 3. **Mismatch** → the dynamics are refuted; the move is a counterexample (C2).
 
 A per-level share of moves may be spent on test plans (`win_test_share`, default 0.5,
-§13); after that the explorer takes the remaining moves of the attempt. Refuted guesses
-cannot loop: check 6 disqualifies them.
+§13); after that the explorer takes the remaining moves of the attempt. The share gates
+every new plan, including one an admitted theory brings; a plan under way runs to its
+end (g-376-24, ARC 5b4d48e). Refuted guesses cannot loop: check 6 disqualifies them.
 
 ### 8.4 When guessing fails: search
 
@@ -498,7 +499,7 @@ played.
 |---|---|---|
 | `purpose_block` | on | g-376-25 (purpose vs neutral) |
 | `require_win_guess` | on | g-376-25 (code-bound vs prompt-only): off makes checks 2, 6 and 7 advisory, so a theory can be admitted on replay alone and the planner then has no goal |
-| `win_test_share` | 0.5 | g-376-24 (win-seeking moves vs coverage moves) |
+| `win_test_share` | 0.5 | g-376-24 (win-seeking moves vs coverage moves): kept at 0.5, since 0.25, 0.5 and 0.75 played identically on the 15 dev games (win tests ran 2 moves in 45 runs; `eval/win-test-share-2026-09-25.md`, §17) |
 | `memory_regime` | cold | g-376-10 (§12) |
 | `model` | `claude-haiku-4-5-20251001` | D1; any other model needs a rate row and a separate report |
 | budgets | 60 per game / 15 per level / $2.00 per game / 4,000 max tokens | §10 |
@@ -628,6 +629,18 @@ first risk in §15. ft09's wall time fits the per-move planner search running to
 20 s cap: its admitted theory's search stopped at the time cap, where ls20's stopped at
 the depth cap. Per-step times were not recorded, so this is inferred, not measured. It
 bears on the idle-limit risk in §15. Run records: `~/.ayoai-arc/theory-runs/theory-offline-{ls20,re86,ft09}-1790265444/`.
+
+**Win-test share (g-376-24, 2026-09-25).** As first built, the share gated only plans
+started in the decide step, and a plan brought by a newly admitted theory started
+regardless. Both starts now use one gate (ARC 5b4d48e). The experiment, on the port with
+the arm attached at shares 0.25, 0.5 and 0.75, covered the 15 dev games at 2,000 actions
+offline. The model got 12 of 830 theories admitted, 772 of the calls were refused at
+check 4 (replay), and win tests ran 2 moves in 45 runs. So the shares played
+identically, and the default stays 0.5. Against the port alone the arm netted -2
+(better on ar25, worse on r11l, sp80 and tn36). All of that came from the opening
+probe changing the port's path, not from win-seeking. The arm stays off by default.
+The lever is admission. On ft09 each W run took 23 to 24 minutes against 7 s without the
+arm. Report: `eval/win-test-share-2026-09-25.md`.
 
 ## 18. Cross-references
 
