@@ -190,6 +190,7 @@ def _adapter_run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]
         (["--theory-share", "0.5"], "--theory-share needs --player port"),
         (["--player", "port", "--theory-share", "1.5"], "--theory-share must be a number from 0 to 1"),
         (["--player", "port", "--theory-share", "-0.5"], "--theory-share must be a number from 0 to 1"),
+        (["--player", "port", "--theory-arm", "N"], "--theory-arm needs --theory-share"),
     ],
 )
 def test_adapter_run_refuses_a_theory_share_it_cannot_apply(tmp_path: Path, args: list[str], message: str) -> None:
@@ -204,6 +205,31 @@ def test_adapter_run_accepts_a_theory_share_with_the_port(tmp_path: Path) -> Non
     proc = _adapter_run(["--player", "port", "--theory-share", "0.25", "--games", "nosuchgame"], tmp_path)
     assert "--theory-share" not in proc.stderr, proc.stderr[-400:]
     assert "env-create-failed: nosuchgame" in proc.stderr, proc.stderr[-400:]
+
+
+def test_adapter_run_hands_each_arms_switches_to_the_arm_factory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # g-376-25, guard-5982: --theory-arm reaches make_theory_arm, and no arm means none
+    # of the switches (the g-376-24 default arm).
+    import importlib.util
+
+    from adapters.arc_theory import THEORY_ARMS, make_theory_arm
+
+    spec = importlib.util.spec_from_file_location("adapter_run_under_test", REPO / "eval" / "adapter_run.py")
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    monkeypatch.setattr(mod.spend_meter, "metered_anthropic", lambda **kw: ("client", kw["run_id"]))
+    for name, switches in THEORY_ARMS.items():
+        run_id, factory = mod.theory_arm_factory("toy", 0.5, name, tmp_path)
+        assert factory.func is make_theory_arm and f"-{name}-" in run_id
+        assert {k: factory.keywords[k] for k in switches} == switches
+        assert factory.keywords["client"] == ("client", run_id)
+        assert factory.keywords["run_dir"] == tmp_path / run_id
+        assert factory.keywords["config"].win_test_share == 0.5
+    _, default = mod.theory_arm_factory("toy", 0.5, None, tmp_path)
+    assert not set().union(*THEORY_ARMS.values()) & set(default.keywords)
 
 
 def _main_py(args: list[str], cwd: Path, extra_env: dict[str, str]) -> subprocess.CompletedProcess[str]:

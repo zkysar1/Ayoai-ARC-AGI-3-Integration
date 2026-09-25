@@ -21,9 +21,14 @@ import pytest
 import spend_meter
 from adapters.arc_theory import (
     HELPERS_SOURCE,
+    INSTRUCTIONS,
+    NEUTRAL_INSTRUCTIONS,
+    THEORY_ARMS,
     MeteredTheoryWriter,
+    NoCallWriter,
     build_prompt,
     click_targets,
+    make_theory_arm,
     render_screen,
 )
 from primitives.theory_arm import ArmConfig, TheoryArm
@@ -349,6 +354,25 @@ def test_prompt_only_mode_still_plans_toward_the_win_guess(arms: Any) -> None:
     assert game.level == 1
 
 
+def test_every_call_record_carries_the_module_the_model_wrote(arms: Any) -> None:
+    # g-376-25 measure 1 reads the win guess of every written theory, not only of the
+    # admitted ones: here the second WRONG_WIN is refused at check 6.
+    arm = arms(FakeWriter([WRONG_WIN, WRONG_WIN, GOOD]))
+    play(arm, Toy(), 14)
+    assert [r["verdict"] == "admitted" for r in arm.synth.records] == [True, False, True]
+    assert [r["code"] for r in arm.synth.records] == [_code(WRONG_WIN), _code(WRONG_WIN), _code(GOOD)]
+
+
+def test_the_placebo_arm_probes_then_plays_the_fallback_and_calls_nothing(arms: Any) -> None:
+    # g-376-25 arm Z: the arm's own channels (the probe) without the model.
+    arm = arms(NoCallWriter())
+    taken = play(arm, Toy(), 40)
+    assert taken[:4] == ["ACTION1", "ACTION2", "ACTION1", "ACTION2"]
+    assert taken[4:] == ["ACTION2"] * 36
+    assert [r["verdict"] for r in arm.synth.records] == ["not called: model calls are off (placebo arm)"]
+    assert arm.synth.budget.calls == 0 and arm.synth.budget.spent_usd == 0.0
+
+
 def test_no_model_call_happens_in_the_decision_path(arms: Any) -> None:
     arm = arms(FakeWriter([WRONG_WIN, WRONG_WIN, GOOD]))
     play(arm, Toy(), 14)
@@ -520,6 +544,40 @@ def test_prompt_has_no_game_id_and_the_purpose_block_is_a_switch() -> None:
     assert "I am a player." not in system_off
     assert "Current theory:" in user and "Check report:" in user
     assert not hasattr(_context(), "game_id")
+
+
+def test_the_neutral_prompt_drops_the_win_guess_and_keeps_every_other_line() -> None:
+    system, _ = build_prompt(_context(), purpose_block=False, win_guess_asked=False)
+    assert system == NEUTRAL_INSTRUCTIONS
+    for word in ("WIN_GUESS", "TEST_PLAN", "is_win", "test_target", "guess", "finish"):
+        assert word not in system, word
+    kept = INSTRUCTIONS.splitlines()
+    assert [line for line in system.splitlines() if line not in kept] == ["kind of object."]
+    assert "def predict(grid, action):" in system and "Available builtins:" in system
+
+
+@pytest.mark.parametrize("name", sorted(THEORY_ARMS))
+def test_each_g37625_arm_builds_the_arm_it_names(name: str, tmp_path: Path) -> None:
+    # guard-5982: an option dropped on the way would make two arms identical.
+    switches = THEORY_ARMS[name]
+    arm = make_theory_arm(
+        Toy().grid,
+        client=spend_meter.MeteredClient(object(), ledger=tmp_path / "ledger.jsonl"),
+        game_key="toy",
+        run_id="t",
+        **switches,
+    )
+    try:
+        system, _ = arm.synth.build_prompt(_context())
+    finally:
+        arm.synth.sandbox.close()
+    if name == "Z":
+        assert isinstance(arm.synth.writer, NoCallWriter)
+        return
+    assert isinstance(arm.synth.writer, MeteredTheoryWriter)
+    assert arm.synth.require_win_guess is switches["require_win_guess"]
+    assert ("I am a player." in system) is switches["purpose_block"]
+    assert ("WIN_GUESS" in system) is switches["win_guess_asked"]
 
 
 def test_screen_render_crops_but_keeps_absolute_coordinates() -> None:
