@@ -847,6 +847,19 @@ def main() -> int:
         if v4_arm_env.strip().lower() in ("1", "true", "on", "yes"):
             parser.error("SOLVER_V2_V4_ARM composes with SolverV2StreamingAdapter only")
 
+    # g-376-24: the theory arm's win-test share (ArmConfig.win_test_share), set per
+    # run so the win-seeking and coverage arms can be compared. Checked before any
+    # session opens; unset keeps ArmConfig's default.
+    theory_share_env = os.environ.get("ARC_THEORY_WIN_TEST_SHARE", "").strip()
+    theory_win_share: float | None = None
+    if theory_share_env:
+        try:
+            theory_win_share = float(theory_share_env)
+        except ValueError:
+            theory_win_share = -1.0
+        if not 0.0 <= theory_win_share <= 1.0:
+            parser.error("ARC_THEORY_WIN_TEST_SHARE must be a number from 0 to 1")
+
     # --state-graph only takes effect under --use-solver-v2 (the v2 adapter is
     # the sole StateGraphExplorer build site). Warn rather than error so the
     # SOLVER_V2_STATE_GRAPH env-var path and harmless no-op invocations still
@@ -1283,6 +1296,13 @@ def main() -> int:
         ):
             import spend_meter
             from adapters.arc_theory import THEORY_MODEL, make_theory_arm
+            from primitives.theory_arm import ArmConfig
+
+            arm_config = (
+                None
+                if theory_win_share is None
+                else ArmConfig(win_test_share=theory_win_share)
+            )
 
             theory_run_id = f"theory-{args.game}-{int(time.time())}"
             theory_dir = (
@@ -1298,7 +1318,10 @@ def main() -> int:
                 game_id=args.game, run_id=theory_run_id
             )
             logger.info(
-                "[theory-arm] enabled: model=%s run_dir=%s", THEORY_MODEL, theory_dir
+                "[theory-arm] enabled: model=%s run_dir=%s win_test_share=%s",
+                THEORY_MODEL,
+                theory_dir,
+                "default" if arm_config is None else arm_config.win_test_share,
             )
             streaming_client.set_theory_arm(
                 lambda grid: make_theory_arm(
@@ -1307,6 +1330,7 @@ def main() -> int:
                     game_key=args.game,
                     run_id=theory_run_id,
                     run_dir=theory_dir,
+                    config=arm_config,
                 )
             )
     else:

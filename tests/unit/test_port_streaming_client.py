@@ -169,6 +169,7 @@ def _main_py(args: list[str], cwd: Path, extra_env: dict[str, str]) -> subproces
     env = os.environ.copy()
     env.update({"SCHEME": "http", "HOST": "127.0.0.1", "PORT": "9", "ARC_API_KEY": ""})
     env.pop("SOLVER_V2_V4_ARM", None)
+    env.pop("ARC_THEORY_WIN_TEST_SHARE", None)
     env.update(extra_env)
     return subprocess.run(
         [sys.executable, str(REPO / "main.py"), "--game", "ls20", *args],
@@ -194,3 +195,22 @@ def test_main_refuses_port_client_combinations_that_would_do_nothing(
     proc = _main_py(args, tmp_path, extra_env)
     assert proc.returncode == 2, proc.stdout[-400:] + proc.stderr[-400:]
     assert message in proc.stderr
+
+
+@pytest.mark.parametrize("share", ["2", "-0.1", "abc"])
+def test_main_refuses_a_win_test_share_outside_0_to_1(tmp_path: Path, share: str) -> None:
+    # g-376-24 sets ArmConfig.win_test_share per run to compare the arms.
+    proc = _main_py(
+        ["--use-solver-v2", "--use-port-client"], tmp_path, {"ARC_THEORY_WIN_TEST_SHARE": share}
+    )
+    assert proc.returncode == 2, proc.stdout[-400:] + proc.stderr[-400:]
+    assert "ARC_THEORY_WIN_TEST_SHARE must be a number from 0 to 1" in proc.stderr
+
+
+def test_main_accepts_a_win_test_share_from_0_to_1(tmp_path: Path) -> None:
+    # Positive control: a valid share passes the check (the run then stops at the
+    # closed local port, so nothing is played).
+    proc = _main_py(
+        ["--use-solver-v2", "--use-port-client"], tmp_path, {"ARC_THEORY_WIN_TEST_SHARE": "0.25"}
+    )
+    assert "ARC_THEORY_WIN_TEST_SHARE" not in proc.stderr, proc.stderr[-400:]
