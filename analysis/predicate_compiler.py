@@ -226,7 +226,7 @@ def compile_spec(spec: PredicateSpec) -> Callable[[CCSignature], bool]:
     Raises ``ValueError`` on unknown constraint type or unknown operator.
     """
     # All PredicateSpec types carry a ``type: str`` discriminator field.
-    spec_type: str = spec.type  # type: ignore[union-attr]
+    spec_type: str = spec.type
     handler = _DISPATCH.get(spec_type)
     if handler is None:
         raise ValueError(

@@ -83,9 +83,9 @@ def _frame_summary_to_cc_signature(frame_summary: object) -> CCSignature:
     """
     components = tuple(
         Component(
-            palette=cs.palette_value,  # type: ignore[attr-defined]
-            size=cs.size,  # type: ignore[attr-defined]
-            bbox=cs.bbox,  # type: ignore[attr-defined]
+            palette=cs.palette_value,
+            size=cs.size,
+            bbox=cs.bbox,
         )
         for cs in frame_summary.components  # type: ignore[attr-defined]
     )

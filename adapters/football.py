@@ -74,7 +74,6 @@ from adapters.base import (
     EpisodeReport,
     Executor,
     ProximityModel,
-    Transport,
     UnitLike,
     WorldBuilder,
 )
@@ -567,11 +566,9 @@ def build_football_adapter(
         world_builder=cast(WorldBuilder, FootballWorldBuilder()),
         # FootballExecutor now inherits TransportExecutor[Coord] (g-315-453), whose
         # __init__ types transport as base.Transport[Coord]. tx is the standalone
-        # PitchTransport (structurally identical -- move/position/world_state -- but not
-        # nominally base.Transport), so cast it here: the same single-construction-site
-        # runtime-valid-to-static-checker bridge rb-2280 uses for the concrete slots.
-        executor=cast(
-            Executor, FootballExecutor(transport=cast(Transport[Coord], tx), actions=acts)
-        ),
+        # PitchTransport, structurally identical to it (move/position/world_state).
+        # Protocols match structurally, so tx passes with no cast; mypy reports one
+        # as redundant.
+        executor=cast(Executor, FootballExecutor(transport=tx, actions=acts)),
         proximity_model=cast(ProximityModel, FootballProximityModel()),
     )

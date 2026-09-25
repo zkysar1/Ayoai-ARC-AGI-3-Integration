@@ -105,14 +105,6 @@ module = "primitives.ontology_uncertainty"
 disable_error_code = ["type-arg"]  # 5
 
 [[tool.mypy.overrides]]
-module = "analysis.win_condition_heuristic"
-disable_error_code = ["unused-ignore"]  # 3
-
-[[tool.mypy.overrides]]
-module = "analysis.predicate_compiler"
-disable_error_code = ["unused-ignore"]  # 1
-
-[[tool.mypy.overrides]]
 module = ["analysis.trajectory_summarizer", "analysis.win_condition_extractor"]
 disable_error_code = ["arg-type"]  # 1, 1
 
@@ -127,14 +119,6 @@ disable_error_code = ["return-value"]  # 1
 [[tool.mypy.overrides]]
 module = "adapters.live_arc_transport"
 disable_error_code = ["attr-defined"]  # 1
-
-[[tool.mypy.overrides]]
-module = "adapters.football"
-disable_error_code = ["redundant-cast"]  # 1
-
-[[tool.mypy.overrides]]
-module = "conftest"
-disable_error_code = ["no-untyped-def"]  # 1
 
 [tool.ruff]
 # Same two directories as the mypy exclude above, for the same reasons: ruff
