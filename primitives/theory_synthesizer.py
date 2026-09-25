@@ -27,6 +27,9 @@ with a guess already contradicted, or with a guess its own rules make unreachabl
 refused whatever the prompt said. ``require_win_guess=False`` (the g-376-25
 code-bound-vs-prompt-only switch) makes the win parts of 2, and 6 and 7, advisory: they
 still run, refuse nothing, and are listed in the call record's ``advisory``.
+``replay_edge_mask=k`` (arm M of g-376-37) makes check 4 skip the k outermost rows and
+columns of every screen, where several dev games draw counters. It changes admission
+only: the later-move accuracy measure and the arm's per-move comparison stay exact.
 
 Every call is gated by ``GameBudget`` (60 per game, 15 per level, $2.00 per game)
 before it is made, and a refused theory gets at most one immediate repair call with
@@ -203,6 +206,7 @@ class TheorySynthesizer:
         *,
         budget: Optional[GameBudget] = None,
         require_win_guess: bool = True,
+        replay_edge_mask: int = 0,
         plan_depth: int = 12,
         plan_nodes: int = 20_000,
         plan_seconds: float = 20.0,
@@ -213,6 +217,7 @@ class TheorySynthesizer:
         self.build_prompt = build_prompt
         self.budget = budget if budget is not None else GameBudget()
         self.require_win_guess = require_win_guess
+        self.replay_edge_mask = replay_edge_mask
         self.plan_depth = plan_depth
         self.plan_nodes = plan_nodes
         self.plan_seconds = plan_seconds
@@ -418,7 +423,7 @@ class TheorySynthesizer:
             if verdict is not None:
                 return verdict
         try:
-            replay = self.sandbox.replay()
+            replay = self.sandbox.replay(mask=self.replay_edge_mask)
         except SandboxError as exc:
             return refuse(f"4 replay: {exc}", parts=parts)
         explained, total = int(replay["explained"]), int(replay["total"])
@@ -505,7 +510,8 @@ class TheorySynthesizer:
                 tail = f"the planner stopped at its cap ({plan.get('reason')}) without a test plan yet."
             else:
                 tail = "no test plan was searched."
-            return f"{head} was admitted: it explains all {verdict.total} logged moves; {tail}"
+            edge = f" outside the {self.replay_edge_mask}-cell edge of the screen" if self.replay_edge_mask else ""
+            return f"{head} was admitted: it explains all {verdict.total} logged moves{edge}; {tail}"
         return f"{head} was refused at check {verdict.check}"
 
     def _record(

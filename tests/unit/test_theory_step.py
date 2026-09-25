@@ -247,6 +247,114 @@ def test_theory_is_admitted_only_if_it_reproduces_every_logged_move() -> None:
     assert again.check.startswith("4 replay: explained 3 of 4")
 
 
+class CounterToy:
+    """A 6 x 6 screen: the player 3 steps between (2,2) and (2,3) (ACTION1 right,
+    ACTION2 left), and a counter the theory below does not model ticks at the corner
+    (0,0) on every move. No move finishes a level."""
+
+    def __init__(self) -> None:
+        self.level = 0
+        self.col = 2
+        self.ticks = 0
+
+    @property
+    def grid(self) -> tuple[tuple[int, ...], ...]:
+        return tuple(
+            tuple(self.ticks % 10 if (r, c) == (0, 0) else 3 if (r, c) == (2, self.col) else 0 for c in range(6))
+            for r in range(6)
+        )
+
+    def apply(self, action: Any) -> None:
+        if action == "ACTION1":
+            self.col = min(3, self.col + 1)
+        elif action == "ACTION2":
+            self.col = max(2, self.col - 1)
+        self.ticks += 1
+
+
+def _counter_log() -> tuple[list[Any], list[Any]]:
+    """Three moves of the counter toy, logged as toy_log() logs the toy."""
+    game = CounterToy()
+    frames = [game.grid]
+    transitions = []
+    for action in ("ACTION1", "ACTION2", "ACTION1"):
+        before = game.grid
+        game.apply(action)
+        transitions.append((before, action, game.grid))
+        frames.append(game.grid)
+    return transitions, frames
+
+
+COUNTER_BLIND = (
+    'RULES = "ACTION1 moves the 3 right and ACTION2 moves it left, within columns 2-3."\n'
+    'WIN_GUESS = "the 3 reaches column 5"\n'
+    'TEST_PLAN = "move right"\n'
+    "def predict(grid, action):\n"
+    "    g = [list(row) for row in grid]\n"
+    "    c = g[2].index(3)\n"
+    '    nc = min(3, c + 1) if action == "ACTION1" else max(2, c - 1) if action == "ACTION2" else c\n'
+    "    g[2][c] = 0\n"
+    "    g[2][nc] = 3\n"
+    "    return tuple(tuple(row) for row in g)\n"
+    "def is_win(grid):\n"
+    "    return grid[2][5] == 3\n"
+)
+
+
+def test_edge_mask_admits_a_theory_that_misses_only_an_edge_counter() -> None:
+    # g-376-37 arm M: exact replay refuses a theory whose only error is a counter on the
+    # screen's edge; check 4 with the 2-cell edge mask admits it. A masked refusal names
+    # only interior cells, and the unmasked replay (the later-move measure) stays exact.
+    transitions, frames = _counter_log()
+    wrong_way = COUNTER_BLIND.replace('c + 1) if action == "ACTION1"', 'c + 1) if action == "ACTION2"')
+    current = frames[-1]
+    exact = TheorySynthesizer(FakeWriter([]), TheorySandbox(HELPERS_SOURCE, {"H": 6, "W": 6}),
+                              build_prompt, require_win_guess=False)
+    masked = TheorySynthesizer(FakeWriter([]), TheorySandbox(HELPERS_SOURCE, {"H": 6, "W": 6}),
+                               build_prompt, require_win_guess=False, replay_edge_mask=2)
+    try:
+        for synth in (exact, masked):
+            synth.observe(transitions, frames)
+        refused = exact.admit(COUNTER_BLIND, current, ["ACTION1", "ACTION2"], False)
+        admitted = masked.admit(COUNTER_BLIND, current, ["ACTION1", "ACTION2"], False)
+        still_exact = masked.sandbox.replay()
+        interior = masked.admit(wrong_way, current, ["ACTION1", "ACTION2"], False)
+    finally:
+        exact.sandbox.close()
+        masked.sandbox.close()
+    assert not refused.admitted
+    assert refused.check.startswith("4 replay: explained 0 of 3")
+    assert "(0,0) predicted 0, actual 1" in refused.check
+    assert admitted.admitted and admitted.explained == admitted.total == 3
+    assert still_exact["explained"] == 0 and still_exact["total"] == 3
+    assert not interior.admitted and interior.check.startswith("4 replay: explained 0 of 3")
+    assert "(2," in interior.check and "(0,0)" not in interior.check
+
+
+def test_edge_mask_is_for_admission_only() -> None:
+    # g-376-37 HAZARD: a masked counter can be the move budget, so the mask is for
+    # admission only. The masked check 4 admits the counter-blind theory; every move the
+    # arm plays after that is still judged on the full screen, so the ticking counter
+    # makes each prediction a miss and the later-move measure scores the theory 0.
+    synth = TheorySynthesizer(
+        FakeWriter(["```python\n" + COUNTER_BLIND + "```"]),
+        TheorySandbox(HELPERS_SOURCE, {"H": 6, "W": 6}),
+        build_prompt,
+        require_win_guess=False,
+        replay_edge_mask=2,
+    )
+    arm = TheoryArm(synth, click_targets=click_targets, config=ArmConfig())
+    try:
+        play(arm, CounterToy(), 10)
+        summary = arm.finish()
+    finally:
+        synth.sandbox.close()
+    assert synth.records[0]["verdict"] == "admitted"
+    assert arm.prediction_log and not any(p["exact"] for p in arm.prediction_log)
+    first = summary["later_accuracy"][0]
+    assert first["admitted"] and first["later_moves"] > 0 and first["exact"] == 0
+
+
 def test_capped_search_admits_without_a_plan() -> None:
     transitions, frames, current = toy_log()
     synth = logged_synth(FakeWriter([]), transitions, frames, plan_nodes=1)
@@ -576,6 +684,7 @@ def test_each_g37625_arm_builds_the_arm_it_names(name: str, tmp_path: Path) -> N
         return
     assert isinstance(arm.synth.writer, MeteredTheoryWriter)
     assert arm.synth.require_win_guess is switches["require_win_guess"]
+    assert arm.synth.replay_edge_mask == switches.get("replay_edge_mask", 0)
     assert ("I am a player." in system) is switches["purpose_block"]
     assert ("WIN_GUESS" in system) is switches["win_guess_asked"]
 

@@ -26,7 +26,8 @@ coverage arm: a share of 0 still lets the arm follow one plan per level.
 `--theory-arm A` (with --theory-share) builds the arm with the switches of arm A of
 g-376-25 (adapters/arc_theory.THEORY_ARMS): N neutral prompt, G win guess asked,
 P G plus the purpose block, B P plus the code binding (the default arm), Z the
-placebo (probe on, model off). `--record` writes each game's recording through the
+placebo (probe on, model off), and M (g-376-37) G with check 4 blind to the screen's
+2-cell edge. `--record` writes each game's recording through the
 toolkit's Recorder (into RECORDINGS_DIR) and names it in the game's row.
 
 Each row counts `distinct_screens`, the distinct top layers the player was shown:

@@ -195,13 +195,17 @@ def fresh_namespace():
     return g
 
 
-def diffs(pred, actual, limit=10):
+def on_edge(r, c, h, w, mask):
+    return mask > 0 and (r < mask or c < mask or r >= h - mask or c >= w - mask)
+
+
+def diffs(pred, actual, limit=10, mask=0):
     if len(pred) != len(actual) or any(len(a) != len(b) for a, b in zip(pred, actual)):
         return [["shape", len(pred), len(actual)]]
     out = []
     for r, (pa, ra) in enumerate(zip(pred, actual)):
         for c, (p, a) in enumerate(zip(pa, ra)):
-            if p != a:
+            if p != a and not on_edge(r, c, len(actual), len(ra), mask):
                 out.append([r, c, p, a])
                 if len(out) >= limit:
                     return out
@@ -252,6 +256,7 @@ def cmd_load(req):
 
 def cmd_replay(req):
     start = int(req.get("start", 0))
+    mask = int(req.get("mask", 0))
     explained = 0
     wrong_cells = 0
     all_cells = 0
@@ -266,12 +271,12 @@ def cmd_replay(req):
             if len(firsts) < 3:
                 firsts.append({"index": i, "action": act_out(a), "error": err(exc)})
             continue
-        if p == s2:
+        if p == s2 or (mask and not diffs(p, s2, 1, mask)):
             explained += 1
             continue
         wrong_cells += cells_wrong(p, s2)
         if len(firsts) < 3:
-            firsts.append({"index": i, "action": act_out(a), "cells": diffs(p, s2)})
+            firsts.append({"index": i, "action": act_out(a), "cells": diffs(p, s2, mask=mask)})
     return {"explained": explained, "total": len(items), "first": firsts,
             "cells_wrong": wrong_cells, "cells_total": all_cells}
 
@@ -598,9 +603,11 @@ class TheorySandbox:
             raise
         return parts
 
-    def replay(self, start: int = 0) -> dict[str, Any]:
+    def replay(self, start: int = 0, mask: int = 0) -> dict[str, Any]:
+        """``mask`` > 0 leaves that many rows and columns at each edge of the screen out
+        of the comparison (check 4 of arm M, g-376-37); 0 compares every cell."""
         n = max(0, len(self._transitions) - start)
-        return self.request("replay", 2.0 + 2.0 * (n // 100 + 1), start=start)
+        return self.request("replay", 2.0 + 2.0 * (n // 100 + 1), start=start, mask=mask)
 
     def determinism(self, sample: int = 10) -> dict[str, Any]:
         return self.request("determinism", 4.0, sample=sample)

@@ -437,15 +437,19 @@ class ArmSwitches(TypedDict, total=False):
     win_guess_asked: bool
     require_win_guess: bool
     model_calls: bool
+    replay_edge_mask: int
 
 
 # The arms of g-376-25 as make_theory_arm switches. B is the default arm as shipped by
 # g-376-09; G, P and N are its ablations; Z is the placebo: probe on, model off.
+# M (g-376-37) is G with check 4 blind to the screen's 2-cell edge, the band the
+# hypothesis 2026-09-25_edge-masked-replay-admits-10pct registered.
 THEORY_ARMS: dict[str, ArmSwitches] = {
     "N": {"purpose_block": False, "win_guess_asked": False, "require_win_guess": False},
     "G": {"purpose_block": False, "win_guess_asked": True, "require_win_guess": False},
     "P": {"purpose_block": True, "win_guess_asked": True, "require_win_guess": False},
     "B": {"purpose_block": True, "win_guess_asked": True, "require_win_guess": True},
+    "M": {"purpose_block": False, "win_guess_asked": True, "require_win_guess": False, "replay_edge_mask": 2},
     "Z": {"model_calls": False},
 }
 
@@ -475,6 +479,7 @@ def make_theory_arm(
     require_win_guess: bool = True,
     win_guess_asked: bool = True,
     model_calls: bool = True,
+    replay_edge_mask: int = 0,
     config: Optional[ArmConfig] = None,
     budget: Optional[GameBudget] = None,
     memory: Optional[TheoryMemory] = None,
@@ -491,6 +496,7 @@ def make_theory_arm(
         lambda ctx: build_prompt(ctx, purpose_block=purpose_block, win_guess_asked=win_guess_asked),
         budget=budget,
         require_win_guess=require_win_guess,
+        replay_edge_mask=replay_edge_mask,
     )
     return TheoryArm(
         synthesizer,
