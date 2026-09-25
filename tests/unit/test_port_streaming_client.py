@@ -62,7 +62,7 @@ class FakeArm:
         self.finished = True
         if self.finish_error:
             raise RuntimeError("finish broke")
-        return {}
+        return {"moves": len(self.steps)}
 
 
 def _frame(state: GameState = GameState.NOT_FINISHED) -> FrameData:
@@ -161,6 +161,49 @@ def test_close_finishes_the_arm_and_stops_its_sandbox_even_if_finish_fails(
     client.close()
     assert arm.finished and arm.synth.sandbox.closed
     assert client.theory_arm is None
+    assert client.theory_measures is None
+
+
+def test_close_keeps_the_arms_game_measures(monkeypatch: pytest.MonkeyPatch) -> None:
+    # g-376-24: eval/adapter_run.py --theory-share reads them into each game's row.
+    client = _client([arcengine.GameAction.ACTION1], monkeypatch)
+    client.set_theory_arm(lambda grid: FakeArm())
+    client.choose_action(_frame())
+    assert client.theory_measures is None
+    client.close()
+    assert client.theory_measures == {"moves": 1}
+
+
+def _adapter_run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(REPO / "eval" / "adapter_run.py"), *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--theory-share", "0.5"], "--theory-share needs --player port"),
+        (["--player", "port", "--theory-share", "1.5"], "--theory-share must be a number from 0 to 1"),
+        (["--player", "port", "--theory-share", "-0.5"], "--theory-share must be a number from 0 to 1"),
+    ],
+)
+def test_adapter_run_refuses_a_theory_share_it_cannot_apply(tmp_path: Path, args: list[str], message: str) -> None:
+    proc = _adapter_run(args, tmp_path)
+    assert proc.returncode == 2, proc.stdout[-400:] + proc.stderr[-400:]
+    assert message in proc.stderr
+
+
+def test_adapter_run_accepts_a_theory_share_with_the_port(tmp_path: Path) -> None:
+    # Positive control: the share passes the checks and the run stops only at the
+    # unknown game, before any arm is built or any model is called.
+    proc = _adapter_run(["--player", "port", "--theory-share", "0.25", "--games", "nosuchgame"], tmp_path)
+    assert "--theory-share" not in proc.stderr, proc.stderr[-400:]
+    assert "env-create-failed: nosuchgame" in proc.stderr, proc.stderr[-400:]
 
 
 def _main_py(args: list[str], cwd: Path, extra_env: dict[str, str]) -> subprocess.CompletedProcess[str]:

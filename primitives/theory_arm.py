@@ -200,6 +200,13 @@ class TheoryArm:
             "level_ups": ups,
             "win_guessed_before_win": f"{guessed}/{ups}",
             "moves_without_guess": self.moves_without_guess,
+            # g-376-24: moves spent on plans toward the win guess or its test target, and
+            # win guesses refuted per finished level (a guess the search cap kept out of
+            # reach counts, as it does for the switch to search); the level still in
+            # play at game end is counted on its own.
+            "win_test_moves": sum(r["win_test_moves"] for r in self.level_records) + self._level_test_moves,
+            "refuted_before_level_up": [r["guesses_refuted"] for r in self.level_records],
+            "refuted_on_unfinished_level": self._refuted,
             "admitted_prediction": {"moves": len(self.prediction_log), "exact": exact},
             "later_accuracy": later,
             "sandbox_restarts": self.synth.sandbox.restarts,
@@ -287,6 +294,8 @@ class TheoryArm:
             "win_guess": self.synth.win_guess,
             "predicted": predicted,
             "moves": self._level_moves,
+            "win_test_moves": self._level_test_moves,
+            "guesses_refuted": self._refuted,
             "calls": self.synth.budget.level_calls,
             "cost_usd": round(spent, 6),
         }
@@ -364,7 +373,7 @@ class TheoryArm:
             self._unstall()
             self._last_fraction = 1.0
             plan = verdict.plan or {}
-            if plan.get("status") == "found" and plan.get("path"):
+            if plan.get("status") == "found" and plan.get("path") and self._may_start_test():
                 self._start_plan(grid, plan)
             return
         fraction = verdict.explained / verdict.total if verdict.total else 0.0
@@ -382,6 +391,13 @@ class TheoryArm:
     def _unstall(self) -> None:
         self._stall_count = 0
         self._stalled_since = None
+
+    def _may_start_test(self) -> bool:
+        """The win-test share (design §8.3): a new plan, from an admission or from the
+        decide step, may start only while this level's test moves are within
+        win_test_share of its moves. A plan already under way runs to its end, so at
+        a share of 0 the first plan of each level still runs (g-376-24)."""
+        return self._level_test_moves <= self.cfg.win_test_share * self._level_moves
 
     def _enter_search(self) -> None:
         self._search = True
@@ -413,7 +429,7 @@ class TheoryArm:
         if plan is not None and plan["actions"] and plan["at"] == grid:
             return self._take_plan_step(plan)
         self._plan = None
-        if self._level_test_moves > self.cfg.win_test_share * self._level_moves:
+        if not self._may_start_test():
             return fallback
         found = self.synth.plan(grid, _simple(actions), click_allowed)
         # A stepping-stone target reached 3 times on a level without a win is treated

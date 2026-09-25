@@ -85,6 +85,7 @@ class PortStreamingClient:
         self._theory_arm: TheoryArm | None = None
         self._theory_reset = False
         self._theory_disabled: str | None = None
+        self.theory_measures: dict[str, Any] | None = None  # the arm's finish(), set at close
 
     @property
     def tick(self) -> int:
@@ -184,14 +185,15 @@ class PortStreamingClient:
         return True
 
     def close(self) -> None:
-        """Game end for the theory arm: emit its game-end memory record and stop its
-        sandbox child (same steps as SolverV2StreamingAdapter._finish_theory_arm). A
-        finish error is logged, not raised."""
+        """Game end for the theory arm: emit its game-end memory record, keep its game
+        measures in ``theory_measures`` and stop its sandbox child (same steps as
+        SolverV2StreamingAdapter._finish_theory_arm). A finish error is logged, not
+        raised."""
         arm, self._theory_arm = self._theory_arm, None
         if arm is None:
             return
         try:
-            arm.finish()
+            self.theory_measures = arm.finish()
         except Exception:
             logger.warning("[theory-arm] finish failed at close", exc_info=True)
         finally:

@@ -129,11 +129,15 @@ class FakeWriter:
 
 
 def make_arm(
-    writer: Any, width: int = 7, budget: Optional[GameBudget] = None, **synth_kw: Any
+    writer: Any,
+    width: int = 7,
+    budget: Optional[GameBudget] = None,
+    config: Optional[ArmConfig] = None,
+    **synth_kw: Any,
 ) -> TheoryArm:
     sandbox = TheorySandbox(HELPERS_SOURCE, {"H": 2, "W": width})
     synth = TheorySynthesizer(writer, sandbox, build_prompt, budget=budget, **synth_kw)
-    return TheoryArm(synth, click_targets=click_targets, config=ArmConfig())
+    return TheoryArm(synth, click_targets=click_targets, config=config or ArmConfig())
 
 
 def play(arm: TheoryArm, game: Toy, moves: int, fallback: str = "ACTION2") -> list[Any]:
@@ -331,6 +335,7 @@ def test_probe_then_one_opening_call_then_the_plan_wins(arms: Any) -> None:
     play(arm, game, 1)  # the level-up is closed when the next frame arrives
     record = arm.level_records[0]
     assert record["predicted"] is True and record["theory_version"] == 1
+    assert record["win_test_moves"] == 6 and record["guesses_refuted"] == 0  # g-376-24
     assert arm.memory_records[-1]["record"] == "arc-theory-v1"
     assert arm.memory_records[-1]["predicted_before_win"] is True
 
@@ -369,6 +374,26 @@ def test_reached_but_not_won_refutes_the_guess_for_good(arms: Any) -> None:
     assert verdicts[1].startswith("6 win-guess filter")  # the refuted guess cannot come back
     assert verdicts[2] == "admitted"
     assert game.level == 1 and arm.level_records[0]["predicted"] is True
+    # g-376-24: 3 moves to the wrong guess's screen, then 3 to the real win.
+    assert arm.level_records[0]["win_test_moves"] == 6 and arm.level_records[0]["guesses_refuted"] == 1
+
+
+def test_the_win_test_share_also_gates_the_plan_an_admission_brings(arms: Any) -> None:
+    # g-376-24: every new plan obeys the share, including one an admitted theory brings.
+    # At a share of 0 the level's first plan still runs, and it wins this toy.
+    first_plan = Toy()
+    play(arms(FakeWriter([GOOD]), config=ArmConfig(win_test_share=0.0)), first_plan, 10)
+    assert first_plan.level == 1
+    # After the wrong guess is refuted, the good theory is admitted but its plan may
+    # not start, so the level is never won (the default share wins it: test above).
+    game = Toy()
+    arm = arms(FakeWriter([WRONG_WIN, WRONG_WIN, GOOD]), config=ArmConfig(win_test_share=0.0))
+    play(arm, game, 40)
+    assert [r["verdict"] for r in arm.synth.records][-1] == "admitted"
+    assert game.level == 0
+    summary = arm.finish()
+    assert summary["win_test_moves"] == 3 and summary["refuted_on_unfinished_level"] == 1
+    assert summary["refuted_before_level_up"] == []
 
 
 def test_a_counterexample_triggers_a_rewrite_after_the_deferral_window(arms: Any) -> None:

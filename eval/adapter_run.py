@@ -15,12 +15,21 @@ Held-out games are never played (house rule 4).
 
 `--player port` plays the same protocol through PortStreamingClient instead, the
 port-backed session client of g-376-30 (eval/port-client-2026-09-25.json).
+
+`--player port --theory-share S` also attaches the theory arm (g-376-24) with
+ArmConfig(win_test_share=S), built as main.py builds it for SOLVER_V2_THEORY_ARM:
+model calls go through spend_meter (the $250 cap and its ledger), and each game's
+records go to a run directory under ARC_THEORY_RUN_DIR (default
+~/.ayoai-arc/theory-runs). The port-only run, without --theory-share, is the
+coverage arm: a share of 0 still lets the arm follow one plan per level.
 """
 
 from __future__ import annotations
 
 import argparse
+import functools
 import json
+import os
 import sys
 import time
 from collections import Counter
@@ -43,9 +52,12 @@ from baseline_run import (  # type: ignore[import-not-found]  # noqa: E402
     dev_games,
 )
 
+import spend_meter  # noqa: E402
 from action_budget import DEFAULT_ACTION_BUDGET  # noqa: E402
+from adapters.arc_theory import make_theory_arm  # noqa: E402
 from house_rules import make_game  # noqa: E402
 from port_streaming_client import PortStreamingClient  # noqa: E402
+from primitives.theory_arm import ArmConfig  # noqa: E402
 from solver_v2.streaming_adapter import SolverV2StreamingAdapter  # noqa: E402
 from structs import FrameData, GameAction, GameState  # noqa: E402
 
@@ -101,7 +113,19 @@ def main() -> None:
         default="adapter",
         help="adapter = SolverV2StreamingAdapter; port = PortStreamingClient (g-376-30)",
     )
+    parser.add_argument(
+        "--theory-share",
+        type=float,
+        default=None,
+        help="attach the theory arm with this win-test share, 0 to 1 (--player port only, g-376-24)",
+    )
     args = parser.parse_args()
+    if args.theory_share is not None:
+        if args.player != "port":
+            parser.error("--theory-share needs --player port")
+        if not 0.0 <= args.theory_share <= 1.0:
+            parser.error("--theory-share must be a number from 0 to 1")
+    theory_root = Path(os.environ.get("ARC_THEORY_RUN_DIR", str(Path.home() / ".ayoai-arc" / "theory-runs")))
 
     games = args.games or dev_games()
     arc = arc_agi.Arcade(
@@ -120,6 +144,19 @@ def main() -> None:
             if args.player == "port"
             else SolverV2StreamingAdapter(ayo_server_key="offline-adapter", arc_game_id=game)
         )
+        theory_run_id = None
+        if args.theory_share is not None:
+            theory_run_id = f"theory-{game}-{int(time.time())}"
+            adapter.set_theory_arm(
+                functools.partial(
+                    make_theory_arm,
+                    client=spend_meter.metered_anthropic(game_id=game, run_id=theory_run_id),
+                    game_key=game,
+                    run_id=theory_run_id,
+                    run_dir=theory_root / theory_run_id,
+                    config=ArmConfig(win_test_share=args.theory_share),
+                )
+            )
         agent = AdapterDrive(
             card_id="offline-adapter",
             game_id=game,
@@ -134,18 +171,20 @@ def main() -> None:
         agent.main()
         adapter.close()
         last = agent.frames[-1]
-        rows.append(
-            {
-                "game": game,
-                "actions": agent.action_counter,
-                "seconds": round(time.perf_counter() - t0, 2),
-                "state": last.state.name,
-                "levels_completed": last.levels_completed,
-                "win_levels": last.win_levels,
-                "decided_by": dict(agent.decided_by),
-                **attempt_profile(agent.frames, agent.chosen),
-            }
-        )
+        row: dict[str, Any] = {
+            "game": game,
+            "actions": agent.action_counter,
+            "seconds": round(time.perf_counter() - t0, 2),
+            "state": last.state.name,
+            "levels_completed": last.levels_completed,
+            "win_levels": last.win_levels,
+            "decided_by": dict(agent.decided_by),
+            **attempt_profile(agent.frames, agent.chosen),
+        }
+        if theory_run_id is not None and isinstance(adapter, PortStreamingClient):
+            row["theory_run_id"] = theory_run_id
+            row["theory"] = adapter.theory_measures
+        rows.append(row)
         print(json.dumps(rows[-1]), file=sys.stderr, flush=True)
 
     scorecard = arc.get_scorecard()
@@ -160,6 +199,7 @@ def main() -> None:
         "arc_agi": version("arc-agi"),
         "arcengine": version("arcengine"),
         "max_actions": args.max_actions,
+        "theory_share": args.theory_share,
         "games": rows,
         "overall_score": scorecard.score,
         "scorecard": card,
