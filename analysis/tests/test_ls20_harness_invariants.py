@@ -57,13 +57,18 @@ from solver_v2.frame_coordinate_state import FrameCoordinateDecomposer
 
 
 def _recordings():
-    return sorted(glob.glob(os.path.join(REC_DIR, "*.recording.jsonl")))
+    # Only the population the harnesses were written for: REAL solver-v2 ls20
+    # recordings (c311272 measured the seam on 12 of them). recordings/ is also where
+    # live port runs land, for other games AND for ls20, so a bare *.recording.jsonl
+    # or ls20-* glob lets sorted()[0] be a recording these invariants cannot measure
+    # (g-376-43: an ft09 port run turned the ARC gate red on cc-03).
+    return sorted(glob.glob(os.path.join(REC_DIR, "ls20-*.solver-v2.*.recording.jsonl")))
 
 
 def _require_recording():
     paths = _recordings()
     if not paths:
-        pytest.skip(f"no ls20 recordings in {REC_DIR}")
+        pytest.skip(f"no ls20 solver-v2 recordings in {REC_DIR}")
     # Deterministic pick: sorted()[0]. A random or "first that works" choice would
     # make a failure non-reproducible, which is the one thing a measurement guard
     # cannot afford.
