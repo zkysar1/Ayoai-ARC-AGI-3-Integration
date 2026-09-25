@@ -57,11 +57,14 @@ import json
 import logging
 import os
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, TypeGuard, overload
 
 from analysis.predicate_spec import (
     VALID_OPS,
     VALID_PRIORS,
+    AndConstraint,
+    NotConstraint,
+    OrConstraint,
     PredicateSpec,
     PriorThresholdConstraint,
     from_dict,
@@ -441,11 +444,60 @@ def parse_spec_response(text: Optional[str]) -> Optional[PredicateSpec]:
         return None
 
 
+def _has_clauses(spec: PredicateSpec) -> TypeGuard[AndConstraint | OrConstraint]:
+    """A composite carrying a ``clauses`` tuple (``and`` / ``or``).
+
+    The runtime test stays FIELD-BASED (``getattr(spec, "clauses")``), so a
+    future clauses-composite passes with no change to the check -- preserving
+    the original duck-typing intent.  The ``TypeGuard`` return names the current
+    clauses-composites only so ``dataclasses.replace`` below can be typed
+    against a concrete member set (a frozen union is otherwise unassignable to
+    ``replace``); adding a new composite adds its name here and nowhere else.
+    """
+    return getattr(spec, "clauses", None) is not None
+
+
+def _has_clause(spec: PredicateSpec) -> TypeGuard[NotConstraint]:
+    """The single-clause composite (``not``).  Field-based, as ``_has_clauses``."""
+    return getattr(spec, "clause", None) is not None
+
+
+def _is_prior_threshold(
+    spec: PredicateSpec,
+) -> TypeGuard[PriorThresholdConstraint]:
+    """The one constraint carrying a ``prior`` -- the only leaf this function
+    rescales.  Keyed on the ``type`` discriminant exactly as the original guard,
+    so the check is unchanged; the ``TypeGuard`` only lets mypy narrow through it
+    (rather than an ``isinstance`` rewrite the union's duck-typed design avoids).
+    """
+    return getattr(spec, "type", None) == "prior_threshold"
+
+
+@overload
+def clamp_spec_to_observed(
+    spec: None,
+    prior_stats: Optional[dict[str, dict[str, float]]],
+) -> None: ...
+
+
+@overload
+def clamp_spec_to_observed(
+    spec: PredicateSpec,
+    prior_stats: Optional[dict[str, dict[str, float]]],
+) -> PredicateSpec: ...
+
+
 def clamp_spec_to_observed(
     spec: Optional[PredicateSpec],
     prior_stats: Optional[dict[str, dict[str, float]]],
 ) -> Optional[PredicateSpec]:
     """Remap out-of-range prior thresholds into the OBSERVED distribution.
+
+    The ``@overload`` pair above pins the None-preserving shape (``None -> None``,
+    ``PredicateSpec -> PredicateSpec``) so callers -- and this function's own
+    recursion over ``clauses`` / ``clause`` -- get a non-Optional result for a
+    non-None spec (cf. rb-748), which is what makes the recursive ``replace``
+    calls and ``hypothesize``'s return type-check.
 
     Work item (2) of g-315-510: make a proposal *structurally satisfiable by
     construction* rather than relying on the proposer to respect a range it
@@ -481,23 +533,23 @@ def clamp_spec_to_observed(
     if spec is None or not prior_stats:
         return spec
 
-    # Composite nodes: recurse structurally.  Duck-typed on the field name
-    # rather than isinstance so a future composite type needs no edit here.
-    clauses = getattr(spec, "clauses", None)
-    if clauses is not None:
+    # Composite nodes: recurse structurally.  The TypeGuard helpers keep the
+    # check FIELD-BASED (a future composite needs no change to the check itself)
+    # while giving mypy the narrowing it needs to type dataclasses.replace on
+    # the frozen union -- no isinstance rewrite.
+    if _has_clauses(spec):
         return replace(
             spec,
             clauses=tuple(
-                clamp_spec_to_observed(c, prior_stats) for c in clauses
+                clamp_spec_to_observed(c, prior_stats) for c in spec.clauses
             ),
         )
-    clause = getattr(spec, "clause", None)
-    if clause is not None:
+    if _has_clause(spec):
         return replace(
-            spec, clause=clamp_spec_to_observed(clause, prior_stats)
+            spec, clause=clamp_spec_to_observed(spec.clause, prior_stats)
         )
 
-    if getattr(spec, "type", None) != "prior_threshold":
+    if not _is_prior_threshold(spec):
         return spec  # type_count and friends are on their own natural scale
     stats = prior_stats.get(spec.prior)
     if not stats:
