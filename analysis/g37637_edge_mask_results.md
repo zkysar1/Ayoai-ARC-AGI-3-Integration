@@ -2,8 +2,9 @@
 
 Run 2026-09-25, 07:15-07:46Z, by zeta, offline, on the 15 dev games at 2,000 actions, on
 hostname cc-02. Code under test: 1c2e110, which also registered the preregistration
-(`analysis/g37637_edge_mask_preregistration.md`) before any run. Addendum and measures
-script: c5f0e77 (07:16Z, before any of the run's data was read). Machine-readable
+(`analysis/g37637_edge_mask_preregistration.md`), committed at 07:14:14Z, before the first
+model call at 07:15:28Z. Addendum (dated 07:16Z) and measures script: c5f0e77, committed at
+07:18:27Z, during the run and before any of its data was read. Machine-readable
 companions:
 
 - `analysis/g37637_edge_mask_measures.json` holds the registered measures and verdicts;
