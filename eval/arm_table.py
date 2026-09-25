@@ -2,10 +2,14 @@
 (analysis/g37625_purpose_arms_preregistration.md). Generalizes g-376-24's table script.
 
     .venv/bin/python eval/arm_table.py --control Z1=<json> --repeat Z2=<json> \
-        --reference W50=<json> N=<json> G=<json> P=<json> B=<json> [--out summary.json]
+        --reference W50=<json> N=<json> G=<json> P=<json> B=<json> [--out summary.json] \
+        [--admission-hypothesis <pipeline id> --admission-threshold 0.10 \
+         --admission-direction below|at-least [--admission-arms M] [--admission-min-paid 100]]
 
 Each <json> is a merged run (eval/merge_arm_runs.py). Measure 1 (the win guess) is
-not here: it is judged by the rubric (eval/win_guesses.py).
+not here: it is judged by the rubric (eval/win_guesses.py). The admission verdict is
+printed only for a hypothesis whose terms are passed in (g-376-41). g-376-25's terms
+are below 0.10 over every model arm; g-376-37's are at-least 0.10 over arm M.
 
 - screen hash: sha256 over every recorded layer (eval/level_up_events.screen_hash).
   The offline frames do not carry the action taken, so the screens seen stand in for
@@ -72,6 +76,26 @@ def per_game_rule(c: dict[str, Any], w: dict[str, Any]) -> str:
     return "tie"
 
 
+def admission_verdict(
+    rates: list[tuple[int, float]], threshold: float, direction: str, min_paid: int = 100
+) -> str:
+    """A pre-registered admission hypothesis's verdict from (paid calls, admitted/paid) per arm.
+
+    "below" (g-376-25): CONFIRMED when every arm has min_paid paid calls and admits under
+    the threshold; CORRECTED when any arm with min_paid paid calls reaches it.
+    "at-least" (g-376-37) is the opposite polarity: CONFIRMED when every arm has min_paid
+    paid calls and reaches the threshold; CORRECTED when any such arm stays under it.
+    UNRESOLVABLE otherwise, including when no arm has min_paid paid calls.
+    """
+    counted = [r for p, r in rates if p >= min_paid]
+    holds = [r < threshold if direction == "below" else r >= threshold for r in counted]
+    if counted and len(counted) == len(rates) and all(holds):
+        return "CONFIRMED"
+    if not all(holds):
+        return "CORRECTED"
+    return "UNRESOLVABLE"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--control", required=True)
@@ -79,7 +103,16 @@ def main() -> None:
     parser.add_argument("--reference", required=True)
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("arms", nargs="+")
+    # An admission verdict is printed only for a hypothesis whose terms are given here
+    # (g-376-41): the table used to score g-376-25's hypothesis on every run.
+    parser.add_argument("--admission-hypothesis", default=None, help="pipeline id to score")
+    parser.add_argument("--admission-threshold", type=float, default=None)
+    parser.add_argument("--admission-direction", choices=("below", "at-least"), default=None)
+    parser.add_argument("--admission-arms", default=None, help="comma-separated; default every model arm")
+    parser.add_argument("--admission-min-paid", type=int, default=100)
     args = parser.parse_args()
+    if args.admission_hypothesis and (args.admission_threshold is None or args.admission_direction is None):
+        parser.error("--admission-hypothesis needs --admission-threshold and --admission-direction")
     named = [s.split("=", 1) for s in [args.control, args.repeat, *args.arms]]
     runs = {name: rows(path) for name, path in named}
     control, repeat = named[0][0], named[1][0]
@@ -150,11 +183,9 @@ def main() -> None:
 
     # ---- verdicts ----
     base_levels = totals[control]["levels"]
-    hyp_rates = []
     for a in model_arms:
         tot = totals[a]
         rate = tot["admitted"] / tot["paid"] if tot["paid"] else 0.0
-        hyp_rates.append((tot["paid"], rate))
         ratio = tot["levels"] / base_levels if base_levels else None
         summary["arms"][a] = {
             "levels": tot["levels"],
@@ -172,13 +203,23 @@ def main() -> None:
             "check2_refusals": tot["check2_refusals"],
             "spend_usd": tot["cost_cents_x1000"] / 100_000,
         }
-    if all(p >= 100 for p, _ in hyp_rates) and all(r < 0.10 for _, r in hyp_rates):
-        hyp = "CONFIRMED"
-    elif any(p >= 100 and r >= 0.10 for p, r in hyp_rates):
-        hyp = "CORRECTED"
-    else:
-        hyp = "UNRESOLVABLE"
-    summary["admission_hypothesis"] = hyp
+    if args.admission_hypothesis:
+        scored = args.admission_arms.split(",") if args.admission_arms else model_arms
+        unknown = [a for a in scored if a not in summary["arms"]]
+        if unknown:
+            parser.error(f"--admission-arms names arms that were not run: {unknown}")
+        paid_admitted = [(summary["arms"][a]["paid_calls"], summary["arms"][a]["admitted"]) for a in scored]
+        rates = [(p, adm / p if p else 0.0) for p, adm in paid_admitted]
+        summary["admission_hypothesis"] = {
+            "id": args.admission_hypothesis,
+            "threshold": args.admission_threshold,
+            "direction": args.admission_direction,
+            "min_paid": args.admission_min_paid,
+            "arms": scored,
+            "verdict": admission_verdict(
+                rates, args.admission_threshold, args.admission_direction, args.admission_min_paid
+            ),
+        }
     summary["control_levels"] = {control: base_levels, repeat: totals[repeat]["levels"]}
     print()
     print(json.dumps({k: v for k, v in summary.items() if k != "games"}, indent=1))
