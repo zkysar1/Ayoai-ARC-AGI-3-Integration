@@ -629,7 +629,8 @@ def test_metered_writer_uses_the_meter_the_smallest_model_and_temperature_zero(t
                 )
 
     ledger = tmp_path / "ledger.jsonl"
-    writer = MeteredTheoryWriter(spend_meter.MeteredClient(Inner(), ledger=ledger))
+    in_window = lambda: spend_meter.WINDOW_START  # noqa: E731
+    writer = MeteredTheoryWriter(spend_meter.MeteredClient(Inner(), ledger=ledger, now=in_window))
     result = writer.write("system", "prompt")
     assert sent[0]["model"] == "claude-haiku-4-5-20251001"
     assert sent[0]["extra_body"] == {"temperature": 0}
@@ -637,7 +638,7 @@ def test_metered_writer_uses_the_meter_the_smallest_model_and_temperature_zero(t
     assert "tier=SMALLEST" in result.tier_note
     assert len(spend_meter.read_ledger(ledger)) == 1
 
-    capped = MeteredTheoryWriter(spend_meter.MeteredClient(Inner(), ledger=ledger, cap_usd=0.0))
+    capped = MeteredTheoryWriter(spend_meter.MeteredClient(Inner(), ledger=ledger, cap_usd=0.0, now=in_window))
     with pytest.raises(WriterStopped):
         capped.write("system", "prompt")
 
