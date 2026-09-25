@@ -1,0 +1,85 @@
+{
+ "games": [
+  "ar25",
+  "bp35",
+  "cd82",
+  "cn04",
+  "ft09",
+  "ka59",
+  "lp85",
+  "ls20",
+  "r11l",
+  "re86",
+  "sp80",
+  "su15",
+  "tn36",
+  "vc33",
+  "wa30"
+ ],
+ "arms": {
+  "G": {
+   "levels": 6,
+   "levels_ratio_vs_control": 1.0,
+   "secondary_b": "NOT MORE",
+   "per_game": {
+    "beats": 0,
+    "loses": 0,
+    "tie": 15
+   },
+   "secondary_a": "PLAYS THE SAME",
+   "games_differing": 0,
+   "differing_win_seeking": 0,
+   "differing_unexplained": 0,
+   "paid_calls": 273,
+   "admitted": 16,
+   "admission_rate": 0.0586,
+   "refusals_by_check": {
+    "4": 257,
+    "admitted": 16
+   },
+   "check2_refusals": 0,
+   "spend_usd": 3.25982
+  },
+  "M": {
+   "levels": 6,
+   "levels_ratio_vs_control": 1.0,
+   "secondary_b": "NOT MORE",
+   "per_game": {
+    "beats": 0,
+    "loses": 0,
+    "tie": 15
+   },
+   "secondary_a": "PLAYS DIFFERENTLY",
+   "games_differing": 1,
+   "differing_win_seeking": 1,
+   "differing_unexplained": 0,
+   "paid_calls": 282,
+   "admitted": 21,
+   "admission_rate": 0.0745,
+   "refusals_by_check": {
+    "1": 4,
+    "4": 257,
+    "admitted": 21
+   },
+   "check2_refusals": 0,
+   "spend_usd": 3.56514
+  }
+ },
+ "attribution": {
+  "Z1_vs_Z2_screen_hash_differs_on": [],
+  "Z1_vs_W50_levels_or_first_up_differs_on": [],
+  "verdict": "HOLDS"
+ },
+ "differs": [
+  {
+   "arm": "M",
+   "game": "su15",
+   "win_test_moves": 2
+  }
+ ],
+ "admission_hypothesis": "CONFIRMED",
+ "control_levels": {
+  "Z1": 6,
+  "Z2": 6
+ }
+}

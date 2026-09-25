@@ -1,0 +1,344 @@
+{
+ "goal": "g-376-37",
+ "post_hoc": true,
+ "arms": {
+  "G": {
+   "per_game": {
+    "ar25": {
+     "check4": 25,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 25,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "bp35": {
+     "check4": 15,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 15,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "cd82": {
+     "check4": 15,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 15,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "cn04": {
+     "check4": 15,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 15,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "ft09": {
+     "admitted": 15,
+     "paid": 15,
+     "predicted_moves": 1995,
+     "predicted_exact": 1995,
+     "win_test_moves": 0
+    },
+    "ka59": {
+     "check4": 15,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 15,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "lp85": {
+     "check4": 17,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 17,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "ls20": {
+     "check4": 15,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 15,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "r11l": {
+     "check4": 21,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 21,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "re86": {
+     "check4": 15,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 15,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "sp80": {
+     "check4": 23,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 14,
+     "paid": 23,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "su15": {
+     "admitted": 1,
+     "check4": 14,
+     "check4_w2_all_edge_only": 4,
+     "check4_w2_listed_edge_only": 7,
+     "paid": 15,
+     "predicted_moves": 1993,
+     "predicted_exact": 1993,
+     "win_test_moves": 0
+    },
+    "tn36": {
+     "check4": 25,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 25,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "vc33": {
+     "check4": 27,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 27,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "wa30": {
+     "check4": 15,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 15,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    }
+   },
+   "totals": {
+    "admitted": 16,
+    "check4": 257,
+    "check4_w2_all_edge_only": 4,
+    "check4_w2_listed_edge_only": 21,
+    "paid": 273,
+    "predicted_exact": 3988,
+    "predicted_moves": 3988,
+    "win_test_moves": 0
+   },
+   "without_ft09": {
+    "paid": 258,
+    "admitted": 1,
+    "rate": 0.0039
+   },
+   "check4_left": {
+    "check4": 257,
+    "explains_one_or_more": 146,
+    "first_wrong_at_move_0": 196,
+    "misses_at_most_3_moves": 9,
+    "replay_error": 1,
+    "median_explained_fraction": 0.018
+   },
+   "other_refusals": []
+  },
+  "M": {
+   "per_game": {
+    "ar25": {
+     "check1": 2,
+     "check4": 23,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 25,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "bp35": {
+     "check1": 1,
+     "check4": 14,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 15,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "cd82": {
+     "check4": 15,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 15,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "cn04": {
+     "check4": 15,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 15,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "ft09": {
+     "admitted": 15,
+     "paid": 15,
+     "predicted_moves": 1995,
+     "predicted_exact": 1995,
+     "win_test_moves": 0
+    },
+    "ka59": {
+     "check4": 15,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 15,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "lp85": {
+     "admitted": 2,
+     "check4": 15,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 17,
+     "predicted_moves": 1982,
+     "predicted_exact": 1901,
+     "win_test_moves": 1
+    },
+    "ls20": {
+     "check4": 15,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 15,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "r11l": {
+     "check4": 25,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 25,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "re86": {
+     "check4": 15,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 15,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "sp80": {
+     "admitted": 1,
+     "check4": 29,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 30,
+     "predicted_moves": 1894,
+     "predicted_exact": 10,
+     "win_test_moves": 0
+    },
+    "su15": {
+     "admitted": 3,
+     "check4": 2,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 5,
+     "predicted_moves": 1993,
+     "predicted_exact": 1990,
+     "win_test_moves": 2
+    },
+    "tn36": {
+     "check1": 1,
+     "check4": 29,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 30,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "vc33": {
+     "check4": 30,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 30,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    },
+    "wa30": {
+     "check4": 15,
+     "check4_w2_all_edge_only": 0,
+     "check4_w2_listed_edge_only": 0,
+     "paid": 15,
+     "predicted_moves": 0,
+     "predicted_exact": 0,
+     "win_test_moves": 0
+    }
+   },
+   "totals": {
+    "admitted": 21,
+    "check1": 4,
+    "check4": 257,
+    "check4_w2_all_edge_only": 0,
+    "check4_w2_listed_edge_only": 0,
+    "paid": 282,
+    "predicted_exact": 5896,
+    "predicted_moves": 7864,
+    "win_test_moves": 3
+   },
+   "without_ft09": {
+    "paid": 267,
+    "admitted": 6,
+    "rate": 0.0225
+   },
+   "check4_left": {
+    "check4": 257,
+    "explains_one_or_more": 236,
+    "first_wrong_at_move_0": 144,
+    "misses_at_most_3_moves": 29,
+    "median_explained_fraction": 0.368
+   },
+   "other_refusals": [
+    "ar25: 1 parse and static check: line 33: the name '_' is not allowed",
+    "ar25: 1 parse and static check: line 28: the name '_' is not allowed",
+    "bp35: 1 parse and static check: line 31: the name '_' is not allowed",
+    "tn36: 1 parse and static check: line 46: the name '_' is not allowed"
+   ]
+  }
+ },
+ "static_counterfactual_this_run": {
+  "G_admitted_plus_proven_edge_only": 0.0733,
+  "G_admitted_plus_listed_edge_only": 0.1355
+ }
+}

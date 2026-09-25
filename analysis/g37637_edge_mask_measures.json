@@ -1,0 +1,45 @@
+{
+ "goal": "g-376-37",
+ "preregistration": "analysis/g37637_edge_mask_preregistration.md",
+ "theory_root": "/root/.ayoai-arc/theory-runs",
+ "arms": {
+  "G": {
+   "levels": 6,
+   "win_test_moves": 0,
+   "predicted_moves": 3988,
+   "predicted_exact": 3988,
+   "paid": 273,
+   "admitted": 16,
+   "check4": 257,
+   "check4_w2_all_edge_only": 4,
+   "check4_w2_listed_edge_only": 21,
+   "distinct_admitted_modules": 16,
+   "admission_rate": 0.0586,
+   "distinct_admission_rate": 0.0586
+  },
+  "M": {
+   "levels": 6,
+   "win_test_moves": 3,
+   "predicted_moves": 7864,
+   "predicted_exact": 5896,
+   "paid": 282,
+   "admitted": 21,
+   "check4": 257,
+   "check4_w2_all_edge_only": 0,
+   "check4_w2_listed_edge_only": 0,
+   "distinct_admitted_modules": 21,
+   "admission_rate": 0.0745,
+   "distinct_admission_rate": 0.0745
+  }
+ },
+ "verdicts": {
+  "primary": "CORRECTED",
+  "secondary": "RAISED",
+  "distinctness_qualifier": null
+ },
+ "attribution": {
+  "Z1_vs_Z2_screen_hash_differs_on": [],
+  "Z1_vs_W50_levels_or_first_up_differs_on": [],
+  "verdict": "HOLDS"
+ }
+}
