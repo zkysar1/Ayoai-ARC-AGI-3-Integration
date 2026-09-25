@@ -172,6 +172,7 @@ class PortStreamingClient:
             "consulted": True,
             "changed": chosen != fallback,
             "calls": self._theory_arm.synth.budget.calls,
+            "memory": self._theory_arm.memory_state,
         }
         return picked, out_x, out_y
 

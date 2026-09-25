@@ -21,7 +21,11 @@ from ayoai_client import (
     COLD_START_URL,
     DEFAULT_ENV_KEY,
     DEFAULT_HTTP_TIMEOUT_S,
+    DEV_COLD_START_URL,
+    DEV_LANE,
+    DEV_RESOLUTION_URL,
     LOG_INTERVALS,
+    PROD_LANE,
     RESOLUTION_URL,
     AyoaiApiError,
     AyoaiSessionError,
@@ -32,7 +36,15 @@ from ayoai_client import (
     _classify_response,
     _initiate_cold_start,
     open_ayoai_session,
+    resolve_lane,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_lane(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The prod-URL tests below read the lane from AYOAI_LANE when none is passed; a
+    # DEV-lane shell must not turn them into dev tests.
+    monkeypatch.delenv("AYOAI_LANE", raising=False)
 
 # ---------- Helpers ---------- #
 
@@ -662,3 +674,56 @@ def test_status_log_records_error_message():
         pass
     # The session_info isn't returned on error, but status_log is internal —
     # the raise message embeds the same evidence.
+
+
+# ---------- the DEV lane (g-376-10-b, grant-015) ---------- #
+
+
+@pytest.mark.parametrize(("value", "lane"), [(None, PROD_LANE), ("", PROD_LANE), ("prod", PROD_LANE),
+                                             ("dev", DEV_LANE), (" DEV ", DEV_LANE)])
+def test_resolve_lane_reads_the_env_and_defaults_to_prod(monkeypatch, value, lane):
+    if value is not None:
+        monkeypatch.setenv("AYOAI_LANE", value)
+    assert resolve_lane() is lane
+
+
+def test_resolve_lane_refuses_a_name_it_does_not_know(monkeypatch):
+    # A mistyped DEV run must not quietly open a prod session.
+    monkeypatch.setenv("AYOAI_LANE", "staging")
+    with pytest.raises(AyoaiSessionError, match="AYOAI_LANE must be prod or dev"):
+        resolve_lane()
+
+
+def test_dev_lane_opens_through_the_dev_stage_and_asks_for_the_dev_jar():
+    session = _make_session_mock([_mock_response(200, _success_body("dev-host"))])
+    info = open_ayoai_session("card-D", env_key="arc-agi-3", api_key="k", session=session, lane="dev")
+    (cold_args, cold_kwargs), (poll_args, poll_kwargs) = session.post.call_args_list
+    assert cold_args[0] == DEV_COLD_START_URL
+    # Without ayoaiServerVersion the dev route boots the PROD jar (g-370-04).
+    assert cold_kwargs["json"] == {
+        "ayoServerKey": "card-D",
+        "ayoEnvironmentKey": "arc-agi-3",
+        "client_type": CLIENT_TYPE_ARC,
+        "ayoaiServerVersion": "dev",
+    }
+    assert poll_args[0] == DEV_RESOLUTION_URL
+    assert poll_kwargs["json"] == {"ayoServerKey": "card-D", "ayoEnvironmentKey": "arc-agi-3"}
+    assert info.lane == "dev"
+    assert info.streaming_url == "https://dev-host:8787/AyoStreamingUpdates"
+
+
+def test_env_var_dev_lane_reaches_open_session(monkeypatch):
+    monkeypatch.setenv("AYOAI_LANE", "dev")
+    session = _make_session_mock([_mock_response(200, _success_body())])
+    info = open_ayoai_session("card-E", api_key="k", session=session)
+    assert session.post.call_args_list[0][0][0] == DEV_COLD_START_URL
+    assert info.lane == "dev"
+
+
+def test_prod_lane_is_the_default_and_sends_no_server_version():
+    session = _make_session_mock([_mock_response(200, _success_body())])
+    info = open_ayoai_session("card-F", api_key="k", session=session)
+    (cold_args, cold_kwargs), (poll_args, _) = session.post.call_args_list
+    assert (cold_args[0], poll_args[0]) == (COLD_START_URL, RESOLUTION_URL)
+    assert "ayoaiServerVersion" not in cold_kwargs["json"]
+    assert info.lane == "prod"
