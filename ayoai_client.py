@@ -56,6 +56,44 @@ COLD_START_URL = "https://api.ayoai.com/httpV1/CollectAyoEnvironmentInBatchesOnS
 # the Collect Lambda (env must be DDB-registered + EFS-pre-baked).
 CLIENT_TYPE_ARC = "arc"
 
+# The DEV lane (g-376-10-b, grant-015). AYOAI_LANE=dev opens the session through
+# the SdlcPlane=dev launch chain: both calls go to the /dev stage, and the cold
+# start asks for the dev jar. The two go together: a dev-route launch without
+# ayoaiServerVersion boots the PROD jar (measured g-370-04), and only the dev jar
+# has routes that are not yet promoted, such as /ArcTheory (g-376-10-a). Unset or
+# "prod" keeps the prod URLs and payload above, byte for byte.
+DEV_COLD_START_URL = "https://api.ayoai.com/httpV1/dev/CollectAyoEnvironmentInBatchesOnStartUp"
+DEV_RESOLUTION_URL = "https://api.ayoai.com/httpV1/dev/GetStreamingUrlAndStatus"
+DEV_SERVER_VERSION = "dev"
+
+
+@dataclass(frozen=True)
+class AyoaiLane:
+    """Where a session opens: the two Lambda URLs and the jar the cold start asks for."""
+
+    name: str
+    cold_start_url: str
+    resolution_url: str
+    server_version: str | None  # sent as ayoaiServerVersion when set
+
+
+PROD_LANE = AyoaiLane("prod", COLD_START_URL, RESOLUTION_URL, None)
+DEV_LANE = AyoaiLane("dev", DEV_COLD_START_URL, DEV_RESOLUTION_URL, DEV_SERVER_VERSION)
+
+
+def resolve_lane(lane: str | None = None) -> AyoaiLane:
+    """The lane named by ``lane``, else by the AYOAI_LANE env var; prod when unset.
+
+    An unknown name raises rather than falling back to prod, so a mistyped DEV
+    run cannot quietly open a prod session.
+    """
+    name = (lane if lane is not None else os.getenv("AYOAI_LANE", "")).strip().lower()
+    if name in ("", "prod"):
+        return PROD_LANE
+    if name == "dev":
+        return DEV_LANE
+    raise AyoaiSessionError(f"AYOAI_LANE must be prod or dev, not {name!r}")
+
 # Roblox parity: same cap (SendUpdate.server.lua:140), same intervals
 # (SendUpdate.server.lua:166). One-second between attempts (line 146).
 DEFAULT_MAX_ATTEMPTS = 90
@@ -155,6 +193,7 @@ class AyoaiSessionInfo:
     elapsed_s: float  # wall-clock seconds from first call to READY
     status_log: list[dict[str, Any]] = field(default_factory=list)
     # status_log entries: {"t": elapsed_s, "attempt": n, "status": "STARTING"|...}
+    lane: str = "prod"  # the AyoaiLane the session opened through
 
 
 def _build_streaming_url(hostname: str) -> str:
@@ -173,6 +212,8 @@ def _initiate_cold_start(
     api_key: str,
     sess: requests.Session,
     http_timeout_s: float,
+    *,
+    lane: AyoaiLane = PROD_LANE,
 ) -> dict[str, Any] | None:
     """POST to Collect with client_type='arc' to start the AyoAI server.
 
@@ -188,6 +229,7 @@ def _initiate_cold_start(
         api_key: AYOAI-API-KEY value.
         sess: requests.Session for the POST.
         http_timeout_s: Per-request timeout.
+        lane: Where to POST, and which jar to ask for (see AyoaiLane).
 
     Returns:
         Parsed response body dict on 200 (with status, server_key,
@@ -204,6 +246,8 @@ def _initiate_cold_start(
         "ayoEnvironmentKey": env_key,
         "client_type": CLIENT_TYPE_ARC,
     }
+    if lane.server_version is not None:
+        payload["ayoaiServerVersion"] = lane.server_version  # camelCase, unlike client_type
     headers = {
         "Content-Type": "application/json",
         "AYOAI-API-KEY": api_key,
@@ -237,7 +281,7 @@ def _initiate_cold_start(
     for attempt in range(1, max_attempts + 1):
         try:
             r = sess.post(
-                COLD_START_URL, headers=headers, json=payload, timeout=http_timeout_s
+                lane.cold_start_url, headers=headers, json=payload, timeout=http_timeout_s
             )
             break
         except requests.exceptions.RequestException as e:
@@ -269,9 +313,10 @@ def _initiate_cold_start(
         except ValueError:
             body = None
         logger.info(
-            "Cold-start initiated for ayoServerKey=%s envKey=%s: %s",
+            "Cold-start initiated for ayoServerKey=%s envKey=%s lane=%s: %s",
             card_id,
             env_key,
+            lane.name,
             body,
         )
         return body
@@ -387,6 +432,7 @@ def open_ayoai_session(
     retry_delay_s: float = DEFAULT_RETRY_DELAY_S,
     http_timeout_s: float | None = None,
     session: requests.Session | None = None,
+    lane: str | None = None,
 ) -> AyoaiSessionInfo:
     """Open an AyoAI Environment Server session and wait for streaming-ready.
 
@@ -408,6 +454,8 @@ def open_ayoai_session(
             default was unreachable from the outside — the env override is what
             makes a slow-cold-start box tunable without a code change.
         session: Optional requests.Session for connection reuse / test injection.
+        lane: "prod" or "dev" (see resolve_lane). None (default) reads the
+            AYOAI_LANE env var, and prod when that is unset.
 
     Returns:
         AyoaiSessionInfo with hostname, URLs, attempts, elapsed, status_log.
@@ -425,6 +473,7 @@ def open_ayoai_session(
         raise AyoaiSessionError("env_key is required (default 'arc-agi-3')")
     if http_timeout_s is None:
         http_timeout_s = _env_float("AYOAI_HTTP_TIMEOUT_S", DEFAULT_HTTP_TIMEOUT_S)
+    resolved_lane = resolve_lane(lane)
     resolved_api_key = resolve_api_key(api_key)
     if not resolved_api_key:
         raise AyoaiSessionError(
@@ -451,7 +500,7 @@ def open_ayoai_session(
         # Roblox path via g-315-47 corrective refactor: same Collect Lambda,
         # client_type='arc' selects the non-batch branch.
         cold_start_body = _initiate_cold_start(
-            card_id, env_key, resolved_api_key, sess, http_timeout_s
+            card_id, env_key, resolved_api_key, sess, http_timeout_s, lane=resolved_lane
         )
         status_log.append({
             "t": round(time.time() - start_t, 3),
@@ -468,7 +517,7 @@ def open_ayoai_session(
             elapsed = time.time() - start_t
             try:
                 r = sess.post(
-                    RESOLUTION_URL,
+                    resolved_lane.resolution_url,
                     headers=headers,
                     json=payload,
                     timeout=http_timeout_s,
@@ -498,10 +547,11 @@ def open_ayoai_session(
             if should_log:
                 if status == "READY":
                     logger.info(
-                        "AyoAI session READY after %d attempts (%.1fs); hostname=%s",
+                        "AyoAI session READY after %d attempts (%.1fs); hostname=%s lane=%s",
                         attempt,
                         elapsed,
                         (body or {}).get("data", {}).get("ayoaiHostname"),
+                        resolved_lane.name,
                     )
                 elif status == "WARMING":
                     logger.info(
@@ -531,6 +581,7 @@ def open_ayoai_session(
                     attempts=attempt,
                     elapsed_s=round(final_elapsed, 3),
                     status_log=status_log,
+                    lane=resolved_lane.name,
                 )
 
             if status == "API_ERROR":

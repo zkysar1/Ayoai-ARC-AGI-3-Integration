@@ -608,6 +608,7 @@ class StubArm:
         self.reply = reply
         self.calls: list[dict[str, Any]] = []
         self.synth = SimpleNamespace(budget=GameBudget())
+        self.memory_state = "cold"
 
     def step(self, grid: Any, **kw: Any) -> Any:
         self.calls.append(kw)

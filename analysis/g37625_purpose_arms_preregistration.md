@@ -1,7 +1,9 @@
 # g-376-25 preregistration: does the agent's purpose make the smallest model guess the win?
 
 Registered 2026-09-25T05:05Z by echo, before any run of these arms. The code under
-test is the commit that adds this file. Everything below is fixed from here on: arms,
+test is the merge that brings this file together with g-376-10-b (e0fbc25, the opt-in
+theory memory): eval/adapter_run.py attaches no memory, so every arm runs cold, as
+the arm did in g-376-24. Everything below is fixed from here on: arms,
 games, budget, rubric, thresholds and verdict branches. If a threshold turns out to be
 wrong, that goes in a dated addendum for the NEXT experiment, not an edit here
 (guard-1128).

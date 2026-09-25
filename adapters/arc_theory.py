@@ -14,7 +14,8 @@ ARC-AGI-3 and to this program:
   (global cap, window, ledger) at temperature 0 (guard-796), with the smallest model
   by default (D1, guard-894).
 - ``make_theory_arm``: the composition root for one game: sandbox + synthesizer +
-  arm, with per-run measures written as JSONL to a run directory outside the repo.
+  arm, with per-run measures written as JSONL to a run directory outside the repo,
+  and the game's AyoAI theory memory when the run is warm (design §12, g-376-10-b).
 
 Actions use the API names "ACTION1".."ACTION7"; a click is ``("ACTION6", row, col)``
 (the API's x is the column and y the row).
@@ -28,6 +29,7 @@ from typing import Any, Callable, Optional, TypedDict
 
 import spend_meter
 from primitives.theory_arm import ArmConfig, TheoryArm
+from primitives.theory_memory import TheoryMemory
 from primitives.theory_sandbox import Grid, TheorySandbox
 from primitives.theory_synthesizer import (
     Counterexample,
@@ -475,9 +477,11 @@ def make_theory_arm(
     model_calls: bool = True,
     config: Optional[ArmConfig] = None,
     budget: Optional[GameBudget] = None,
+    memory: Optional[TheoryMemory] = None,
 ) -> TheoryArm:
     """One game's theory arm: sandbox + synthesizer + arm (design §14 module map).
-    ``model_calls=False`` is the placebo arm (NoCallWriter)."""
+    ``model_calls=False`` is the placebo arm (NoCallWriter). ``memory`` makes the run
+    warm (design §12); None keeps it cold."""
     sandbox = TheorySandbox(
         HELPERS_SOURCE, {"H": len(first_grid), "W": len(first_grid[0]) if len(first_grid) else 0}
     )
@@ -495,4 +499,5 @@ def make_theory_arm(
         sink=jsonl_sink(run_dir) if run_dir is not None else None,
         game_key=game_key,
         run_id=run_id,
+        memory=memory,
     )
