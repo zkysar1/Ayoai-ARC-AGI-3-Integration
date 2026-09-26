@@ -1,0 +1,41 @@
+{
+  "decider": "vessel_decider:factory",
+  "identical_games": 0,
+  "total_games": 3,
+  "summary": "0 of 3 identical",
+  "games": [
+    {
+      "game": "ar25",
+      "moves": 2001,
+      "first_divergence": 2,
+      "oracle_action": {
+        "name": "ACTION2"
+      },
+      "decider_action": {
+        "name": "ACTION1"
+      }
+    },
+    {
+      "game": "bp35",
+      "moves": 2001,
+      "first_divergence": 2,
+      "oracle_action": {
+        "name": "ACTION4"
+      },
+      "decider_action": {
+        "name": "ACTION3"
+      }
+    },
+    {
+      "game": "cd82",
+      "moves": 2001,
+      "first_divergence": 1,
+      "oracle_action": {
+        "name": "ACTION2"
+      },
+      "decider_action": {
+        "name": "ACTION1"
+      }
+    }
+  ]
+}
