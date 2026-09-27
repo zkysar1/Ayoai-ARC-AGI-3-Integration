@@ -1,6 +1,6 @@
 # Decision parity (OB-20)
 
-This harness answers one question: **does a decider choose the same move as the oracle, move for move?** The oracle is the repo's pre-model solver, `kaggle_salvage.MyAgent` running over `primitives/`. It remains the reference until a vessel port matches it, and is retired after that (owner ruling 2026-09-25). Code: `eval/decision_parity.py`.
+This harness answers one question: **does a decider choose the same move as the oracle, move for move?** The oracle is the repo's pre-model solver, `kaggle_salvage.MyAgent`. It is self-contained: it inlines a verbatim port of `primitives/frontier_coverage.py` (`my_agent.py` line 331) and imports nothing from `primitives/` (measured, g-376-51-c). It remains the reference until a vessel port matches it, and is retired after that (owner ruling 2026-09-25). Code: `eval/decision_parity.py`.
 
 ## The recorded set: `eval/parity/<game>.jsonl.gz`
 
@@ -53,7 +53,7 @@ The first differing move is the headline, because after it the decider would be 
 
 ## Controls, measured 2026-09-25 (echo, g-376-50)
 
-The set was recorded at the shared budget: ar25, bp35 and cd82, 2001 moves each (ar25 completes level 1). Measured results:
+The set was recorded at the shared budget: ar25, bp35 and cd82, 2001 moves each (ar25 completes level 1), by g-376-50. Measured results:
 
 | decider | result | first divergence per game |
 |---|---|---|
@@ -66,7 +66,7 @@ The positive control shows that frame-fed replay reproduces live offline play ex
 
 ## Vessel cores, measured 2026-09-27 (echo, g-376-51-c)
 
-Measured on hostname `cc-03`, `uname -r` 6.8.0-142-generic. The recorded set is unchanged from 2026-09-25. Vessel cores are driven through `vessel_decider:factory`, selected by `VESSEL_CORE`. Each game cell gives the first divergence, with the agreeing moves in brackets.
+Measured by g-376-51-c on hostname `cc-03`, `uname -r` 6.8.0-142-generic. The recorded set is unchanged from 2026-09-25. Vessel cores are driven through `vessel_decider:factory`, selected by `VESSEL_CORE`. Each game cell gives the first divergence, with the agreeing moves in brackets.
 
 | decider | result | agreeing moves | ar25 | bp35 | cd82 |
 |---|---|---|---|---|---|
