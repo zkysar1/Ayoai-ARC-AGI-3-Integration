@@ -29,6 +29,8 @@ A decider written in another language can read these files directly. It does not
 
 The first differing move is the headline, because after it the decider would be seeing a different game. Every recorded frame is still fed, including those after the divergence (teacher forcing), so the agreement count covers every move.
 
+To measure the vessel cores against any env-server ref in one command, with both controls on the same jar, use `eval/parity_run.py` (see the last section).
+
 ## Report format
 
 ```json
@@ -115,3 +117,28 @@ Measured on hostname `cc-03`, `uname -r` 6.8.0-142-generic, with a shadow jar bu
 | vessel `reflexes` (control, same jar) | 0 of 4 identical | 2030 of 8004 | 2 (481) | 2 (979) | 1 (564) | 0 (6) |
 
 The control reproduces the click-path table move for move, so the harness still discriminates. **The merged port passes the acceptance rule on the 4-game set: 4 of 4 identical.** Alpha measured the same tree independently on `cc-10` in the PR #610 review and got the same numbers.
+
+## One command: `eval/parity_run.py` (gap-265, g-376-63)
+
+The vessel procedure above was done by hand five times. It is now one command, run from this repo's root:
+
+```
+.venv/bin/python eval/parity_run.py --ref dev                          # frontier, with both controls
+.venv/bin/python eval/parity_run.py --ref <branch|tag|sha> --core frontier --core first-affordance
+```
+
+It fast-forwards this checkout when it is `main` and behind `origin/main`. It builds the env-server shadow jar in a detached worktree at the ref, so the shared checkout is never touched, and removes the worktree afterwards, on failure too. It asks the jar's own driver to start each core, so a jar without a core fails before any comparison. Then it compares the oracle (positive control), each requested core, and `reflexes` (negative control) on that jar. It prints the table in the format used here, sets each row beside the last row documented in this file for the same decider, and writes the reports, logs, jar and `parity-run.json` to `--scratch` (default: a new temp dir). A branch name resolves to `origin/<name>` first. Exit 0: both controls behaved. Exit 3: a control misbehaved, so the core rows cannot be trusted. Exit 2: setup failed.
+
+Parity covers only the branches the recorded frames reach. For a branch no recording reaches, M of M is a no-regression check, not a measurement of that branch (AyoAI guard-7260, rb-12193).
+
+### First run, 2026-09-27 (alpha, g-376-63)
+
+Measured on hostname `cc-09`, `uname -r` 6.8.0-142-generic. The env-server ref was `dev` at `e26f504` (tree `8d8f6543`), the tip after the g-376-61 merge (#622), two commits past `fb8715d`. ARC was at `049fc68`. The run took 80 s end to end, build included.
+
+| decider | result | agreeing moves | ar25 | bp35 | cd82 | lp85 |
+|---|---|---|---|---|---|---|
+| `oracle` (positive control) | **4 of 4 identical** | 8004 of 8004 | none (2001) | none (2001) | none (2001) | none (2001) |
+| vessel `frontier` | **4 of 4 identical** | 8004 of 8004 | none (2001) | none (2001) | none (2001) | none (2001) |
+| vessel `reflexes` (negative control, same jar) | 0 of 4 identical | 2030 of 8004 | 2 (481) | 2 (979) | 1 (564) | 0 (6) |
+
+Each row matches the last row documented above for its decider, so the command reproduces the by-hand procedure. `frontier` still passes on `dev` after the g-376-61 merge.
