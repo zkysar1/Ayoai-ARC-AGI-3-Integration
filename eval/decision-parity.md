@@ -87,7 +87,7 @@ Measured by g-376-51-c on hostname `cc-03`, `uname -r` 6.8.0-142-generic. The re
 
 Measured on hostname `zc-11`, `uname -r` 6.8.0-142-generic. The recorded set gains one game: `lp85`, recorded 2026-09-27 at the shared budget (g-376-59, repo commit `b42807d`, arc-agi 0.9.9, arcengine 0.9.3) — 2001 moves, 1995 `ACTION6` clicks and 6 `RESET`s, level 1 completed, budget exhausted. Of the 12 unrecorded dev games, 9 offer `ACTION6` on an opening frame (probe: `analysis/action6_dev_games_g37659.py`); `lp85` is one of the 5 pure-click games where the oracle clicks on every non-reset move, so the recording exercises the oracle's click-class branch end to end.
 
-`frontier` still lives only on the unmerged branch `echo/g-376-51c-frontier-core` (tip `66f19995`), so the vessel rows here ran a jar built from that tip in an isolated worktree, pointed at with `VESSEL_JAR`; all three cores come from that one jar. Until that branch lands on `dev`, any re-run of the vessel rows must keep pointing at a jar that carries `FrontierExplorerCore` — `vessel_decider.py` skips nothing, so a `dev` jar would error on `VESSEL_CORE=frontier` rather than measure the wrong core.
+`frontier` still lives only on the unmerged branch `echo/g-376-51c-frontier-core` (tip `66f19995`), so the vessel rows here ran a jar built from that tip in an isolated worktree, pointed at with `VESSEL_JAR`; all three cores come from that one jar. Until that branch lands on `dev`, any re-run of the vessel rows must keep pointing at a jar that carries `FrontierExplorerCore` — `vessel_decider.py` skips nothing, so a `dev` jar would error on `VESSEL_CORE=frontier` rather than measure the wrong core. (Superseded: the branch has since landed on `dev`. See the next section.)
 
 | decider | result | agreeing moves | ar25 | bp35 | cd82 | lp85 |
 |---|---|---|---|---|---|---|
@@ -102,3 +102,16 @@ The three legacy cells reproduce the g-376-51-c table move for move, so the seam
 - **`frontier` passes the acceptance rule on the 4-game set: 4 of 4 identical (g-376-59), including all 1995 clicks of `lp85`** — name, cell and coordinates, move for move. The oracle's click-class branch is now covered by this set itself, not only by env-server unit tests.
 - `first-available` diverges at `lp85` move 0: its constant `RESET` never clicks. Its 6 agreeing moves are the frames where the oracle itself resets. `first-affordance` matches it move for move (seam equivalence preserved), and `reflexes` matches it on `lp85` too.
 - `reflexes` add **zero** agreeing moves on `lp85` (6 = 6): on a click game `RESET` is first-available's answer to every frame, and the reflex stack collapses to the same constant-`RESET` sequence. The reflexes' contribution is set-level (2030 > 1097, the legacy 933), which is now what `test_vessel_decider.py` asserts strictly; the per-game check is `>=`, so per-game equality on a click game no longer fails the suite while a regression that strips the reflexes' contribution on the legacy games still does.
+
+## `frontier` on `dev`, measured 2026-09-27 (echo, g-376-51-d)
+
+The port landed. Env-server PR #610 merged to `dev` as `fb8715d` at 2026-09-27 20:52Z, after alpha's review under g-376-60. A jar built from `dev` now carries `FrontierExplorerCore`, so the unmerged-branch caveat above no longer applies. Build the shadow jar from `dev`, or leave `VESSEL_JAR` unset: it then resolves to the newest `build/libs/*-fat.jar` in the sibling checkout, which must be on `dev`.
+
+Measured on hostname `cc-03`, `uname -r` 6.8.0-142-generic, with a shadow jar built from `dev` `fb8715d` (tree `d92bda35`) in an isolated worktree, and ARC at `7bd1e2e`.
+
+| decider | result | agreeing moves | ar25 | bp35 | cd82 | lp85 |
+|---|---|---|---|---|---|---|
+| vessel `frontier` | **4 of 4 identical** | 8004 of 8004 | none (2001) | none (2001) | none (2001) | none (2001) |
+| vessel `reflexes` (control, same jar) | 0 of 4 identical | 2030 of 8004 | 2 (481) | 2 (979) | 1 (564) | 0 (6) |
+
+The control reproduces the click-path table move for move, so the harness still discriminates. **The merged port passes the acceptance rule on the 4-game set: 4 of 4 identical.** Alpha measured the same tree independently on `cc-10` in the PR #610 review and got the same numbers.
