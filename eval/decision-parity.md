@@ -142,3 +142,50 @@ Measured on hostname `cc-09`, `uname -r` 6.8.0-142-generic. The env-server ref w
 | vessel `reflexes` (negative control, same jar) | 0 of 4 identical | 2030 of 8004 | 2 (481) | 2 (979) | 1 (564) | 0 (6) |
 
 Each row matches the last row documented above for its decider, so the command reproduces the by-hand procedure. `frontier` still passes on `dev` after the g-376-61 merge.
+
+## The vessel decides live (OB-23, g-376-53)
+
+`main.py --use-solver-v2 --use-port-client --vessel-decides` opens the AyoAI session with the world flag `ARC_FRONTIER_CORE_ENABLED`, and the env-server then answers each decision request from that session's frontier stack. `PortStreamingClient(decider="vessel")` sends every frame after the opening RESET as an UPDATE with `pending_decision=true` and plays the answer. GAME_OVER frames go to the server too, because the stack's reflexes act on losses. The port is not built: the Python decider is now the oracle only, offline.
+
+The flag reaches the env-server only through the session open. `CollectAyoEnvironmentInBatchesOnStartUp` accepts it (PR #74, on `dev` as `9937d95d5`), and `StartAyoServerEnvironment` writes it into the new instance's environment (PR #95, on `dev` as `edef1b272`). So a flagged session cold-starts its own instance, and only on the `dev` lane until those two changes are promoted.
+
+```bash
+cd /opt/GitHub/Ayoai/Ayoai-ARC-AGI-3-Integration
+# credentials as in the Mind's arc-agi-3-api convention; values are never printed
+AYOAI_LANE=dev RECORDINGS_DIR=recordings .venv/bin/python main.py --game bp35-0a0ad940 \
+    --use-solver-v2 --use-port-client --vessel-decides --max-actions 2000 --record
+```
+
+### Comparing a live run: `live`
+
+```
+.venv/bin/python eval/decision_parity.py live --recording recordings/<run>.recording.jsonl --game bp35
+```
+
+`live` reads a `main.py --record` recording against the recorded game. A live run starts with a RESET from the client on the NOT_PLAYED placeholder, which the recorded game does not have: its step 0 is chosen on a frame that is already reset. So `live` sets the opening RESET aside and compares live move k+1 with oracle move k, on two things:
+- the move, name and coordinates, as `compare` does (`first_divergence`, `agreement`);
+- the frame the live move was chosen on (the frame the previous live move produced) against the frame the oracle was shown (`first_frame_difference`). From the first differing frame on, the two are playing different games, and a later move divergence belongs to the game, not the decider.
+
+It also counts `decided_by` per move and `frontier_core_answers`, the answers whose reasoning starts with `frontier-core`, and says whether the run got past the oracle's first RESET (`first_oracle_reset`, `crosses_first_reset`). Nothing is teacher-forced: a live run plays its own game. A live run that ends first diverges at its own length, with `live_action` null.
+
+Live and offline play restart differently once a level is completed. After a level-up, a live RESET starts a new run from level 1, while the offline toolkit restarts the current level (`eval/port-client-live-2026-09-25.md`). The frames therefore part at the first RESET after a level-up, whatever the decider does. In the recorded set only ar25 has one: it levels up at step 568 and next resets at step 813. lp85 levels up at step 278 but never resets again, and bp35 and cd82 complete no level, so on those three live and offline restarts agree throughout.
+
+### First live run, 2026-09-27 (echo, g-376-53)
+
+Measured on hostname `cc-03`, `uname -r` 6.8.0-142-generic, with ARC at `d553ea3` and the `dev` env-server jar. The game was bp35-0a0ad940, on scorecard `6d61e384`. The session was READY after 80.0 s, because a flagged session cold-starts its own instance. The game then took 724.5 s: 2001 actions to the action cap, 2.76 per second.
+
+| check | result |
+|---|---|
+| moves chosen by the vessel | 2000 of 2000 after the opening RESET (`decided_by` `ayoai-v1`, and all 2000 answers are the frontier core's) |
+| moves, against the oracle's recorded bp35 | **identical, 2000 of 2000**. `first_divergence` 2000 is the run's own length: the record's move 2000 lies past the action cap |
+| frames each move was chosen on | identical, 2000 of 2000 (`first_frame_difference` null) |
+| restarts | 31 GAME_OVERs, each answered by the vessel's RESET. The oracle's first RESET is move 62 |
+| client substitutions (§3.6 illegal action to RESET) | 0 |
+| official scorecard, read before the close | levels_completed 0 of 9, score 0, 1969 counted actions in 32 runs (RESETs are not counted): 31 ended in GAME_OVER, and the last was cut by the cap. Our log equals the card run by run |
+| server log (the session's `logs/*.jsonl`) | 1969 `[ARC-DECISION] frontier UPDATE action=ACTION…` lines and 31 `… action=RESET` lines, then `DELETE ended 1 frontier session(s)` |
+
+Controls, run the same day:
+- `compare --decider first-available` still diverges at bp35 move 2 (ar25 2, cd82 1, lp85 0), as in the tables above, so the comparison can fail.
+- A copy of this recording with move 500 changed diverges at 500. A copy with one frame changed at 700 reports `first_frame_difference` 700. So `live` fires on both of its checks, on this recording.
+
+**The first vessel-decided live game is the oracle's game, move for move and frame for frame, over its whole length and across 31 restarts.** So offline parity carries to the live path on bp35: the decision branch, the client's executor and the session's frontier stack add no difference on this game. Two branches this run cannot reach: a restart after a level-up (bp35 completes no level; see the restart note above), and clicks (bp35 plays none; lp85 does). The streaming endpoint rejected two requests with `429 RATE_LIMIT_BURST` (172 and 175 ms apart, against a 200 ms minimum). The client retried each after 2 s, and no move changed.
