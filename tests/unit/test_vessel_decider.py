@@ -23,18 +23,48 @@ def test_driver_reply_becomes_the_action_the_harness_compares() -> None:
     }
 
 
-def _driver_present() -> bool:
-    """java, plus a shadow jar that carries the driver (a jar built before the seam does not)."""
+# The class each core needs, so a jar built before a core landed skips that core, not fails.
+CORE_CLASS = {
+    "first-affordance": "FirstAffordanceCore",
+    "reflexes": "HazardQuarantineReflex",
+    "frontier": "FrontierExplorerCore",
+}
+
+
+def _driver_carries(core: str) -> bool:
+    """java, plus a shadow jar carrying the driver and this core (an older jar may not)."""
     try:
         jar = vd.vessel_jar()
         with zipfile.ZipFile(jar) as z:
             z.getinfo(vd.DRIVER.replace(".", "/") + ".class")
+            z.getinfo(f"AyoServer/Characters/cores/{CORE_CLASS[core]}.class")
     except (SystemExit, OSError, KeyError, zipfile.BadZipFile):
         return False
     return shutil.which("java") is not None
 
 
-@pytest.mark.skipif(not _driver_present(), reason="needs java and an env-server shadow jar with the driver")
-def test_vessel_first_affordance_leaves_the_oracle_exactly_where_first_available_does() -> None:
+@pytest.mark.parametrize("core", list(CORE_CLASS))
+def test_vessel_core_against_the_recorded_oracle(core: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every core the driver offers, on every recorded game (g-376-51-c).
+
+    first-affordance is the seam's positive control: move for move the harness's
+    first-available decider, so any difference is a translation bug. The reflexes change
+    no opening move and leave the oracle where first-available does, but they answer its
+    losses as it does, which only the agreement count sees. frontier is the port of the
+    oracle itself: identical on every game.
+    """
+    if not _driver_carries(core):
+        pytest.skip(f"needs java and an env-server shadow jar carrying the driver and the {core} core")
+    monkeypatch.setenv("VESSEL_CORE", core)
     for path in sorted(dp.RECORD_DIR.glob("*.jsonl.gz")):
-        assert dp.compare_game("vessel_decider:factory", path) == dp.compare_game("first-available", path)
+        got = dp.compare_game("vessel_decider:factory", path)
+        control = dp.compare_game("first-available", path)
+        if core == "first-affordance":
+            assert got == control
+        elif core == "reflexes":
+            divergence = ("first_divergence", "oracle_action", "decider_action")
+            assert {k: got[k] for k in divergence} == {k: control[k] for k in divergence}
+            assert got["agreement"] > control["agreement"]
+        else:
+            assert got["first_divergence"] is None
+            assert got["agreement"] == got["moves"]

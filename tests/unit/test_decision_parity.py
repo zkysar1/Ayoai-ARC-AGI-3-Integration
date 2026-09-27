@@ -46,14 +46,15 @@ def test_action_key_keeps_coordinates_and_drops_the_game_id() -> None:
     assert dp.action_key(GameAction.ACTION1) == {"name": "ACTION1"}
 
 
-def test_summary_counts_identical_games() -> None:
+def test_summary_counts_identical_games_and_agreeing_moves() -> None:
     rows = [
-        {"game": "a", "moves": 5, "first_divergence": None},
-        {"game": "b", "moves": 5, "first_divergence": 2},
+        {"game": "a", "moves": 5, "first_divergence": None, "agreement": 5},
+        {"game": "b", "moves": 5, "first_divergence": 2, "agreement": 3},
     ]
     report = dp.summarize(rows, "x")
     assert report["summary"] == "1 of 2 identical"
     assert (report["identical_games"], report["total_games"]) == (1, 2)
+    assert (report["agreeing_moves"], report["total_moves"]) == (8, 10)
 
 
 class Scripted:
@@ -82,7 +83,9 @@ def write_record(path: Path, actions: list[dict[str, Any]]) -> None:
             f.write(json.dumps(row) + "\n")
 
 
-def test_compare_stops_at_the_first_divergence(tmp_path: Path, monkeypatch: Any) -> None:
+def test_compare_reports_the_first_divergence_and_counts_agreement_past_it(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     path = tmp_path / "synthetic.jsonl.gz"
     write_record(path, [key("ACTION1"), key("ACTION2"), key("ACTION3")])
     decider = Scripted([GameAction.ACTION1, GameAction.ACTION4, GameAction.ACTION3])
@@ -90,7 +93,8 @@ def test_compare_stops_at_the_first_divergence(tmp_path: Path, monkeypatch: Any)
     row = dp.compare_game("scripted", path)
     assert row["first_divergence"] == 1
     assert row["decider_action"] == key("ACTION4")
-    assert decider.seen == [1, 2]  # it never saw the move after the divergence
+    assert decider.seen == [1, 2, 3]  # teacher forcing: every recorded frame, past the divergence too
+    assert row["agreement"] == 2  # moves 0 and 2
 
 
 def test_compare_reports_identical_when_every_move_matches(tmp_path: Path, monkeypatch: Any) -> None:

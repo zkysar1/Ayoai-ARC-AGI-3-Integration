@@ -5,8 +5,10 @@ It stays the reference until a vessel port matches it, then it is retired (owner
 ruling 2026-09-25; OB-20 in the one-body fleet plan). `record` plays dev games
 offline with the oracle and writes every move: the frame the oracle was shown, the
 action it chose and the frame that action produced. `compare` feeds those frames, in
-order, to a fresh decider and compares its action to the oracle's at every move, up
-to the first divergence (after it, the decider would be seeing a different game).
+order, to a fresh decider and compares its action to the oracle's at every move. The
+headline is the first divergence, because after it the decider would be seeing a
+different game. The per-game agreement count keeps feeding the oracle's frames past
+that point (teacher forcing), so it also sees cores that only act later.
 
 Held-out games are refused (house rule 4). Format of the recorded set and of the
 report: eval/decision-parity.md.
@@ -67,13 +69,15 @@ def first_divergence(oracle: list[dict[str, Any]], decider: list[dict[str, Any]]
 
 
 def summarize(rows: list[dict[str, Any]], decider: str) -> dict[str, Any]:
-    """The report: N of M games identical, and the divergence index per game."""
+    """The report: N of M games identical, the divergence index per game, and moves agreeing."""
     same = sum(1 for r in rows if r["first_divergence"] is None)
     return {
         "decider": decider,
         "identical_games": same,
         "total_games": len(rows),
         "summary": f"{same} of {len(rows)} identical",
+        "agreeing_moves": sum(r["agreement"] for r in rows),
+        "total_moves": sum(r["moves"] for r in rows),
         "games": rows,
     }
 
@@ -164,16 +168,18 @@ def compare_game(spec: str, path: Path) -> dict[str, Any]:
     header, steps = read_record(path)
     game = header["game"]
     oracle = [s["action"] for s in steps]
-    got: list[dict[str, Any]] = []
-    for i, key in enumerate(replay(load_decider(spec, game), steps)):
-        got.append(key)
-        if key != oracle[i]:
-            break  # past a divergence the decider would see a different game
-    at = first_divergence(oracle, got) if len(got) == len(oracle) else len(got) - 1
+    # Every recorded frame is fed, including those after a divergence (teacher forcing).
+    # The decider keeps being shown the oracle's game, not the one its own moves would
+    # have played. So `agreement` counts moves that match on the oracle's trajectory. It
+    # can see a core that only acts after the first divergence, which
+    # `first_divergence` cannot (g-376-51-c).
+    got = list(replay(load_decider(spec, game), steps))
+    at = first_divergence(oracle, got)
     return {
         "game": game,
         "moves": len(oracle),
         "first_divergence": at,
+        "agreement": sum(1 for a, b in zip(oracle, got) if a == b),
         "oracle_action": oracle[at] if at is not None and at < len(oracle) else None,
         "decider_action": got[at] if at is not None and at < len(got) else None,
     }

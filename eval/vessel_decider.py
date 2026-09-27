@@ -10,9 +10,11 @@ comparison (rb-1915). The JVM receives ARC frames, and the ARC-to-generic
 translation happens in the env-server's ARC adapter, so its cores stay world-free.
 
 VESSEL_JAR: the env-server shadow jar (default: the newest build/libs/*-fat.jar
-in the sibling Ayoai-Environment-Server checkout). VESSEL_CORE: the core to run
-(default `first-affordance`, the seam's positive control, which must match the
-harness's `first-available` decider move for move).
+in the sibling Ayoai-Environment-Server checkout). VESSEL_CORE: the core to run.
+The default is `first-affordance`, the seam's positive control, which must match the
+harness's `first-available` decider move for move. `reflexes` is that core under the
+restart and hazard-quarantine reflexes (g-376-51-b). `frontier` is the port of the
+oracle's policy under the same reflexes (g-376-51-c).
 """
 
 from __future__ import annotations
