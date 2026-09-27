@@ -185,6 +185,72 @@ def compare_game(spec: str, path: Path) -> dict[str, Any]:
     }
 
 
+def live_rows(path: Path) -> list[dict[str, Any]]:
+    """The per-move records of a main.py --record recording, in order. Its first line
+    is the session-open record, which holds no move."""
+    rows = []
+    for line in path.read_text().splitlines():
+        data = json.loads(line).get("data")
+        if isinstance(data, dict) and "emitted_action" in data:
+            rows.append(data)
+    return rows
+
+
+def live_key(emitted: dict[str, Any]) -> dict[str, Any]:
+    """A recorded emitted action in action_key's shape: coordinates only on a click."""
+    key: dict[str, Any] = {"name": emitted["name"]}
+    if emitted.get("x") is not None and emitted.get("y") is not None:
+        key.update(x=emitted["x"], y=emitted["y"])
+    return key
+
+
+def same_frame(latest: dict[str, Any], row: dict[str, Any]) -> bool:
+    return all(latest.get(k) == row.get(k) for k in ("frame", "state", "levels_completed"))
+
+
+def compare_live(recording: Path, record: Path) -> dict[str, Any]:
+    """A live run (main.py --record) against the oracle's recorded game (g-376-53).
+
+    main.py's loop starts from a NOT_PLAYED placeholder, so a live run's first move is
+    the opening RESET, while the recorded game starts already reset. That move is set
+    aside, and live move k+1 is compared with oracle move k. Beside the moves, the frame
+    each live move was chosen on is compared with the frame the oracle was shown at the
+    same index. From the first frame that differs, the two are playing different games,
+    and a later move divergence belongs to the game, not the decider."""
+    header, steps = read_record(record)
+    rows = live_rows(recording)
+    if not rows or rows[0]["emitted_action"]["name"] != "RESET":
+        raise SystemExit(f"{recording}: the first recorded move is not the opening RESET")
+    moves, shown = rows[1:], rows[:-1]
+    oracle = [s["action"] for s in steps]
+    live = [live_key(r["emitted_action"]) for r in moves]
+    at = first_divergence(oracle, live)
+    frame_at = next((i for i, (s, r) in enumerate(zip(steps, shown)) if not same_frame(s["latest"], r)), None)
+    resets = [i for i, a in enumerate(oracle) if a["name"] == "RESET"]
+    by: dict[str, int] = {}
+    for r in moves:
+        name = str(r["decision_provenance"].get("decided_by"))
+        by[name] = by.get(name, 0) + 1
+    reasons = [str(r["decision_provenance"].get("reasoning_preview", "")) for r in moves]
+    return {
+        "game": header["game"],
+        "recording": recording.name,
+        "oracle_moves": len(oracle),
+        "live_moves": len(live),
+        "opening_reset_decided_by": rows[0]["decision_provenance"].get("decided_by"),
+        "decided_by": by,
+        "frontier_core_answers": sum(1 for r in reasons if r.startswith("frontier-core")),
+        "first_divergence": at,
+        "agreement": sum(1 for a, b in zip(oracle, live) if a == b),
+        "compared": min(len(oracle), len(live)),
+        "oracle_action": oracle[at] if at is not None and at < len(oracle) else None,
+        "live_action": live[at] if at is not None and at < len(live) else None,
+        "first_frame_difference": frame_at,
+        "first_oracle_reset": resets[0] if resets else None,
+        "crosses_first_reset": bool(resets) and (at is None or at > resets[0]),
+    }
+
+
 def record_game(arc: Any, game: str, max_actions: int, out: Path, commit: str) -> dict[str, Any]:
     from house_rules import make_game
 
@@ -251,7 +317,15 @@ def main() -> None:
     cmp.add_argument("--decider", required=True, help="oracle | first-available | module:factory")
     cmp.add_argument("--record-dir", type=Path, default=RECORD_DIR)
     cmp.add_argument("--out", type=Path, default=None, help="write the JSON report here too")
+    liv = sub.add_parser("live", help="compare a live main.py --record run to the recorded oracle moves")
+    liv.add_argument("--recording", type=Path, required=True)
+    liv.add_argument("--game", required=True, help="the recorded game to compare with, e.g. bp35")
+    liv.add_argument("--record-dir", type=Path, default=RECORD_DIR)
     args = parser.parse_args()
+
+    if args.cmd == "live":
+        print(json.dumps(compare_live(args.recording, record_path(args.game, args.record_dir)), indent=2))
+        return
 
     if args.cmd == "record":
         games = args.games or dev_games()[:3]

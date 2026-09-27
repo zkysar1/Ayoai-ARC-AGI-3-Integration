@@ -229,6 +229,7 @@ def _initiate_cold_start(
     http_timeout_s: float,
     *,
     lane: AyoaiLane = PROD_LANE,
+    world_flags: list[str] | None = None,
 ) -> dict[str, Any] | None:
     """POST to Collect with client_type='arc' to start the AyoAI server.
 
@@ -245,6 +246,10 @@ def _initiate_cold_start(
         sess: requests.Session for the POST.
         http_timeout_s: Per-request timeout.
         lane: Where to POST, and which jar to ask for (see AyoaiLane).
+        world_flags: Env flags for the server process, sent as ``worldFlags``
+            (g-376-53). Collect accepts only its allowlist and cold-starts every
+            flagged launch; StartAyoServerEnvironment writes ``<FLAG>=true`` into
+            the server's env file. None or empty sends no field.
 
     Returns:
         Parsed response body dict on 200 (with status, server_key,
@@ -256,13 +261,15 @@ def _initiate_cold_start(
             transport failure. Terminal for the caller — the env is not
             in a state from which polling can succeed.
     """
-    payload = {
+    payload: dict[str, Any] = {
         "ayoServerKey": card_id,
         "ayoEnvironmentKey": env_key,
         "client_type": CLIENT_TYPE_ARC,
     }
     if lane.server_version is not None:
         payload["ayoaiServerVersion"] = lane.server_version  # camelCase, unlike client_type
+    if world_flags:
+        payload["worldFlags"] = list(world_flags)
     headers = {
         "Content-Type": "application/json",
         "AYOAI-API-KEY": api_key,
@@ -448,6 +455,7 @@ def open_ayoai_session(
     http_timeout_s: float | None = None,
     session: requests.Session | None = None,
     lane: str | None = None,
+    world_flags: list[str] | None = None,
 ) -> AyoaiSessionInfo:
     """Open an AyoAI Environment Server session and wait for streaming-ready.
 
@@ -474,6 +482,9 @@ def open_ayoai_session(
         session: Optional requests.Session for connection reuse / test injection.
         lane: "prod" or "dev" (see resolve_lane). None (default) reads the
             AYOAI_LANE env var, and prod when that is unset.
+        world_flags: Env flags for the server process, passed to the cold
+            start as ``worldFlags`` (see _initiate_cold_start). None (default)
+            sends none.
 
     Returns:
         AyoaiSessionInfo with hostname, URLs, attempts, elapsed, status_log.
@@ -520,7 +531,8 @@ def open_ayoai_session(
         # Roblox path via g-315-47 corrective refactor: same Collect Lambda,
         # client_type='arc' selects the non-batch branch.
         cold_start_body = _initiate_cold_start(
-            card_id, env_key, resolved_api_key, sess, http_timeout_s, lane=resolved_lane
+            card_id, env_key, resolved_api_key, sess, http_timeout_s,
+            lane=resolved_lane, world_flags=world_flags,
         )
         status_log.append({
             "t": round(time.time() - start_t, 3),

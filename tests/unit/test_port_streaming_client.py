@@ -283,6 +283,96 @@ def test_without_a_streaming_url_nothing_is_sent(monkeypatch: pytest.MonkeyPatch
     assert (client.reports_sent, client.reports_failed) == (0, 0)
 
 
+class _DecisionResp(_Resp):
+    def __init__(self, decision: dict[str, Any] | None) -> None:
+        super().__init__(200)
+        self._decision = decision
+
+    def json(self) -> dict[str, Any]:
+        if self._decision is None:
+            return {"status": "success"}
+        return {"status": "success", "data": {"decision": self._decision}}
+
+
+class _VesselSession(_RecordingSession):
+    """Answers each pending_decision UPDATE with the next scripted decision."""
+
+    def __init__(self, decisions: list[dict[str, Any]]) -> None:
+        super().__init__()
+        self._decisions = list(decisions)
+
+    def post(self, url: str, json: dict[str, Any], **_: Any) -> _Resp:
+        self.bodies.append(json)
+        op = json["operations"][0]
+        asks = op["op"] == "UPDATE" and op["attributes"].get("pending_decision")
+        return _DecisionResp(self._decisions.pop(0) if asks else None)
+
+
+def _vessel_client(session: _VesselSession) -> PortStreamingClient:
+    return PortStreamingClient(
+        streaming_url="http://session.test/AyoStreamingUpdates",
+        ayo_server_key="card",
+        arc_game_id="test",
+        api_key="",
+        decider="vessel",
+        session=session,
+        retry_sleep=lambda _s: None,
+    )
+
+
+def test_the_vessel_decides_every_move_after_the_opening_reset() -> None:
+    # g-376-53 (OB-23): every frame after the opening one is sent whole with
+    # pending_decision=true, GAME_OVER included, and the session's answer is the move.
+    session = _VesselSession([
+        {"action": "ACTION6", "x": 3, "y": 5, "reasoning": "frontier-core"},
+        {"action": "RESET", "reasoning": "frontier-core"},
+        {"action": "ACTION1", "reasoning": "frontier-core"},
+    ])
+    client = _vessel_client(session)
+    assert client._agent is None  # the port is not built, so it cannot pick a move
+    playing = _frame()
+    playing.frame = [[[0, 1], [1, 0]], [[1, 1], [0, 0]]]
+    frames = [_frame(GameState.NOT_PLAYED), playing, _frame(GameState.GAME_OVER), _frame()]
+    decisions = [client.choose_action(f) for f in frames]
+    assert [(d.action, d.x, d.y) for d in decisions] == [
+        (GameAction.RESET, None, None),
+        (GameAction.ACTION6, 3, 5),
+        (GameAction.RESET, None, None),
+        (GameAction.ACTION1, None, None),
+    ]
+    assert [d.provenance["decided_by"] for d in decisions] == ["client", "ayoai-v1", "ayoai-v1", "ayoai-v1"]
+    assert {d.provenance["mode"] for d in decisions} == {"vessel"}
+    assert "deviation" not in decisions[2].provenance
+    ops = [body["operations"][0] for body in session.bodies]
+    assert [(o["op"], o["attributes"]["state"], o["attributes"]["pending_decision"]) for o in ops] == [
+        ("UPDATE", "NOT_FINISHED", True),
+        ("UPDATE", "GAME_OVER", True),
+        ("UPDATE", "NOT_FINISHED", True),
+    ]
+    assert json.loads(ops[0]["attributes"]["frame"]) == [[[0, 1], [1, 0]], [[1, 1], [0, 0]]]  # the whole frame
+    assert (client.reports_sent, client.reports_failed) == (0, 0)
+
+
+def test_the_vessel_mode_needs_a_session_and_refuses_the_theory_arm() -> None:
+    with pytest.raises(ValueError, match="streaming_url"):
+        PortStreamingClient(ayo_server_key="card", arc_game_id="test", decider="vessel")
+    with pytest.raises(ValueError, match="decider must be"):
+        PortStreamingClient(ayo_server_key="card", arc_game_id="test", decider="mind")
+    client = _vessel_client(_VesselSession([]))
+    with pytest.raises(ValueError, match="theory arm"):
+        client.set_theory_arm(lambda grid: FakeArm())
+    client.set_theory_arm(None)  # switching it off stays allowed
+
+
+def test_the_vessel_close_logs_how_many_moves_came_from_the_session(caplog: pytest.LogCaptureFixture) -> None:
+    client = _vessel_client(_VesselSession([{"action": "ACTION1"}]))
+    client.choose_action(_frame(GameState.NOT_PLAYED))
+    client.choose_action(_frame())
+    with caplog.at_level(logging.INFO, logger="port_streaming_client"):
+        client.close()
+    assert "[port-vessel] 1 of 2 moves came from the session" in caplog.text
+
+
 def _adapter_run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(REPO / "eval" / "adapter_run.py"), *args],
@@ -366,6 +456,9 @@ def _main_py(args: list[str], cwd: Path, extra_env: dict[str, str]) -> subproces
         (["--use-port-client"], {}, "--use-port-client needs --use-solver-v2"),
         (["--use-solver-v2", "--use-port-client", "--state-graph"], {}, "--state-graph only affect"),
         (["--use-solver-v2", "--use-port-client"], {"SOLVER_V2_V4_ARM": "1"}, "SOLVER_V2_V4_ARM composes"),
+        (["--use-solver-v2", "--vessel-decides"], {}, "--vessel-decides needs --use-port-client"),
+        (["--use-solver-v2", "--use-port-client", "--vessel-decides"], {"SOLVER_V2_THEORY_ARM": "1"},
+         "SOLVER_V2_THEORY_ARM falls back to the port's move"),
     ],
 )
 def test_main_refuses_port_client_combinations_that_would_do_nothing(

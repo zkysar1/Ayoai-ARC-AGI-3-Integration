@@ -901,6 +901,52 @@ def test_empty_available_actions_bypasses_substitution(mock_ayoai_server):
     assert "deviation" not in decision.provenance
 
 
+def test_a_server_reset_is_never_a_deviation(mock_ayoai_server):
+    """RESET is legal in every state, so a server RESET that available_actions
+    does not list is executed as the server's move, not substituted (g-376-53)."""
+    mock_ayoai_server.add_response(_decision_response("RESET"))
+    frame = FrameData(
+        game_id="g-reset",
+        state=GameState.NOT_FINISHED,
+        available_actions=[GameAction.ACTION1, GameAction.ACTION3],
+    )
+    with AyoaiStreamingClient(
+        streaming_url=mock_ayoai_server.streaming_url,
+        ayo_server_key=CARD_ID,
+        api_key="",
+    ) as client:
+        decision = client.choose_action(frame)
+
+    assert decision.action == GameAction.RESET
+    assert decision.provenance["decided_by"] == DECIDED_BY_AYOAI
+    assert "deviation" not in decision.provenance
+
+
+# ---------- local game control off (g-376-53) ---------- #
+
+
+def test_without_local_game_control_game_over_goes_to_the_server(mock_ayoai_server):
+    """A server decider that learns from losses sees GAME_OVER frames; the
+    opening NOT_PLAYED frame is still answered locally (no unit before ADD)."""
+    mock_ayoai_server.add_response(_decision_response("RESET"))
+    with AyoaiStreamingClient(
+        streaming_url=mock_ayoai_server.streaming_url,
+        ayo_server_key=CARD_ID,
+        api_key="",
+        local_game_control=False,
+    ) as client:
+        opening = client.choose_action(FrameData(game_id="g-loss", state=GameState.NOT_PLAYED))
+        loss = client.choose_action(
+            FrameData(game_id="g-loss", state=GameState.GAME_OVER, available_actions=[GameAction.ACTION1])
+        )
+
+    assert (opening.action, opening.provenance["decided_by"]) == (GameAction.RESET, DECIDED_BY_CLIENT)
+    assert (loss.action, loss.provenance["decided_by"]) == (GameAction.RESET, DECIDED_BY_AYOAI)
+    assert len(mock_ayoai_server.received_payloads) == 1
+    attrs = mock_ayoai_server.received_payloads[0]["operations"][0]["attributes"]
+    assert (attrs["state"], attrs["pending_decision"]) == ("GAME_OVER", True)
+
+
 # ---------- DNS warm-up (g-315-96) ---------- #
 #
 # Alpha's g-315-95 analysis identified the first-send_add NXDOMAIN as

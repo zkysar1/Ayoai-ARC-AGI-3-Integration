@@ -583,6 +583,19 @@ def _play(server_stop: RunServerStop) -> int:
         ),
     )
     parser.add_argument(
+        "--vessel-decides",
+        action="store_true",
+        help=(
+            "Under --use-port-client, the session's vessel picks every move "
+            "(g-376-53, OB-23): each frame, GAME_OVER included, is sent with "
+            "pending_decision=true and the answer is executed. The session is "
+            "opened with worldFlags ARC_FRONTIER_CORE_ENABLED, so the env server "
+            "answers with its frontier core stack. The port is not consulted; it "
+            "stays the parity oracle (eval/decision_parity.py). The only client "
+            "move is the opening RESET. SOLVER_V2_THEORY_ARM is refused."
+        ),
+    )
+    parser.add_argument(
         "--random",
         action="store_true",
         help=(
@@ -862,6 +875,9 @@ def _play(server_stop: RunServerStop) -> int:
             "--random is mutually exclusive with --use-solver-v0/--use-solver-v2"
         )
 
+    if args.vessel_decides and not args.use_port_client:
+        parser.error("--vessel-decides needs --use-port-client")
+
     # --use-port-client swaps the player inside the --use-solver-v2 session
     # (g-376-30). Options that only the adapter reads would do nothing, so they
     # are refused rather than silently dropped.
@@ -918,6 +934,8 @@ def _play(server_stop: RunServerStop) -> int:
         "on",
         "yes",
     )
+    if args.vessel_decides and theory_arm_on:
+        parser.error("SOLVER_V2_THEORY_ARM falls back to the port's move; not valid with --vessel-decides")
     theory_memory_regime = os.environ.get("ARC_THEORY_MEMORY", "").strip().lower() or "cold"
     if theory_memory_regime not in ("cold", "warm"):
         parser.error("ARC_THEORY_MEMORY must be cold or warm")
@@ -1069,7 +1087,15 @@ def _play(server_stop: RunServerStop) -> int:
                 f"ayoEnvironmentKey={env_key})..."
             )
             server_stop.arm(card_id, env_key)
-            ayoai_session = open_ayoai_session(card_id, env_key=env_key)
+            # g-376-53: the vessel-decided player asks the env server for its
+            # frontier core stack through the session-open worldFlags.
+            session_world_flags: list[str] | None = None
+            if args.vessel_decides:
+                from port_streaming_client import VESSEL_WORLD_FLAGS
+
+                session_world_flags = list(VESSEL_WORLD_FLAGS)
+                logger.info(f"Session worldFlags for the vessel decider: {session_world_flags}")
+            ayoai_session = open_ayoai_session(card_id, env_key=env_key, world_flags=session_world_flags)
             logger.info(
                 f"AyoAI session OPEN (solver-v2): "
                 f"hostname={ayoai_session.ayoai_hostname} "
@@ -1215,6 +1241,7 @@ def _play(server_stop: RunServerStop) -> int:
             # g-376-30: same session, and the port decides every move
             # (design/g-376-30-route.md). The port does not read the session seed.
             # g-376-40: the session URL lets it report each frame to the session.
+            # g-376-53: --vessel-decides hands every move to the session's vessel.
             import port_streaming_client
 
             streaming_client = port_streaming_client.PortStreamingClient(
@@ -1222,6 +1249,11 @@ def _play(server_stop: RunServerStop) -> int:
                 ayo_server_key=card_id,
                 arc_game_id=args.game,
                 api_key=resolve_api_key() if not args.mock_url else "",
+                decider=(
+                    port_streaming_client.DECIDER_VESSEL
+                    if args.vessel_decides
+                    else port_streaming_client.DECIDER_PORT
+                ),
             )
         else:
             streaming_client = SolverV2StreamingAdapter(
@@ -1465,6 +1497,7 @@ def _play(server_stop: RunServerStop) -> int:
     if args.record:
         solver_name = args.solver_name or (
             "solver-v0" if args.use_solver_v0
+            else "vessel" if args.vessel_decides
             else "port" if args.use_port_client
             else "solver-v2" if args.use_solver_v2
             else "random" if args.random

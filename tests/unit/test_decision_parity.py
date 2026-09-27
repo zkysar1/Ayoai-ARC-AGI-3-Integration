@@ -103,3 +103,54 @@ def test_compare_reports_identical_when_every_move_matches(tmp_path: Path, monke
     decider = Scripted([GameAction.ACTION1, GameAction.ACTION2])
     monkeypatch.setattr(dp, "load_decider", lambda spec, game: decider)
     assert dp.compare_game("scripted", path)["first_divergence"] is None
+
+
+def write_live(path: Path, moves: list[tuple[str, int | None, int | None, str]], frames: list[Any]) -> None:
+    """A main.py --record recording: the session-open line, then one line per move
+    holding the frame that move produced."""
+    lines = [{"data": {"kind": "session_open"}}]
+    for (name, x, y, by), grid in zip(moves, frames):
+        lines.append({"data": {
+            "frame": grid, "state": "NOT_FINISHED", "levels_completed": 0,
+            "emitted_action": {"name": name, "x": x, "y": y},
+            "decision_provenance": {"decided_by": by, "reasoning_preview": "frontier-core (g-376-61): frontier"},
+        }})
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+
+
+def write_shown_record(path: Path, actions: list[dict[str, Any]], frames: list[Any]) -> None:
+    rows: list[dict[str, Any]] = [{"kind": "header", "game": "synthetic"}]
+    for i, (a, grid) in enumerate(zip(actions, frames)):
+        latest = {"frame": grid, "state": "NOT_FINISHED", "levels_completed": 0}
+        rows.append({"kind": "step", "i": i, "latest": latest, "action": a, "appended": None})
+    with gzip.open(path, "wt") as f:
+        for row in rows:
+            f.write(json.dumps(row) + "\n")
+
+
+def test_live_sets_the_opening_reset_aside_and_compares_moves_and_frames(tmp_path: Path) -> None:
+    # g-376-53: live move k+1 is oracle move k, chosen on the same frame.
+    grids = [[[[0]]], [[[1]]], [[[2]]]]
+    record = tmp_path / "synthetic.jsonl.gz"
+    write_shown_record(record, [key("ACTION1"), key("ACTION6", x=3, y=5), key("RESET")], grids)
+    live = tmp_path / "run.recording.jsonl"
+    moves = [("RESET", None, None, "client"), ("ACTION1", None, None, "ayoai-v1"),
+             ("ACTION6", 3, 5, "ayoai-v1"), ("RESET", None, None, "ayoai-v1")]
+    write_live(live, moves, [*grids, [[[3]]]])
+    row = dp.compare_live(live, record)
+    assert (row["first_divergence"], row["agreement"], row["first_frame_difference"]) == (None, 3, None)
+    assert (row["opening_reset_decided_by"], row["decided_by"]) == ("client", {"ayoai-v1": 3})
+    assert (row["frontier_core_answers"], row["first_oracle_reset"], row["crosses_first_reset"]) == (3, 2, True)
+
+
+def test_live_reports_a_move_divergence_and_where_the_games_part(tmp_path: Path) -> None:
+    grids = [[[[0]]], [[[1]]], [[[2]]]]
+    record = tmp_path / "synthetic.jsonl.gz"
+    write_shown_record(record, [key("ACTION1"), key("ACTION2"), key("RESET")], grids)
+    live = tmp_path / "run.recording.jsonl"
+    moves = [("RESET", None, None, "client"), ("ACTION1", None, None, "ayoai-v1"),
+             ("ACTION3", None, None, "ayoai-v1"), ("RESET", None, None, "ayoai-v1")]
+    write_live(live, moves, [grids[0], grids[1], [[[9]]], [[[9]]]])  # ACTION3 leads elsewhere
+    row = dp.compare_live(live, record)
+    assert (row["first_divergence"], row["live_action"], row["oracle_action"]) == (1, key("ACTION3"), key("ACTION2"))
+    assert (row["first_frame_difference"], row["crosses_first_reset"]) == (2, False)

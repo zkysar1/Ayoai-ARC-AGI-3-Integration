@@ -311,7 +311,9 @@ class AyoaiStreamingClient:
     the client returns RESET locally without contacting the server. AyoAI is
     asked for STRATEGIC decisions during a live game — "should I reset?" is a
     game-loop concern, not a strategy concern, and pre-RESET state may not be
-    a coherent grid for the model to reason over.
+    a coherent grid for the model to reason over. `local_game_control=False`
+    (g-376-53) narrows the short-circuit to NOT_PLAYED, for a server decider
+    that learns from its losses and so must see every GAME_OVER frame.
 
     Args:
         streaming_url: Fully-resolved URL (from AyoaiSessionInfo.streaming_url
@@ -330,6 +332,8 @@ class AyoaiStreamingClient:
         session: Optional requests.Session for connection reuse / test
             injection. If None, the client owns its session and closes it on
             .close() / __exit__.
+        local_game_control: True (default) answers GAME_OVER with a local
+            RESET; False sends it to the server (see the short-circuit above).
     """
 
     def __init__(
@@ -342,6 +346,7 @@ class AyoaiStreamingClient:
         http_timeout_s: float = DEFAULT_HTTP_TIMEOUT_S,
         session: requests.Session | None = None,
         retry_sleep: Any = None,
+        local_game_control: bool = True,
     ) -> None:
         if not streaming_url:
             raise AyoaiStreamingError("streaming_url is required")
@@ -360,6 +365,13 @@ class AyoaiStreamingClient:
         # no-op or a counter to avoid real wall-clock blocking during retry
         # exhaustion paths.
         self._retry_sleep = retry_sleep if retry_sleep is not None else time.sleep
+
+        # g-376-53: False sends a GAME_OVER frame to the server like any other
+        # frame, so a server-side decider that learns from losses sees them
+        # (the vessel's frontier stack quarantines an action on its third loss).
+        # A NOT_PLAYED frame is answered here either way: it is the game's
+        # opening frame, before send_add, so the server has no unit to ask.
+        self.local_game_control = local_game_control
 
         # Tick counter for stream correlation. Increments on every server
         # call; resets are NOT counted (they don't reach the server).
@@ -427,7 +439,13 @@ class AyoaiStreamingClient:
         """
         # Game-control: RESET is decided client-side. Mirrors the prior
         # choose_random_action behavior and skips an empty server call.
-        if frame.state in (GameState.NOT_PLAYED, GameState.GAME_OVER):
+        # With local_game_control off, only the opening NOT_PLAYED frame is.
+        local_states = (
+            (GameState.NOT_PLAYED, GameState.GAME_OVER)
+            if self.local_game_control
+            else (GameState.NOT_PLAYED,)
+        )
+        if frame.state in local_states:
             return AyoaiDecision(
                 action=GameAction.RESET,
                 provenance={
@@ -794,9 +812,11 @@ class AyoaiStreamingClient:
         reasoning = decision.get("reasoning")
 
         # §3.6 line 311: illegal-action substitution → RESET. Bypass when
-        # available_actions wasn't supplied (empty list or None).
+        # available_actions wasn't supplied (empty list or None). A RESET is
+        # never substituted: the game accepts it in every state, and a server
+        # that answers a GAME_OVER frame with RESET (g-376-53) is not deviating.
         deviation_original: str | None = None
-        if available_actions:
+        if available_actions and action is not GameAction.RESET:
             avail_names = {
                 a.name if isinstance(a, GameAction) else str(a)
                 for a in available_actions

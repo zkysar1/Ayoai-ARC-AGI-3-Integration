@@ -262,6 +262,17 @@ def test_open_session_first_call_is_cold_start():
     assert kwargs["headers"]["AYOAI-API-KEY"] == "my-key"
 
 
+def test_open_session_passes_world_flags_to_the_cold_start():
+    """g-376-53: the vessel decider's world flag reaches Collect as worldFlags."""
+    session = _make_session_mock([_mock_response(200, _success_body())])
+    open_ayoai_session(
+        "card-Z", env_key="arc-agi-3", api_key="my-key", session=session,
+        world_flags=["ARC_FRONTIER_CORE_ENABLED"],
+    )
+    _, kwargs = session.post.call_args_list[0]
+    assert kwargs["json"]["worldFlags"] == ["ARC_FRONTIER_CORE_ENABLED"]
+
+
 def test_open_session_uses_resolution_url():
     session = _make_session_mock([_mock_response(200, _success_body())])
     open_ayoai_session("card-A", api_key="k", session=session)
@@ -380,6 +391,19 @@ def test_initiate_cold_start_200_returns_body():
     assert body is not None
     assert body["invocation_type"] == "warm_pool"
     assert body["instance_id"] == "i-warm-1"
+
+
+def test_initiate_cold_start_sends_world_flags_only_when_given():
+    """worldFlags rides the cold start only when set (g-376-53): Collect cold-starts
+    every flagged launch, so an empty list must not send the field."""
+    sess = MagicMock(spec=requests.Session)
+    sess.post.return_value = _mock_response(200, {"status": "starting"})
+    _initiate_cold_start("card-Q", "arc-agi-3", "k", sess, 10.0, world_flags=["ARC_FRONTIER_CORE_ENABLED"])
+    _initiate_cold_start("card-Q", "arc-agi-3", "k", sess, 10.0, world_flags=[])
+    _initiate_cold_start("card-Q", "arc-agi-3", "k", sess, 10.0)
+    payloads = [c.kwargs["json"] for c in sess.post.call_args_list]
+    assert payloads[0]["worldFlags"] == ["ARC_FRONTIER_CORE_ENABLED"]
+    assert "worldFlags" not in payloads[1] and "worldFlags" not in payloads[2]
 
 
 def test_initiate_cold_start_409_returns_none():

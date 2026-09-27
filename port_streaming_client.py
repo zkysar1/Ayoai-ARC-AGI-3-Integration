@@ -24,6 +24,16 @@ choose_action sends each frame's top layer as a report-only UPDATE
 (pending_decision=false) that carries the action that produced it. A report never
 changes a move: its response is ignored, a failure is counted, and after
 REPORT_FAILURE_LIMIT failures in a row reporting stops for the rest of the game.
+
+With decider="vessel" (g-376-53, OB-23) the port is not consulted and no reports
+are sent. Every frame goes to the session as an UPDATE with pending_decision=true
+and the session's answer is the move: the vessel decides, the client executes.
+That includes GAME_OVER frames, because the vessel's frontier stack learns from
+its losses. The one move the client still makes is the game's opening RESET,
+which comes before send_add, when the session has no unit to ask. Open the
+session with VESSEL_WORLD_FLAGS, or the env server answers with its baseline
+instead of the frontier stack. decider="port" (the default) is oracle mode, the
+behaviour described above; the port stays the parity oracle until OB-31.
 """
 
 from __future__ import annotations
@@ -52,6 +62,13 @@ logger = logging.getLogger(__name__)
 
 REPORT_FAILURE_LIMIT = 3  # failed reports in a row before reporting stops for the game
 
+DECIDER_PORT = "port"  # oracle mode: the port picks every move
+DECIDER_VESSEL = "vessel"  # the session's vessel picks every move after the opening RESET
+# The env flag that has the vessel answer with its frontier core stack
+# (Ayoai-Environment-Server ArcFrontierSessions, dev e26f504), sent as the
+# session-open worldFlags.
+VESSEL_WORLD_FLAGS = ("ARC_FRONTIER_CORE_ENABLED",)
+
 
 def to_engine_frame(frame: FrameData) -> arcengine.FrameData:
     """The repo frame main.py receives, as the arcengine frame the port reads."""
@@ -68,8 +85,9 @@ def to_engine_frame(frame: FrameData) -> arcengine.FrameData:
 
 
 class PortStreamingClient:
-    """Decides every move with the port. Given a streaming_url it also reports each
-    frame to the AyoAI session; no move depends on a report."""
+    """Decides every move with the port (oracle mode) or with the session's vessel.
+    In oracle mode, given a streaming_url, it also reports each frame to the AyoAI
+    session; no move depends on a report."""
 
     def __init__(
         self,
@@ -77,12 +95,26 @@ class PortStreamingClient:
         ayo_server_key: str = "",
         arc_game_id: str = "",
         api_key: str | None = None,
+        *,
+        decider: str = DECIDER_PORT,
         **network_kwargs: Any,
     ) -> None:
+        if decider not in (DECIDER_PORT, DECIDER_VESSEL):
+            raise ValueError(f"decider must be {DECIDER_PORT!r} or {DECIDER_VESSEL!r}, not {decider!r}")
+        if decider == DECIDER_VESSEL and not streaming_url:
+            raise ValueError("decider='vessel' needs the session's streaming_url")
+        self.decider = decider
         self.ayo_server_key = ayo_server_key
         self.arc_game_id = arc_game_id
         self._reporter: AyoaiStreamingClient | None = (
-            AyoaiStreamingClient(streaming_url, ayo_server_key, arc_game_id, api_key, **network_kwargs)
+            AyoaiStreamingClient(
+                streaming_url,
+                ayo_server_key,
+                arc_game_id,
+                api_key,
+                local_game_control=decider == DECIDER_PORT,
+                **network_kwargs,
+            )
             if streaming_url
             else None
         )
@@ -90,14 +122,18 @@ class PortStreamingClient:
         self.reports_failed = 0
         self._report_failure_streak = 0
         self._reports_stopped: str | None = None
-        self._agent = MyAgent(
-            card_id=ayo_server_key,
-            game_id=arc_game_id,
-            agent_name=f"port.{arc_game_id}",
-            ROOT_URL="",
-            record=False,
-            arc_env=None,
-            tags=["ayoai-session"],
+        self._agent: MyAgent | None = (
+            MyAgent(
+                card_id=ayo_server_key,
+                game_id=arc_game_id,
+                agent_name=f"port.{arc_game_id}",
+                ROOT_URL="",
+                record=False,
+                arc_env=None,
+                tags=["ayoai-session"],
+            )
+            if decider == DECIDER_PORT
+            else None
         )
         self._tick = 0
         self._theory_arm_factory: Callable[[Any], TheoryArm] | None = None
@@ -114,7 +150,10 @@ class PortStreamingClient:
         """Opt-in wire (default OFF) for the theory step (g-376-09). ``factory(grid)``
         builds the game's TheoryArm from the first frame's top layer; pass ``None`` to
         disable. An error inside the arm switches it off for the rest of the game and
-        keeps the port's move (guard-7395); the error is stamped into provenance."""
+        keeps the port's move (guard-7395); the error is stamped into provenance.
+        The arm needs the port's move as its fallback, so the vessel mode refuses it."""
+        if factory is not None and self.decider == DECIDER_VESSEL:
+            raise ValueError("the theory arm falls back to the port's move; decider='vessel' has none")
         self._theory_arm_factory = factory
         self._theory_arm = None
         self._theory_reset = False
@@ -125,6 +164,9 @@ class PortStreamingClient:
         return self._theory_arm
 
     def choose_action(self, frame: FrameData) -> AyoaiDecision:
+        if self.decider == DECIDER_VESSEL:
+            return self._vessel_decision(frame)
+        assert self._agent is not None
         self._report(frame)
         latest = to_engine_frame(frame)
         if self._tick > 0:
@@ -140,6 +182,20 @@ class PortStreamingClient:
         if self._theory_arm_factory is not None:
             move, x, y = self._theory_step(frame, move, x, y, provenance)
         return AyoaiDecision(action=move, x=x, y=y, provenance=provenance)
+
+    def _vessel_decision(self, frame: FrameData) -> AyoaiDecision:
+        """The session's answer to the whole frame (pending_decision=true). A
+        protocol or transport error propagates: the game loop aborts the play
+        rather than let the client pick a move."""
+        assert self._reporter is not None
+        decision = self._reporter.choose_action(frame)
+        self._tick += 1
+        return AyoaiDecision(
+            action=decision.action,
+            x=decision.x,
+            y=decision.y,
+            provenance={**decision.provenance, "mode": DECIDER_VESSEL, "port_tick": self._tick},
+        )
 
     def _report(self, frame: FrameData) -> None:
         """Send the frame's top layer, the screen the last move left, to the session as
@@ -239,7 +295,10 @@ class PortStreamingClient:
         SolverV2StreamingAdapter._finish_theory_arm). A finish error is logged, not
         raised."""
         reporter, self._reporter = self._reporter, None
-        if reporter is not None:
+        if reporter is not None and self.decider == DECIDER_VESSEL:
+            logger.info("[port-vessel] %d of %d moves came from the session", reporter.tick, self._tick)
+            reporter.close()
+        elif reporter is not None:
             logger.info(
                 "[port-report] %d of %d frames reported to the AyoAI session, %d failed%s",
                 self.reports_sent,
