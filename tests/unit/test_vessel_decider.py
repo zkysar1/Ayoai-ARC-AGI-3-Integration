@@ -56,7 +56,9 @@ def test_vessel_core_against_the_recorded_oracle(core: str, monkeypatch: pytest.
     if not _driver_carries(core):
         pytest.skip(f"needs java and an env-server shadow jar carrying the driver and the {core} core")
     monkeypatch.setenv("VESSEL_CORE", core)
-    for path in sorted(dp.RECORD_DIR.glob("*.jsonl.gz")):
+    recordings = sorted(dp.RECORD_DIR.glob("*.jsonl.gz"))
+    assert recordings, f"no recorded games in {dp.RECORD_DIR}"  # else this passes having compared nothing
+    for path in recordings:
         got = dp.compare_game("vessel_decider:factory", path)
         control = dp.compare_game("first-available", path)
         if core == "first-affordance":
