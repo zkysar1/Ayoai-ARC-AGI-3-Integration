@@ -85,7 +85,7 @@ Measured by g-376-51-c on hostname `cc-03`, `uname -r` 6.8.0-142-generic. The re
 
 ## Click path, measured 2026-09-27 (alpha, g-376-59)
 
-Measured on hostname `zc-11`, `uname -r` 6.8.0-142-generic. The recorded set gains one game: `lp85`, recorded 2026-09-27 at the shared budget (repo commit `b42807d`, arc-agi 0.9.9, arcengine 0.9.3) — 2001 moves, 1995 `ACTION6` clicks and 6 `RESET`s, level 1 completed, budget exhausted. Of the 12 unrecorded dev games, 9 offer `ACTION6` on an opening frame (probe: `analysis/action6_dev_games_g37659.py`); `lp85` is one of the 5 pure-click games where the oracle clicks on every non-reset move, so the recording exercises the oracle's click-class branch end to end.
+Measured on hostname `zc-11`, `uname -r` 6.8.0-142-generic. The recorded set gains one game: `lp85`, recorded 2026-09-27 at the shared budget (g-376-59, repo commit `b42807d`, arc-agi 0.9.9, arcengine 0.9.3) — 2001 moves, 1995 `ACTION6` clicks and 6 `RESET`s, level 1 completed, budget exhausted. Of the 12 unrecorded dev games, 9 offer `ACTION6` on an opening frame (probe: `analysis/action6_dev_games_g37659.py`); `lp85` is one of the 5 pure-click games where the oracle clicks on every non-reset move, so the recording exercises the oracle's click-class branch end to end.
 
 `frontier` still lives only on the unmerged branch `echo/g-376-51c-frontier-core` (tip `66f19995`), so the vessel rows here ran a jar built from that tip in an isolated worktree, pointed at with `VESSEL_JAR`; all three cores come from that one jar. Until that branch lands on `dev`, any re-run of the vessel rows must keep pointing at a jar that carries `FrontierExplorerCore` — `vessel_decider.py` skips nothing, so a `dev` jar would error on `VESSEL_CORE=frontier` rather than measure the wrong core.
 
@@ -99,6 +99,6 @@ Measured on hostname `zc-11`, `uname -r` 6.8.0-142-generic. The recorded set gai
 
 The three legacy cells reproduce the g-376-51-c table move for move, so the seam and the jar are faithful; the new column is the click path:
 
-- **`frontier` passes the acceptance rule on the 4-game set: 4 of 4 identical, including all 1995 clicks of `lp85`** — name, cell and coordinates, move for move. The oracle's click-class branch is now covered by this set itself, not only by env-server unit tests.
+- **`frontier` passes the acceptance rule on the 4-game set: 4 of 4 identical (g-376-59), including all 1995 clicks of `lp85`** — name, cell and coordinates, move for move. The oracle's click-class branch is now covered by this set itself, not only by env-server unit tests.
 - `first-available` diverges at `lp85` move 0: its constant `RESET` never clicks. Its 6 agreeing moves are the frames where the oracle itself resets. `first-affordance` matches it move for move (seam equivalence preserved), and `reflexes` matches it on `lp85` too.
 - `reflexes` add **zero** agreeing moves on `lp85` (6 = 6): on a click game `RESET` is first-available's answer to every frame, and the reflex stack collapses to the same constant-`RESET` sequence. The reflexes' contribution is set-level (2030 > 1097, the legacy 933), which is now what `test_vessel_decider.py` asserts strictly; the per-game check is `>=`, so per-game equality on a click game no longer fails the suite while a regression that strips the reflexes' contribution on the legacy games still does.
