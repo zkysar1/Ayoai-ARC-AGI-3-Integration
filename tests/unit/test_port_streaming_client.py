@@ -474,21 +474,30 @@ def test_main_refuses_port_client_combinations_that_would_do_nothing(
     assert message in proc.stderr
 
 
-def test_main_accepts_ingest_world_under_vessel_decides(tmp_path: Path) -> None:
+@pytest.mark.parametrize("flag", ["--ingest-world", "--no-ingest-world"])
+def test_main_accepts_ingest_world_under_vessel_decides(tmp_path: Path, flag: str) -> None:
     # Positive control for the --ingest-world refusal: the check passes, and the run
     # stops at the closed local ARC port, before any AyoAI call.
-    proc = _main_py(["--use-solver-v2", "--use-port-client", "--vessel-decides", "--ingest-world"], tmp_path, {})
+    proc = _main_py(["--use-solver-v2", "--use-port-client", "--vessel-decides", flag], tmp_path, {})
     out = proc.stdout + proc.stderr
     assert "--ingest-world needs --vessel-decides" not in out, out[-400:]
     # rc 2 is also EXIT_ARC_UPSTREAM, so read where the run stopped instead.
     assert "usage:" not in out and "Connection refused" in out, out[-400:]
 
 
-def test_vessel_world_flags_add_the_ingest_flag_only_when_asked() -> None:
-    # g-376-52: --ingest-world adds ARC_INGEST_WORLD. Without it a vessel run keeps
-    # the flag set its parity runs were measured on (g-376-54).
-    assert vessel_world_flags() == list(VESSEL_WORLD_FLAGS) == ["ARC_FRONTIER_CORE_ENABLED"]
-    assert vessel_world_flags(ingest_world=True) == ["ARC_FRONTIER_CORE_ENABLED", "ARC_INGEST_WORLD"]
+def test_vessel_world_flags_add_the_ingest_flag_by_default_on_dev_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    # g-376-52: a vessel run on the DEV lane opens with ARC_INGEST_WORLD unless told
+    # not to; on prod it does not unless told to.
+    base = list(VESSEL_WORLD_FLAGS)
+    assert base == ["ARC_FRONTIER_CORE_ENABLED"]
+    assert vessel_world_flags(lane="dev") == [*base, "ARC_INGEST_WORLD"]
+    assert vessel_world_flags(lane="prod") == base
+    assert vessel_world_flags(ingest_world=False, lane="dev") == base
+    assert vessel_world_flags(ingest_world=True, lane="prod") == [*base, "ARC_INGEST_WORLD"]
+    monkeypatch.setenv("AYOAI_LANE", "dev")
+    assert vessel_world_flags() == [*base, "ARC_INGEST_WORLD"]
+    monkeypatch.delenv("AYOAI_LANE")
+    assert vessel_world_flags() == base
 
 
 @pytest.mark.parametrize("share", ["2", "-0.1", "abc"])

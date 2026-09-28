@@ -32,8 +32,8 @@ That includes GAME_OVER frames, because the vessel's frontier stack learns from
 its losses. The one move the client still makes is the game's opening RESET,
 which comes before send_add, when the session has no unit to ask. Open the
 session with VESSEL_WORLD_FLAGS, or the env server answers with its baseline
-instead of the frontier stack; vessel_world_flags(ingest_world=True) adds the
-flag that also puts each decided frame into the session world (g-376-52).
+instead of the frontier stack; vessel_world_flags adds the flag that also puts
+each decided frame into the session world, by default on the DEV lane (g-376-52).
 decider="port" (the default) is oracle mode, the
 behaviour described above; the port stays the parity oracle until OB-31.
 """
@@ -56,6 +56,7 @@ for _p in (_ROOT / "vendor" / "ARC-AGI-3-Agents", _ROOT / "kaggle_salvage"):
 import arcengine  # noqa: E402
 from my_agent import MyAgent  # type: ignore[import-not-found]  # noqa: E402
 
+from ayoai_client import resolve_lane  # noqa: E402
 from ayoai_streaming_client import AyoaiDecision, AyoaiStreamingClient  # noqa: E402
 from primitives.theory_arm import TheoryArm  # noqa: E402
 from structs import FrameData, GameAction, GameState  # noqa: E402
@@ -74,13 +75,20 @@ VESSEL_WORLD_FLAGS = ("ARC_FRONTIER_CORE_ENABLED",)
 # session world, drive the cursor as the account's arc_agent character and run a
 # perception step on the frame (Ayoai-Environment-Server #626, dev c3b2050). All of
 # that happens after the decision reply is written, so the reply does not change.
-# Opt-in (--ingest-world, g-376-52), so parity runs keep VESSEL_WORLD_FLAGS.
+# On by default on the DEV lane (g-376-52): with the cursor alive, a DEV run's
+# replies still matched the oracle 500 of 500 (session 5d8bc53c).
 INGEST_WORLD_FLAG = "ARC_INGEST_WORLD"
 
 
-def vessel_world_flags(ingest_world: bool = False) -> list[str]:
-    """The session-open worldFlags for the vessel decider."""
+def vessel_world_flags(ingest_world: bool | None = None, lane: str | None = None) -> list[str]:
+    """The session-open worldFlags for the vessel decider.
+
+    ingest_world=None adds INGEST_WORLD_FLAG on the DEV lane and not on prod; True
+    or False decides on either lane. lane=None reads AYOAI_LANE (resolve_lane).
+    """
     flags = list(VESSEL_WORLD_FLAGS)
+    if ingest_world is None:
+        ingest_world = resolve_lane(lane).name == "dev"
     if ingest_world:
         flags.append(INGEST_WORLD_FLAG)
     return flags

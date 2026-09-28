@@ -597,14 +597,16 @@ def _play(server_stop: RunServerStop) -> int:
     )
     parser.add_argument(
         "--ingest-world",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help=(
             "Under --vessel-decides, also open the session with worldFlags "
             "ARC_INGEST_WORLD (g-376-52): after writing each decision reply, the "
             "env server ingests the decided frame into the session world, drives "
             "the cursor as the account's arc_agent character and runs a "
             "perception step on the frame (env server #626). The replies do not "
-            "change. Off by default, so parity runs keep their flag set."
+            "change. On by default on the DEV lane (AYOAI_LANE=dev), off on prod; "
+            "--ingest-world or --no-ingest-world decides on either lane."
         ),
     )
     parser.add_argument(
@@ -1102,8 +1104,8 @@ def _play(server_stop: RunServerStop) -> int:
             )
             server_stop.arm(card_id, env_key)
             # g-376-53: the vessel-decided player asks the env server for its
-            # frontier core stack through the session-open worldFlags, and with
-            # --ingest-world (g-376-52) for the world ingest of each decided frame.
+            # frontier core stack through the session-open worldFlags, and for the
+            # world ingest of each decided frame (g-376-52; DEV default, see --ingest-world).
             session_world_flags: list[str] | None = None
             if args.vessel_decides:
                 from port_streaming_client import vessel_world_flags
