@@ -168,6 +168,13 @@ AYOAI_LANE=dev RECORDINGS_DIR=recordings .venv/bin/python main.py --game bp35-0a
 
 It also counts `decided_by` per move and `frontier_core_answers`, the answers whose reasoning starts with `frontier-core`, and says whether the run got past the oracle's first RESET (`first_oracle_reset`, `crosses_first_reset`). Nothing is teacher-forced: a live run plays its own game. A live run that ends first diverges at its own length, with `live_action` null.
 
+A port-mode move that the opt-in theory arm (`SOLVER_V2_THEORY_ARM`, g-376-09) replaced still records `decided_by` `port`. The arm records itself in the move's `theory_arm` provenance, so `live` reports that separately:
+- `theory_arm_consulted` and `theory_arm_changed` count the moves on which the arm ran and on which it changed the port's move;
+- `first_theory_arm_change` is the first changed move;
+- `divergence_is_theory_arm_change` says whether `first_divergence` falls on a changed move. It is false when the live run only outlasts the recorded game.
+
+A port-mode divergence is the port's own only when `divergence_is_theory_arm_change` is false (g-376-64, g-376-65). If `first_theory_arm_change` comes before `first_divergence`, the arm replaced a port move with the oracle's own move, so the port alone would have diverged at `first_theory_arm_change`.
+
 Live and offline play restart differently once a level is completed. After a level-up, a live RESET starts a new run from level 1, while the offline toolkit restarts the current level (`eval/port-client-live-2026-09-25.md`). The frames therefore part at the first RESET after a level-up, whatever the decider does. In the recorded set only ar25 has one: it levels up at step 568 and next resets at step 813. lp85 levels up at step 278 but never resets again, and bp35 and cd82 complete no level, so on those three live and offline restarts agree throughout.
 
 ### First live run, 2026-09-27 (echo, g-376-53)

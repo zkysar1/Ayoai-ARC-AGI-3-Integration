@@ -216,7 +216,11 @@ def compare_live(recording: Path, record: Path) -> dict[str, Any]:
     aside, and live move k+1 is compared with oracle move k. Beside the moves, the frame
     each live move was chosen on is compared with the frame the oracle was shown at the
     same index. From the first frame that differs, the two are playing different games,
-    and a later move divergence belongs to the game, not the decider."""
+    and a later move divergence belongs to the game, not the decider.
+
+    A port move that the opt-in theory arm (g-376-09) replaced still records decided_by
+    "port"; the arm records itself under theory_arm. So the theory-arm counts say how
+    many moves it changed and whether the first divergence is one of them (g-376-65)."""
     header, steps = read_record(record)
     rows = live_rows(recording)
     if not rows or rows[0]["emitted_action"]["name"] != "RESET":
@@ -232,6 +236,8 @@ def compare_live(recording: Path, record: Path) -> dict[str, Any]:
         name = str(r["decision_provenance"].get("decided_by"))
         by[name] = by.get(name, 0) + 1
     reasons = [str(r["decision_provenance"].get("reasoning_preview", "")) for r in moves]
+    arm = [r["decision_provenance"].get("theory_arm") or {} for r in moves]
+    changed = [i for i, t in enumerate(arm) if t.get("changed")]
     return {
         "game": header["game"],
         "recording": recording.name,
@@ -239,6 +245,10 @@ def compare_live(recording: Path, record: Path) -> dict[str, Any]:
         "live_moves": len(live),
         "opening_reset_decided_by": rows[0]["decision_provenance"].get("decided_by"),
         "decided_by": by,
+        "theory_arm_consulted": sum(1 for t in arm if t.get("consulted")),
+        "theory_arm_changed": len(changed),
+        "first_theory_arm_change": changed[0] if changed else None,
+        "divergence_is_theory_arm_change": at is not None and at < len(oracle) and at in changed,
         "frontier_core_answers": sum(1 for r in reasons if r.startswith("frontier-core")),
         "first_divergence": at,
         "agreement": sum(1 for a, b in zip(oracle, live) if a == b),

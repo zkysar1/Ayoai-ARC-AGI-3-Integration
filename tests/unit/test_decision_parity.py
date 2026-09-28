@@ -105,15 +105,24 @@ def test_compare_reports_identical_when_every_move_matches(tmp_path: Path, monke
     assert dp.compare_game("scripted", path)["first_divergence"] is None
 
 
-def write_live(path: Path, moves: list[tuple[str, int | None, int | None, str]], frames: list[Any]) -> None:
+def write_live(
+    path: Path,
+    moves: list[tuple[str, int | None, int | None, str]],
+    frames: list[Any],
+    arms: list[dict[str, Any] | None] | None = None,
+) -> None:
     """A main.py --record recording: the session-open line, then one line per move
-    holding the frame that move produced."""
+    holding the frame that move produced. `arms` gives a move's theory_arm provenance;
+    None leaves the key out, as the port client does on a RESET."""
     lines = [{"data": {"kind": "session_open"}}]
-    for (name, x, y, by), grid in zip(moves, frames):
+    for i, ((name, x, y, by), grid) in enumerate(zip(moves, frames)):
+        provenance: dict[str, Any] = {"decided_by": by, "reasoning_preview": "frontier-core (g-376-61): frontier"}
+        if arms is not None and arms[i] is not None:
+            provenance["theory_arm"] = arms[i]
         lines.append({"data": {
             "frame": grid, "state": "NOT_FINISHED", "levels_completed": 0,
             "emitted_action": {"name": name, "x": x, "y": y},
-            "decision_provenance": {"decided_by": by, "reasoning_preview": "frontier-core (g-376-61): frontier"},
+            "decision_provenance": provenance,
         }})
     path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
 
@@ -141,6 +150,8 @@ def test_live_sets_the_opening_reset_aside_and_compares_moves_and_frames(tmp_pat
     assert (row["first_divergence"], row["agreement"], row["first_frame_difference"]) == (None, 3, None)
     assert (row["opening_reset_decided_by"], row["decided_by"]) == ("client", {"ayoai-v1": 3})
     assert (row["frontier_core_answers"], row["first_oracle_reset"], row["crosses_first_reset"]) == (3, 2, True)
+    assert (row["theory_arm_consulted"], row["theory_arm_changed"]) == (0, 0)
+    assert (row["first_theory_arm_change"], row["divergence_is_theory_arm_change"]) == (None, False)
 
 
 def test_live_reports_a_move_divergence_and_where_the_games_part(tmp_path: Path) -> None:
@@ -154,3 +165,37 @@ def test_live_reports_a_move_divergence_and_where_the_games_part(tmp_path: Path)
     row = dp.compare_live(live, record)
     assert (row["first_divergence"], row["live_action"], row["oracle_action"]) == (1, key("ACTION3"), key("ACTION2"))
     assert (row["first_frame_difference"], row["crosses_first_reset"]) == (2, False)
+    assert row["divergence_is_theory_arm_change"] is False  # no arm ran, so the decider diverged
+
+
+def test_live_attributes_a_divergence_to_the_theory_arm_that_changed_the_move(tmp_path: Path) -> None:
+    # g-376-65: the port client records decided_by "port" even on a move the theory arm
+    # replaced, so the attribution comes from theory_arm.changed.
+    grids = [[[[0]]], [[[1]]], [[[2]]]]
+    record = tmp_path / "synthetic.jsonl.gz"
+    write_shown_record(record, [key("ACTION1"), key("ACTION1"), key("RESET")], grids)
+    live = tmp_path / "run.recording.jsonl"
+    moves = [("RESET", None, None, "client"), ("ACTION1", None, None, "port"),
+             ("ACTION2", None, None, "port"), ("RESET", None, None, "port")]
+    arms: list[dict[str, Any] | None] = [None, {"consulted": True, "changed": False},
+                                         {"consulted": True, "changed": True}, None]
+    write_live(live, moves, [grids[0], grids[1], [[[9]]], [[[9]]]], arms)
+    row = dp.compare_live(live, record)
+    assert (row["first_divergence"], row["decided_by"]) == (1, {"port": 3})
+    assert (row["theory_arm_consulted"], row["theory_arm_changed"], row["first_theory_arm_change"]) == (2, 1, 1)
+    assert row["divergence_is_theory_arm_change"] is True
+
+
+def test_live_does_not_blame_the_arm_when_the_oracle_runs_out(tmp_path: Path) -> None:
+    # A live run that outlasts the record diverges at the record's length; the arm
+    # changing the move there is not what parted them.
+    grids = [[[[0]]], [[[1]]], [[[2]]]]
+    record = tmp_path / "synthetic.jsonl.gz"
+    write_shown_record(record, [key("ACTION1")], grids[:1])
+    live = tmp_path / "run.recording.jsonl"
+    moves = [("RESET", None, None, "client"), ("ACTION1", None, None, "port"), ("ACTION2", None, None, "port")]
+    arms: list[dict[str, Any] | None] = [None, {"consulted": True, "changed": False}, {"consulted": True, "changed": True}]
+    write_live(live, moves, grids, arms)
+    row = dp.compare_live(live, record)
+    assert (row["first_divergence"], row["oracle_action"], row["first_theory_arm_change"]) == (1, None, 1)
+    assert row["divergence_is_theory_arm_change"] is False
