@@ -542,6 +542,8 @@ def _play(server_stop: RunServerStop) -> int:
         "--use-solver-v0",
         action="store_true",
         help=(
+            "OFFLINE BASELINE decider, outside the One Body play path (the "
+            "vessel decides, under --use-port-client; g-376-72). "
             "Route per-tick decisions through solver_v0/HandBuiltPolicy "
             "locally (in-process, no AyoAI Lambda or mock-server HTTP). "
             "Preserves framework-routing per echo/self.md Constraint 2 "
@@ -556,15 +558,22 @@ def _play(server_stop: RunServerStop) -> int:
         "--use-solver-v2",
         action="store_true",
         help=(
+            "Alone (without --use-port-client), a CLIENT-SIDE BASELINE decider, "
+            "outside the One Body play path (g-376-72): eval/adapter_run.py "
+            "plays its adapter offline as the BEFORE baseline, and it is the "
+            "only host of the adapter-only options and SOLVER_V2_V4_ARM. With "
+            "--use-port-client it carries the session for the port client, whose "
+            "default decider is the vessel (the port decides under --oracle). "
             "Route per-tick decisions through the solver_v2 episode-seeded "
-            "pipeline locally (in-process, no AyoAI Lambda or mock-server "
-            "HTTP). A SeedProvider produces an EpisodePrior once per episode "
+            "pipeline, in-process. A SeedProvider produces an EpisodePrior "
+            "once per episode "
             "(deterministic oracle stub in this spine; BitNet in g-315-134-d); "
             "a deterministic executor reads it each tick -- no LLM in the "
             "per-tick path. Preserves framework-routing per echo/self.md "
             "Constraint 2 (decisions still flow through the streaming-contract "
-            "surface, just with a local decision source). When set, --mock-url "
-            "and the live AyoAI session-open are bypassed; "
+            "surface, just with a local decision source). When set, a live "
+            "AyoAI session opens for the seed (g-315-154), and --mock-url is not "
+            "used as the streaming URL; "
             "SolverV2StreamingAdapter is wired as the streaming_client. "
             "Recording prefix's solver segment defaults to 'solver-v2'. "
             "Mutually exclusive with --use-solver-v0. g-315-134-a."
@@ -628,6 +637,8 @@ def _play(server_stop: RunServerStop) -> int:
         "--random",
         action="store_true",
         help=(
+            "OFFLINE BASELINE decider, outside the One Body play path "
+            "(g-376-72). "
             "Route per-tick decisions through a uniform-random baseline "
             "(random_streaming_adapter.RandomStreamingAdapter): sample "
             "uniformly from each frame's available_actions and supply random "
