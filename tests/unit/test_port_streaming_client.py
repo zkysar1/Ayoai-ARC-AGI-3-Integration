@@ -463,7 +463,19 @@ def _main_py(args: list[str], cwd: Path, extra_env: dict[str, str]) -> subproces
         (["--use-solver-v2", "--vessel-decides"], {}, "--vessel-decides needs --use-port-client"),
         (["--use-solver-v2", "--use-port-client", "--vessel-decides"], {"SOLVER_V2_THEORY_ARM": "1"},
          "SOLVER_V2_THEORY_ARM falls back to the port's move"),
-        (["--use-solver-v2", "--use-port-client", "--ingest-world"], {}, "--ingest-world needs --vessel-decides"),
+        # g-376-57: the vessel is the default, so the port-only theory arm is refused
+        # without --oracle too.
+        (["--use-solver-v2", "--use-port-client"], {"SOLVER_V2_THEORY_ARM": "1"},
+         "SOLVER_V2_THEORY_ARM falls back to the port's move"),
+        (["--use-solver-v2", "--use-port-client", "--oracle", "--ingest-world"], {},
+         "--ingest-world needs the vessel decider"),
+        (["--use-solver-v2", "--oracle"], {}, "--oracle needs --use-port-client"),
+        (["--use-solver-v2", "--use-port-client", "--oracle", "--vessel-decides"], {},
+         "--oracle and --vessel-decides are mutually exclusive"),
+        # The vessel route is on the DEV lane only; prod is the default lane.
+        (["--use-solver-v2", "--use-port-client"], {}, "the vessel decider runs on the DEV lane only"),
+        (["--use-solver-v2", "--use-port-client", "--vessel-decides"], {"AYOAI_LANE": "prod"},
+         "the vessel decider runs on the DEV lane only"),
     ],
 )
 def test_main_refuses_port_client_combinations_that_would_do_nothing(
@@ -474,14 +486,26 @@ def test_main_refuses_port_client_combinations_that_would_do_nothing(
     assert message in proc.stderr
 
 
+@pytest.mark.parametrize("explicit", [[], ["--vessel-decides"]])
 @pytest.mark.parametrize("flag", ["--ingest-world", "--no-ingest-world"])
-def test_main_accepts_ingest_world_under_vessel_decides(tmp_path: Path, flag: str) -> None:
-    # Positive control for the --ingest-world refusal: the check passes, and the run
-    # stops at the closed local ARC port, before any AyoAI call.
-    proc = _main_py(["--use-solver-v2", "--use-port-client", "--vessel-decides", flag], tmp_path, {})
+def test_main_accepts_ingest_world_under_vessel_decides(tmp_path: Path, flag: str, explicit: list[str]) -> None:
+    # Positive control for the --ingest-world and lane refusals: on the DEV lane the
+    # checks pass, with or without the now-default --vessel-decides, and the run stops
+    # at the closed local ARC port, before any AyoAI call.
+    proc = _main_py(["--use-solver-v2", "--use-port-client", *explicit, flag], tmp_path, {"AYOAI_LANE": "dev"})
     out = proc.stdout + proc.stderr
-    assert "--ingest-world needs --vessel-decides" not in out, out[-400:]
+    assert "--ingest-world needs" not in out and "DEV lane only" not in out, out[-400:]
     # rc 2 is also EXIT_ARC_UPSTREAM, so read where the run stopped instead.
+    assert "usage:" not in out and "Connection refused" in out, out[-400:]
+
+
+@pytest.mark.parametrize("lane", [{}, {"AYOAI_LANE": "prod"}, {"AYOAI_LANE": "dev"}])
+def test_main_plays_the_port_on_any_lane_under_oracle(tmp_path: Path, lane: dict[str, str]) -> None:
+    # g-376-57: the port plays only when asked, and then on either lane (the same
+    # inputs without --oracle are refused on prod, above). The run stops at the
+    # closed local ARC port.
+    proc = _main_py(["--use-solver-v2", "--use-port-client", "--oracle"], tmp_path, lane)
+    out = proc.stdout + proc.stderr
     assert "usage:" not in out and "Connection refused" in out, out[-400:]
 
 
@@ -514,7 +538,7 @@ def test_main_accepts_a_win_test_share_from_0_to_1(tmp_path: Path) -> None:
     # Positive control: a valid share passes the check (the run then stops at the
     # closed local port, so nothing is played).
     proc = _main_py(
-        ["--use-solver-v2", "--use-port-client"], tmp_path, {"ARC_THEORY_WIN_TEST_SHARE": "0.25"}
+        ["--use-solver-v2", "--use-port-client", "--oracle"], tmp_path, {"ARC_THEORY_WIN_TEST_SHARE": "0.25"}
     )
     assert "ARC_THEORY_WIN_TEST_SHARE" not in proc.stderr, proc.stderr[-400:]
 
@@ -544,7 +568,7 @@ def test_main_accepts_warm_memory_on_the_dev_lane(tmp_path: Path) -> None:
     # Positive control: both checks pass, and the run stops at the closed local ARC
     # port, before any AyoAI call.
     proc = _main_py(
-        ["--use-solver-v2", "--use-port-client"],
+        ["--use-solver-v2", "--use-port-client", "--oracle"],
         tmp_path,
         {"SOLVER_V2_THEORY_ARM": "1", "ARC_THEORY_MEMORY": "warm", "AYOAI_LANE": "dev"},
     )

@@ -575,10 +575,10 @@ def _play(server_stop: RunServerStop) -> int:
         action="store_true",
         help=(
             "Under --use-solver-v2, the moves inside the same AyoAI session come "
-            "from the port (kaggle_salvage.MyAgent, via PortStreamingClient) "
-            "instead of SolverV2StreamingAdapter (g-376-30, "
-            "design/g-376-30-route.md). SOLVER_V2_THEORY_ARM attaches the theory "
-            "arm with the port's move as its fallback. Adapter-only options and "
+            "through PortStreamingClient instead of SolverV2StreamingAdapter "
+            "(g-376-30, design/g-376-30-route.md). The session's vessel picks them "
+            "(see --vessel-decides, the default since g-376-57); with --oracle the "
+            "port (kaggle_salvage.MyAgent) picks them. Adapter-only options and "
             "SOLVER_V2_V4_ARM are refused."
         ),
     )
@@ -592,7 +592,22 @@ def _play(server_stop: RunServerStop) -> int:
             "opened with worldFlags ARC_FRONTIER_CORE_ENABLED, so the env server "
             "answers with its frontier core stack. The port is not consulted; it "
             "stays the parity oracle (eval/decision_parity.py). The only client "
-            "move is the opening RESET. SOLVER_V2_THEORY_ARM is refused."
+            "move is the opening RESET. SOLVER_V2_THEORY_ARM is refused. The "
+            "default under --use-port-client since g-376-57 (OB-31), so this flag "
+            "changes nothing; it is kept so existing commands still parse. The "
+            "frontier core is on the DEV lane only, so it needs AYOAI_LANE=dev."
+        ),
+    )
+    parser.add_argument(
+        "--oracle",
+        action="store_true",
+        help=(
+            "Under --use-port-client, oracle mode: the port (kaggle_salvage.MyAgent, "
+            "the Python decider) picks every move client-side and reports each "
+            "frame to the session (g-376-30, g-376-40). It is the parity oracle "
+            "(eval/decision_parity.py) and plays only when asked (g-376-57, OB-31). "
+            "SOLVER_V2_THEORY_ARM attaches the theory arm with the port's move as "
+            "its fallback, so the arm needs this flag. Runs on either lane."
         ),
     )
     parser.add_argument(
@@ -600,7 +615,7 @@ def _play(server_stop: RunServerStop) -> int:
         action=argparse.BooleanOptionalAction,
         default=None,
         help=(
-            "Under --vessel-decides, also open the session with worldFlags "
+            "With the vessel decider, also open the session with worldFlags "
             "ARC_INGEST_WORLD (g-376-52): after writing each decision reply, the "
             "env server ingests the decided frame into the session world, drives "
             "the cursor as the account's arc_agent character and runs a "
@@ -891,8 +906,15 @@ def _play(server_stop: RunServerStop) -> int:
 
     if args.vessel_decides and not args.use_port_client:
         parser.error("--vessel-decides needs --use-port-client")
+    if args.oracle and not args.use_port_client:
+        parser.error("--oracle needs --use-port-client")
+    if args.oracle and args.vessel_decides:
+        parser.error("--oracle and --vessel-decides are mutually exclusive")
+    # g-376-57 (OB-31): the vessel is the port client's default decider, and the port
+    # decides only in oracle mode. Every later read of args.vessel_decides sees this.
+    args.vessel_decides = args.use_port_client and not args.oracle
     if args.ingest_world and not args.vessel_decides:
-        parser.error("--ingest-world needs --vessel-decides")
+        parser.error("--ingest-world needs the vessel decider (--use-port-client without --oracle)")
 
     # --use-port-client swaps the player inside the --use-solver-v2 session
     # (g-376-30). Options that only the adapter reads would do nothing, so they
@@ -951,7 +973,7 @@ def _play(server_stop: RunServerStop) -> int:
         "yes",
     )
     if args.vessel_decides and theory_arm_on:
-        parser.error("SOLVER_V2_THEORY_ARM falls back to the port's move; not valid with --vessel-decides")
+        parser.error("SOLVER_V2_THEORY_ARM falls back to the port's move; under --use-port-client it needs --oracle")
     theory_memory_regime = os.environ.get("ARC_THEORY_MEMORY", "").strip().lower() or "cold"
     if theory_memory_regime not in ("cold", "warm"):
         parser.error("ARC_THEORY_MEMORY must be cold or warm")
@@ -962,9 +984,19 @@ def _play(server_stop: RunServerStop) -> int:
     # prod, or dev for the DEV lane of grant-015). A value it cannot use is refused here,
     # before a scorecard is opened.
     try:
-        resolve_lane()
+        lane = resolve_lane()
     except AyoaiSessionError as exc:
         parser.error(str(exc))
+    # g-376-57: the vessel route is on the DEV lane only. The frontier core and the
+    # ARC_FRONTIER_CORE_ENABLED world-flag allowlists are on dev, not main, in the env
+    # server and both launch Lambdas (Collect #74, Start #95), and without the flag the
+    # env server answers with its baseline instead of the frontier stack. A prod run
+    # would be played by the wrong decider, so it is refused before a scorecard opens.
+    if args.vessel_decides and lane.name != "dev":
+        parser.error(
+            "the vessel decider runs on the DEV lane only (AYOAI_LANE=dev) until the "
+            "frontier core is promoted to prod; on prod, --oracle plays with the port"
+        )
 
     # --state-graph only takes effect under --use-solver-v2 (the v2 adapter is
     # the sole StateGraphExplorer build site). Warn rather than error so the
@@ -1258,7 +1290,8 @@ def _play(server_stop: RunServerStop) -> int:
             # g-376-30: same session, and the port decides every move
             # (design/g-376-30-route.md). The port does not read the session seed.
             # g-376-40: the session URL lets it report each frame to the session.
-            # g-376-53: --vessel-decides hands every move to the session's vessel.
+            # g-376-53: --vessel-decides hands every move to the session's vessel,
+            # the default since g-376-57 (OB-31); the port decides only under --oracle.
             import port_streaming_client
 
             streaming_client = port_streaming_client.PortStreamingClient(

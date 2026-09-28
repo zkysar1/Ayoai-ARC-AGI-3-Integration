@@ -16,6 +16,10 @@ export AYOAI_LANE=dev SOLVER_V2_THEORY_ARM=1 ARC_THEORY_RUN_DIR=/tmp/echo-arc/th
 .venv/bin/python main.py --game <full-id> --use-solver-v2 --use-port-client --max-actions 300 --record
 ```
 
+Note added 2026-09-28 (g-376-57): main.py now plays with the vessel unless told
+otherwise, and the theory arm needs the port, so a re-run of this design adds
+`--oracle` to the command above (main.py refuses it without). The player is unchanged.
+
 Box: cc-03. Model: claude-haiku-4-5-20251001 (the theory arm's default).
 
 ### Arms (run in this order for each game)

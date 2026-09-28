@@ -34,8 +34,9 @@ which comes before send_add, when the session has no unit to ask. Open the
 session with VESSEL_WORLD_FLAGS, or the env server answers with its baseline
 instead of the frontier stack; vessel_world_flags adds the flag that also puts
 each decided frame into the session world, by default on the DEV lane (g-376-52).
-decider="port" (the default) is oracle mode, the
-behaviour described above; the port stays the parity oracle until OB-31.
+decider="port" (this class's default, which the offline harnesses use) is oracle
+mode, the behaviour described above. main.py plays with the vessel and asks the port
+only under --oracle (g-376-57, OB-31): the port is the parity oracle.
 """
 
 from __future__ import annotations
