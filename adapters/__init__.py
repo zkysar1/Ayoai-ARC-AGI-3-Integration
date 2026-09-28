@@ -12,14 +12,19 @@ This package is the home for those per-environment slot implementations, kept
 SEPARATE from `primitives/` so the agnostic core stays free of env literals
 (generalization gate 3). Each environment gets its own module:
 
-  - roblox.py (g-315-248, delta): the 3 highest-cross-env-variance slots for
-    Roblox NPC exploration -- WorldBuilder (instance-tree -> UnitSet),
-    ProximityModel (PATH-distance + learned-displacement projection seam),
-    Executor (behavior-tree move-toward). Composes the UNMODIFIED
-    `primitives.frontier_coverage.FrontierCoverage`.
+  - arc.py: ARC-AGI-3 grid slots (the parity oracle's environment).
+  - football.py: a contested entity world, the one non-ARC slot set kept here.
+
+Retired (g-376-57, 2026-09-28): roblox.py and vinheim.py. They were offline
+simulations of worlds whose live sessions already reach the vessel through the
+env-server's front door. Under the One Body plan the plain code that picks moves
+lives in the vessel, so this repo keeps no stand-in for them. Mentions of them in
+the other modules' docstrings are design history (the base.py Protocols were
+extracted from them). Restore from git if needed:
+`git show 46de733:adapters/roblox.py`.
 
 Boundary (g-315-236-d handoff): echo extracts + owns the env-agnostic primitive
-cores in `primitives/`; the owning agent supplies each environment's slots here
-(delta = Roblox, alpha = vinheim/shared). Adding a slot module here NEVER modifies
-a `primitives/` core -- the regression gate for the cores is the existing suite.
+cores in `primitives/`; the owning agent supplies each environment's slots here.
+Adding a slot module here NEVER modifies a `primitives/` core -- the regression
+gate for the cores is the existing suite.
 """

@@ -3,8 +3,9 @@
 g-331-01 (alpha). Two things are proven here:
 
   1. The EXISTING adapters conform to the new contract with ZERO edits -- the
-     roblox.py (delta) and vinheim.py (alpha) slot classes already satisfy the
-     WorldBuilder / Executor / ProximityModel Protocols structurally. These are
+     football.py slot classes satisfy the WorldBuilder / Executor /
+     ProximityModel Protocols structurally (roblox.py and vinheim.py, the
+     first two conformers, were retired in g-376-57). These are
      class-level ``issubclass`` checks: no adapter construction (and so no
      transport fixtures) is required, which keeps the contract decoupled from
      each adapter's constructor.
@@ -33,30 +34,12 @@ from adapters.football import (
     FootballProximityModel,
     FootballWorldBuilder,
 )
-from adapters.roblox import RobloxExecutor, RobloxProximityModel, RobloxWorldBuilder
-from adapters.vinheim import (
-    VinheimExecutor,
-    VinheimProximityModel,
-    VinheimWorldBuilder,
-)
 from primitives.frontier_coverage import Cell
 
 
 # --------------------------------------------------------------------------- #
 # 1. Existing adapters conform structurally (zero-edit, byte-identical).        #
 # --------------------------------------------------------------------------- #
-def test_roblox_slot_classes_conform_to_contract() -> None:
-    assert issubclass(RobloxWorldBuilder, WorldBuilder)
-    assert issubclass(RobloxExecutor, Executor)
-    assert issubclass(RobloxProximityModel, ProximityModel)
-
-
-def test_vinheim_slot_classes_conform_to_contract() -> None:
-    assert issubclass(VinheimWorldBuilder, WorldBuilder)
-    assert issubclass(VinheimExecutor, Executor)
-    assert issubclass(VinheimProximityModel, ProximityModel)
-
-
 def test_football_slot_classes_conform_to_contract() -> None:
     """g-335-146: a fourth env registers with zero edits to base.py or primitives/."""
     assert issubclass(FootballWorldBuilder, WorldBuilder)
@@ -125,18 +108,18 @@ def test_environment_adapter_registers_conforming_slots() -> None:
 
 def test_environment_adapter_accepts_real_adapter_slot_classes() -> None:
     # The end-to-end registration path: a real env's slot classes pass the
-    # container's runtime conformance check. RobloxProximityModel(cell_size=...)
-    # and RobloxWorldBuilder()/RobloxExecutor need no live transport for the
-    # ProximityModel + WorldBuilder; Executor requires a transport, so this test
-    # uses the cheap-to-construct slots and a fake executor to exercise the
-    # container while the issubclass tests above cover RobloxExecutor's class.
+    # container's runtime conformance check. FootballWorldBuilder() and
+    # FootballProximityModel() need no live transport; Executor requires a
+    # transport, so this test uses the cheap-to-construct slots and a fake
+    # executor to exercise the container while the issubclass test above
+    # covers FootballExecutor's class.
     adapter = EnvironmentAdapter(
-        name="roblox",
-        world_builder=RobloxWorldBuilder(),
+        name="football",
+        world_builder=FootballWorldBuilder(),
         executor=_FakeExecutor(),
-        proximity_model=RobloxProximityModel(),
+        proximity_model=FootballProximityModel(),
     )
-    assert adapter.name == "roblox"
+    assert adapter.name == "football"
 
 
 def test_environment_adapter_rejects_nonconforming_mandatory_slot() -> None:

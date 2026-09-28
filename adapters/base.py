@@ -4,7 +4,9 @@ g-331-01 (alpha). Promotes the 6-slot ``EnvironmentAdapter`` interface from an
 implicit, docstring-only reference into an importable, conformance-checkable
 contract in the shared library, so a NEW environment (ARC-AGI-3) can register a
 conforming adapter the same way ``adapters/roblox.py`` (delta) and
-``adapters/vinheim.py`` (alpha) already supply their slots.
+``adapters/vinheim.py`` (alpha) already supply their slots. (Both were retired in
+g-376-57; ``arc.py`` and ``football.py`` are today's conformers -- see
+``adapters/__init__.py``.)
 
 Until now the contract was, by the adapters' own words, "referenced here, NEVER
 redefined" (the roblox.py / vinheim.py docstrings, both citing

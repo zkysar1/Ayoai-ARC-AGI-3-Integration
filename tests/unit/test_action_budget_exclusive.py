@@ -25,9 +25,7 @@ NOT_PRODUCTION = {"tests", "analysis", "vendor", ".venv", "environment_files"}
 BUDGET_NAMES = {"max_actions", "max_ticks"}
 # The non-ARC drivers keep their own tick caps: their worlds are not ARC games.
 NON_ARC_DRIVERS = {
-    "adapters/roblox.py",
     "adapters/football.py",
-    "adapters/vinheim.py",
     "adapters/episode.py",
 }
 
@@ -113,7 +111,7 @@ def test_the_allowlist_names_drivers_that_still_need_it() -> None:
     # the allowlist silently cover nothing.
     for rel in sorted(NON_ARC_DRIVERS):
         assert (ROOT / rel).exists(), rel
-    assert budget_literals(ROOT / "adapters/roblox.py"), "roblox.py lost its tick cap"
+        assert budget_literals(ROOT / rel), f"{rel} lost its tick cap"
 
 
 def test_the_scan_flags_every_shape_of_a_literal_budget(tmp_path: Path) -> None:
