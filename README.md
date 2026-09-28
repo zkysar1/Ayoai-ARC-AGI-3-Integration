@@ -124,13 +124,15 @@ Where `uv` is not installed, the gate is `.venv/bin/python -m pytest -q -p no:ca
 
 ## Tests
 
-Run the test suite:
+Run the test suite from the repo root:
 
 ```bash
-uv run pytest
+uv run python -m pytest
 ```
 
-40+ tests should pass, covering core functionality (data structures) and recorder.
+Use `python -m pytest`. The bare `pytest` script cannot collect this repo
+(`ModuleNotFoundError: structs`; see `conftest.py`). The full suite ran 1600 passed and
+16 skipped, measured 2026-09-28 at 2ee06f4 (see `CLAUDE.md`).
 
 ## Integration with ayoai.com
 
