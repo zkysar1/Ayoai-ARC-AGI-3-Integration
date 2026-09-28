@@ -72,6 +72,9 @@ from primitives.theory_arm import ArmConfig, freeze  # noqa: E402
 from solver_v2.streaming_adapter import SolverV2StreamingAdapter  # noqa: E402
 from structs import FrameData, GameAction, GameState  # noqa: E402
 
+# Provenance keys an arm writes with a "changed" flag when it replaces the move.
+ARMS = ("theory_arm", "v4_arm")
+
 
 class AdapterDrive(Agent):  # type: ignore[misc]
     """Plays one local game with the moves the adapter decides, unchanged."""
@@ -84,6 +87,9 @@ class AdapterDrive(Agent):  # type: ignore[misc]
         super().__init__(*args, **kwargs)
         self.adapter = adapter
         self.decided_by: Counter[str] = Counter()
+        # decided_by keeps the BASE decider when an arm replaces the move, so the
+        # arms' own changes are counted separately (g-376-67; decision_parity g-376-65).
+        self.arm_changed: Counter[str] = Counter()
         self.chosen: dict[int, str] = {}  # its result lands at frames[len(frames)]
         self.screens: set[int] = set()  # distinct top layers seen (g-376-24 game size)
 
@@ -107,6 +113,9 @@ class AdapterDrive(Agent):  # type: ignore[misc]
             self.screens.add(hash(freeze(frame.frame[-1])))
         decision = self.adapter.choose_action(frame)
         self.decided_by[str((decision.provenance or {}).get("decided_by", "?"))] += 1
+        for arm in ARMS:
+            if ((decision.provenance or {}).get(arm) or {}).get("changed"):
+                self.arm_changed[arm] += 1
         # By NAME: both enums mirror the framework's action names. A mismatch
         # raises KeyError rather than silently playing a different move.
         action = EGameAction[decision.action.name]
@@ -214,6 +223,7 @@ def main() -> None:
             "levels_completed": last.levels_completed,
             "win_levels": last.win_levels,
             "decided_by": dict(agent.decided_by),
+            "arm_changed": {arm: agent.arm_changed[arm] for arm in ARMS},
             "distinct_screens": len(agent.screens),
             **attempt_profile(agent.frames, agent.chosen),
         }
