@@ -23,7 +23,11 @@ import pytest
 # box without the extra instead of failing collection (g-376-46).
 arcengine = pytest.importorskip("arcengine")
 
-from port_streaming_client import PortStreamingClient  # noqa: E402
+from port_streaming_client import (  # noqa: E402
+    VESSEL_WORLD_FLAGS,
+    PortStreamingClient,
+    vessel_world_flags,
+)
 from structs import ActionInput, FrameData, GameAction, GameState  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
@@ -459,6 +463,7 @@ def _main_py(args: list[str], cwd: Path, extra_env: dict[str, str]) -> subproces
         (["--use-solver-v2", "--vessel-decides"], {}, "--vessel-decides needs --use-port-client"),
         (["--use-solver-v2", "--use-port-client", "--vessel-decides"], {"SOLVER_V2_THEORY_ARM": "1"},
          "SOLVER_V2_THEORY_ARM falls back to the port's move"),
+        (["--use-solver-v2", "--use-port-client", "--ingest-world"], {}, "--ingest-world needs --vessel-decides"),
     ],
 )
 def test_main_refuses_port_client_combinations_that_would_do_nothing(
@@ -467,6 +472,23 @@ def test_main_refuses_port_client_combinations_that_would_do_nothing(
     proc = _main_py(args, tmp_path, extra_env)
     assert proc.returncode == 2, proc.stdout[-400:] + proc.stderr[-400:]
     assert message in proc.stderr
+
+
+def test_main_accepts_ingest_world_under_vessel_decides(tmp_path: Path) -> None:
+    # Positive control for the --ingest-world refusal: the check passes, and the run
+    # stops at the closed local ARC port, before any AyoAI call.
+    proc = _main_py(["--use-solver-v2", "--use-port-client", "--vessel-decides", "--ingest-world"], tmp_path, {})
+    out = proc.stdout + proc.stderr
+    assert "--ingest-world needs --vessel-decides" not in out, out[-400:]
+    # rc 2 is also EXIT_ARC_UPSTREAM, so read where the run stopped instead.
+    assert "usage:" not in out and "Connection refused" in out, out[-400:]
+
+
+def test_vessel_world_flags_add_the_ingest_flag_only_when_asked() -> None:
+    # g-376-52: --ingest-world adds ARC_INGEST_WORLD. Without it a vessel run keeps
+    # the flag set its parity runs were measured on (g-376-54).
+    assert vessel_world_flags() == list(VESSEL_WORLD_FLAGS) == ["ARC_FRONTIER_CORE_ENABLED"]
+    assert vessel_world_flags(ingest_world=True) == ["ARC_FRONTIER_CORE_ENABLED", "ARC_INGEST_WORLD"]
 
 
 @pytest.mark.parametrize("share", ["2", "-0.1", "abc"])

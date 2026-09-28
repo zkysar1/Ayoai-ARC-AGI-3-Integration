@@ -32,7 +32,9 @@ That includes GAME_OVER frames, because the vessel's frontier stack learns from
 its losses. The one move the client still makes is the game's opening RESET,
 which comes before send_add, when the session has no unit to ask. Open the
 session with VESSEL_WORLD_FLAGS, or the env server answers with its baseline
-instead of the frontier stack. decider="port" (the default) is oracle mode, the
+instead of the frontier stack; vessel_world_flags(ingest_world=True) adds the
+flag that also puts each decided frame into the session world (g-376-52).
+decider="port" (the default) is oracle mode, the
 behaviour described above; the port stays the parity oracle until OB-31.
 """
 
@@ -68,6 +70,20 @@ DECIDER_VESSEL = "vessel"  # the session's vessel picks every move after the ope
 # (Ayoai-Environment-Server ArcFrontierSessions, dev e26f504), sent as the
 # session-open worldFlags.
 VESSEL_WORLD_FLAGS = ("ARC_FRONTIER_CORE_ENABLED",)
+# The env flag that also has the env server ingest each decided frame into the
+# session world, drive the cursor as the account's arc_agent character and run a
+# perception step on the frame (Ayoai-Environment-Server #626, dev c3b2050). All of
+# that happens after the decision reply is written, so the reply does not change.
+# Opt-in (--ingest-world, g-376-52), so parity runs keep VESSEL_WORLD_FLAGS.
+INGEST_WORLD_FLAG = "ARC_INGEST_WORLD"
+
+
+def vessel_world_flags(ingest_world: bool = False) -> list[str]:
+    """The session-open worldFlags for the vessel decider."""
+    flags = list(VESSEL_WORLD_FLAGS)
+    if ingest_world:
+        flags.append(INGEST_WORLD_FLAG)
+    return flags
 
 
 def to_engine_frame(frame: FrameData) -> arcengine.FrameData:

@@ -596,6 +596,18 @@ def _play(server_stop: RunServerStop) -> int:
         ),
     )
     parser.add_argument(
+        "--ingest-world",
+        action="store_true",
+        help=(
+            "Under --vessel-decides, also open the session with worldFlags "
+            "ARC_INGEST_WORLD (g-376-52): after writing each decision reply, the "
+            "env server ingests the decided frame into the session world, drives "
+            "the cursor as the account's arc_agent character and runs a "
+            "perception step on the frame (env server #626). The replies do not "
+            "change. Off by default, so parity runs keep their flag set."
+        ),
+    )
+    parser.add_argument(
         "--random",
         action="store_true",
         help=(
@@ -877,6 +889,8 @@ def _play(server_stop: RunServerStop) -> int:
 
     if args.vessel_decides and not args.use_port_client:
         parser.error("--vessel-decides needs --use-port-client")
+    if args.ingest_world and not args.vessel_decides:
+        parser.error("--ingest-world needs --vessel-decides")
 
     # --use-port-client swaps the player inside the --use-solver-v2 session
     # (g-376-30). Options that only the adapter reads would do nothing, so they
@@ -1088,12 +1102,13 @@ def _play(server_stop: RunServerStop) -> int:
             )
             server_stop.arm(card_id, env_key)
             # g-376-53: the vessel-decided player asks the env server for its
-            # frontier core stack through the session-open worldFlags.
+            # frontier core stack through the session-open worldFlags, and with
+            # --ingest-world (g-376-52) for the world ingest of each decided frame.
             session_world_flags: list[str] | None = None
             if args.vessel_decides:
-                from port_streaming_client import VESSEL_WORLD_FLAGS
+                from port_streaming_client import vessel_world_flags
 
-                session_world_flags = list(VESSEL_WORLD_FLAGS)
+                session_world_flags = vessel_world_flags(ingest_world=args.ingest_world)
                 logger.info(f"Session worldFlags for the vessel decider: {session_world_flags}")
             ayoai_session = open_ayoai_session(card_id, env_key=env_key, world_flags=session_world_flags)
             logger.info(
