@@ -25,6 +25,8 @@
 recordings/*.recording.jsonl
 tests/recordings/*.recording.jsonl
 tests/recordings/not-a-recording.txt
+# Runs launched from the repo root write here too; ignore them, never bulk-stage them (g-376-70)
+/*.recording.jsonl
 
 # Long-term memory
 memory.db

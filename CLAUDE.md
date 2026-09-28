@@ -7,8 +7,11 @@ Game loop driver for the ARC-AGI-3 abstract reasoning challenge. Connects to the
 **Safety Tier 4 — Non-Lambda** | Test circuit: `syntax-only`
 
 ```bash
-# Run all 40 unit tests (no external deps)
-uv run pytest
+# Full suite, run from the repo root: 1600 passed, 16 skipped, ~125s
+# (measured 2026-09-28 at 2ee06f4 as `.venv/bin/python -m pytest`).
+# Use `python -m pytest`: the bare `pytest` script cannot collect this repo
+# (ModuleNotFoundError: structs; see conftest.py).
+uv run python -m pytest
 
 # Type checking (excludes tests/)
 uv run mypy .
@@ -27,7 +30,7 @@ All three must pass before declaring any change ready.
 | Package manager | uv |
 | Entry point | `main.py` |
 | Run | `uv run main.py --game <game_id>` |
-| Tests | `uv run pytest` (40 tests, ~0.4s) |
+| Tests | `uv run python -m pytest` (1600 passed + 16 skipped, ~125s; bare `pytest` cannot collect) |
 | Lint | `uv run ruff check .` |
 | Type check | `uv run mypy .` |
 | API target | ARC-AGI-3 (`three.arcprize.org`) |
