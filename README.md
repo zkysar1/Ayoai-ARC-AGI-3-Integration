@@ -14,6 +14,20 @@ This is a simplified version of the ARC-AGI-3 agent framework containing only:
 
 All LLM-related code, agent abstractions, multi-agent orchestration (Swarm), and optional features have been removed for clarity.
 
+## Quickstart
+
+**1. Play a game offline, with no key and no network.** This needs [uv](https://docs.astral.sh/uv/) and Python 3.12.
+
+```bash
+uv sync --extra offline
+uv run --extra offline python offline_run.py --game ls20
+```
+
+It plays `ls20` from `environment_files/` through the local solver and prints one JSON line with the action count, FPS, end state and `levels_completed`. Measured on 2026-09-30: 2,001 actions in 2.6 s.
+
+**2. Play against the ARC-AGI-3 API.** Get an `ARC_API_KEY` as described under [Setup](#setup), then find a game id with `uv run main.py --game test`. The `--random` flag plays a uniform-random baseline and needs no Ayoai key.
+
+**3. Use a hosted Ayoai mind (memory across games).** Hosted minds are not self-serve yet. Create an account at [ayoai.com/account](https://ayoai.com/account) and email [zak@ayoai.com](mailto:zak@ayoai.com) to try one; we set up the first few by hand. The client reads the key from `AYOAI_API_KEY`. The ARC Prize 2026 scored evaluation runs offline with no internet access, so a hosted mind is for development and research runs, not for a scored Kaggle submission.
 
 ## Basic Usage
 - Basic usage: `uv run main.py --game ls20-fa137e247ce6`
@@ -229,7 +243,9 @@ pre-commit install
 
 ## License
 
-This project contains code derived from the ARC-AGI-3-Agents repository.
+Apache License 2.0; see [LICENSE](LICENSE). Third-party files keep their own licenses. `vendor/ARC-AGI-3-Agents/` and the games in `environment_files/` come from the ARC Prize Foundation under the MIT License, and code derived from ARC-AGI-3-Agents keeps its MIT notice. See [NOTICE](NOTICE) for details.
+
+Issues and pull requests are welcome; support is best-effort.
 
 ## If I get this error
 - this error: """error: Project virtual environment directory `C:\ZakNoCloud\GitHub\Ayoai\Ayoai-ARC-AGI-3-Integration\.venv` cannot be used because it is not a valid Python environment (no Python executable was found)"""
