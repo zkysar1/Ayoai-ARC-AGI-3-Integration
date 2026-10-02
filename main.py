@@ -5,6 +5,7 @@ load_dotenv(dotenv_path=".env.example")
 load_dotenv(dotenv_path=".env", override=True)
 
 import argparse
+import importlib.util
 import json
 import logging
 import os
@@ -933,6 +934,15 @@ def _play(server_stop: RunServerStop) -> int:
     if args.use_port_client:
         if not args.use_solver_v2:
             parser.error("--use-port-client needs --use-solver-v2")
+        # arcengine ships only in the optional [offline] extra (pyproject.toml), and the port
+        # client imports it at module level from two sites that both come after the scorecard
+        # opens. Refused here, a box without the extra stops before any ARC request instead of
+        # dying in a bare ModuleNotFoundError with the scorecard left open (g-376-83).
+        if importlib.util.find_spec("arcengine") is None:
+            parser.error(
+                "--use-port-client needs arcengine, which only the optional [offline] extra "
+                'installs (pyproject.toml): .venv/bin/pip install "arc-agi==0.9.9" "arcengine==0.9.3"'
+            )
         adapter_only = [
             flag
             for flag, on in (
