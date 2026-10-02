@@ -603,8 +603,8 @@ def _play(server_stop: RunServerStop) -> int:
             "stays the parity oracle (eval/decision_parity.py). The only client "
             "move is the opening RESET. SOLVER_V2_THEORY_ARM is refused. The "
             "default under --use-port-client since g-376-57 (OB-31), so this flag "
-            "changes nothing; it is kept so existing commands still parse. The "
-            "frontier core is on the DEV lane only, so it needs AYOAI_LANE=dev."
+            "changes nothing; it is kept so existing commands still parse. Runs "
+            "on either lane (the frontier core is on prod, g-376-73)."
         ),
     )
     parser.add_argument(
@@ -995,19 +995,9 @@ def _play(server_stop: RunServerStop) -> int:
     # prod, or dev for the DEV lane of grant-015). A value it cannot use is refused here,
     # before a scorecard is opened.
     try:
-        lane = resolve_lane()
+        resolve_lane()
     except AyoaiSessionError as exc:
         parser.error(str(exc))
-    # g-376-57: the vessel route is on the DEV lane only. The frontier core and the
-    # ARC_FRONTIER_CORE_ENABLED world-flag allowlists are on dev, not main, in the env
-    # server and both launch Lambdas (Collect #74, Start #95), and without the flag the
-    # env server answers with its baseline instead of the frontier stack. A prod run
-    # would be played by the wrong decider, so it is refused before a scorecard opens.
-    if args.vessel_decides and lane.name != "dev":
-        parser.error(
-            "the vessel decider runs on the DEV lane only (AYOAI_LANE=dev) until the "
-            "frontier core is promoted to prod; on prod, --oracle plays with the port"
-        )
 
     # --state-graph only takes effect under --use-solver-v2 (the v2 adapter is
     # the sole StateGraphExplorer build site). Warn rather than error so the

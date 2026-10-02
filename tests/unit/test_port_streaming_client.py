@@ -472,10 +472,6 @@ def _main_py(args: list[str], cwd: Path, extra_env: dict[str, str]) -> subproces
         (["--use-solver-v2", "--oracle"], {}, "--oracle needs --use-port-client"),
         (["--use-solver-v2", "--use-port-client", "--oracle", "--vessel-decides"], {},
          "--oracle and --vessel-decides are mutually exclusive"),
-        # The vessel route is on the DEV lane only; prod is the default lane.
-        (["--use-solver-v2", "--use-port-client"], {}, "the vessel decider runs on the DEV lane only"),
-        (["--use-solver-v2", "--use-port-client", "--vessel-decides"], {"AYOAI_LANE": "prod"},
-         "the vessel decider runs on the DEV lane only"),
     ],
 )
 def test_main_refuses_port_client_combinations_that_would_do_nothing(
@@ -505,6 +501,17 @@ def test_main_plays_the_port_on_any_lane_under_oracle(tmp_path: Path, lane: dict
     # inputs without --oracle are refused on prod, above). The run stops at the
     # closed local ARC port.
     proc = _main_py(["--use-solver-v2", "--use-port-client", "--oracle"], tmp_path, lane)
+    out = proc.stdout + proc.stderr
+    assert "usage:" not in out and "Connection refused" in out, out[-400:]
+
+
+@pytest.mark.parametrize("explicit", [[], ["--vessel-decides"]])
+@pytest.mark.parametrize("lane", [{}, {"AYOAI_LANE": "prod"}, {"AYOAI_LANE": "dev"}])
+def test_main_plays_the_vessel_on_any_lane(tmp_path: Path, lane: dict[str, str], explicit: list[str]) -> None:
+    # g-376-73: the frontier core is on prod, so the DEV-lane refusal g-376-57 added is
+    # gone and the vessel decides on either lane, by default or with the explicit flag.
+    # The run stops at the closed local ARC port, before any AyoAI call.
+    proc = _main_py(["--use-solver-v2", "--use-port-client", *explicit], tmp_path, lane)
     out = proc.stdout + proc.stderr
     assert "usage:" not in out and "Connection refused" in out, out[-400:]
 
