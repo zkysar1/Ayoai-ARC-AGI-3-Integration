@@ -150,8 +150,8 @@ games outside the 15.
 
 ## 10. Status against g-376-56's outcomes (2026-10-02)
 
-1. Protocol document in the ARC repo: this file. Linked from the weekly report: pending, because
-   the first weekly report (g-376-16) has not been sent.
+1. Protocol document in the ARC repo: this file. Linked from the weekly report: yes. Weekly report 1
+   (g-376-16) was sent on 2026-10-03 with a link to this file at commit 8c2bd09.
 2. First learning curve (two or more games in sequence by one persistent Mind): not measured.
    The gate in section 6 applies to E as well, because a web lookup would corrupt even E's curve.
 3. Transfer-delta protocol names the fresh-mind control arm: section 2.
