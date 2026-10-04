@@ -1,5 +1,7 @@
 # Theory reuse experiment results: g-376-10-c
 
+> **Retired 2026-10-04 (g-376-84):** the warm theory-memory regime this record measures, its client (`primitives/theory_memory.py`) and the env-server routes `POST /ArcTheory` and `GET /ArcTheories` were removed. This file stays as the record of what was measured; it can no longer be re-run.
+
 Experiment: `g-376-10-c`. Hypothesis:
 `2026-09-25_arc-memory-reuse-null-on-first-level`. Pre-registration:
 `analysis/g37610c_theory_reuse_preregistration.md` (commit 591b47e).

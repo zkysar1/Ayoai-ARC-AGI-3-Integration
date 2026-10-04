@@ -32,7 +32,6 @@ from ayoai_streaming_client import (
     AyoaiStreamingDnsError,
     AyoaiStreamingError,
     StreamingDecisionClient,
-    resolve_streaming_host_with_retry,
 )
 from house_rules import heldout_refusal
 from random_streaming_adapter import RandomStreamingAdapter
@@ -995,11 +994,6 @@ def _play(server_stop: RunServerStop) -> int:
     )
     if args.vessel_decides and theory_arm_on:
         parser.error("SOLVER_V2_THEORY_ARM falls back to the port's move; under --use-port-client it needs --oracle")
-    theory_memory_regime = os.environ.get("ARC_THEORY_MEMORY", "").strip().lower() or "cold"
-    if theory_memory_regime not in ("cold", "warm"):
-        parser.error("ARC_THEORY_MEMORY must be cold or warm")
-    if theory_memory_regime == "warm" and not (args.use_solver_v2 and theory_arm_on):
-        parser.error("ARC_THEORY_MEMORY=warm needs --use-solver-v2 and SOLVER_V2_THEORY_ARM")
 
     # g-376-10-b: AYOAI_LANE picks the launch chain the session opens through (unset or
     # prod, or dev for the DEV lane of grant-015). A value it cannot use is refused here,
@@ -1462,7 +1456,6 @@ def _play(server_stop: RunServerStop) -> int:
             import spend_meter
             from adapters.arc_theory import THEORY_MODEL, make_theory_arm
             from primitives.theory_arm import ArmConfig
-            from primitives.theory_memory import TheoryMemory
 
             arm_config = (
                 None
@@ -1483,28 +1476,11 @@ def _play(server_stop: RunServerStop) -> int:
             theory_client = spend_meter.metered_anthropic(
                 game_id=args.game, run_id=theory_run_id
             )
-            # g-376-10-b: warm memory lives in the game's AyoAI session. The solver-v2
-            # branch above opened one or aborted the play, so it is there.
-            theory_memory: TheoryMemory | None = None
-            if theory_memory_regime == "warm" and ayoai_session is not None:
-                memory_url = ayoai_session.streaming_url
-                theory_memory = TheoryMemory.for_session(
-                    memory_url,
-                    api_key=resolve_api_key(),
-                    game_id=args.game,
-                    run_id=theory_run_id,
-                    warm_dns=lambda: resolve_streaming_host_with_retry(memory_url),
-                )
-            elif theory_memory_regime == "warm":
-                logger.warning("[theory-arm] ARC_THEORY_MEMORY=warm but no AyoAI session is open; memory=cold")
             logger.info(
-                "[theory-arm] enabled: model=%s run_dir=%s win_test_share=%s memory=%s",
+                "[theory-arm] enabled: model=%s run_dir=%s win_test_share=%s",
                 THEORY_MODEL,
                 theory_dir,
                 "default" if arm_config is None else arm_config.win_test_share,
-                "cold"
-                if theory_memory is None
-                else f"warm via {theory_memory.base_url}/ArcTheory",
             )
             streaming_client.set_theory_arm(
                 lambda grid: make_theory_arm(
@@ -1514,7 +1490,6 @@ def _play(server_stop: RunServerStop) -> int:
                     run_id=theory_run_id,
                     run_dir=theory_dir,
                     config=arm_config,
-                    memory=theory_memory,
                 )
             )
     else:

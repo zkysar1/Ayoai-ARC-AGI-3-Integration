@@ -61,7 +61,7 @@ CLIENT_TYPE_ARC = "arc"
 # the SdlcPlane=dev launch chain: both calls go to the /dev stage, and the cold
 # start asks for the dev jar. The two go together: a dev-route launch without
 # ayoaiServerVersion boots the PROD jar (measured g-370-04), and only the dev jar
-# has routes that are not yet promoted, such as /ArcTheory (g-376-10-a). Unset or
+# has routes that are not yet promoted. Unset or
 # "prod" keeps the prod URLs and payload above, byte for byte.
 DEV_COLD_START_URL = "https://api.ayoai.com/httpV1/dev/CollectAyoEnvironmentInBatchesOnStartUp"
 DEV_RESOLUTION_URL = "https://api.ayoai.com/httpV1/dev/GetStreamingUrlAndStatus"

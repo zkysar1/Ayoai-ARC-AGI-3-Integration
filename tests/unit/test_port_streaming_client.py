@@ -440,8 +440,7 @@ def _main_py(args: list[str], cwd: Path, extra_env: dict[str, str]) -> subproces
     pattern): a broken refusal still opens no scorecard and plays nothing."""
     env = os.environ.copy()
     env.update({"SCHEME": "http", "HOST": "127.0.0.1", "PORT": "9", "ARC_API_KEY": ""})
-    for name in ("SOLVER_V2_V4_ARM", "ARC_THEORY_WIN_TEST_SHARE", "SOLVER_V2_THEORY_ARM", "ARC_THEORY_MEMORY",
-                 "AYOAI_LANE"):
+    for name in ("SOLVER_V2_V4_ARM", "ARC_THEORY_WIN_TEST_SHARE", "SOLVER_V2_THEORY_ARM", "AYOAI_LANE"):
         env.pop(name, None)
     env.update(extra_env)
     return subprocess.run(
@@ -550,37 +549,23 @@ def test_main_accepts_a_win_test_share_from_0_to_1(tmp_path: Path) -> None:
     assert "ARC_THEORY_WIN_TEST_SHARE" not in proc.stderr, proc.stderr[-400:]
 
 
-@pytest.mark.parametrize(
-    ("args", "extra_env", "message"),
-    [
-        (["--use-solver-v2"], {"SOLVER_V2_THEORY_ARM": "1", "ARC_THEORY_MEMORY": "hot"},
-         "ARC_THEORY_MEMORY must be cold or warm"),
-        (["--use-solver-v2"], {"ARC_THEORY_MEMORY": "warm"},
-         "ARC_THEORY_MEMORY=warm needs --use-solver-v2 and SOLVER_V2_THEORY_ARM"),
-        ([], {"SOLVER_V2_THEORY_ARM": "1", "ARC_THEORY_MEMORY": "warm"},
-         "ARC_THEORY_MEMORY=warm needs --use-solver-v2 and SOLVER_V2_THEORY_ARM"),
-        (["--use-solver-v2"], {"AYOAI_LANE": "staging"}, "AYOAI_LANE must be prod or dev"),
-    ],
-)
-def test_main_refuses_a_memory_regime_or_lane_it_cannot_apply(
-    tmp_path: Path, args: list[str], extra_env: dict[str, str], message: str
-) -> None:
+def test_main_refuses_a_lane_it_cannot_apply(tmp_path: Path) -> None:
     # g-376-10-b: refused before any scorecard or session is opened.
-    proc = _main_py(args, tmp_path, extra_env)
+    proc = _main_py(["--use-solver-v2"], tmp_path, {"AYOAI_LANE": "staging"})
     assert proc.returncode == 2, proc.stdout[-400:] + proc.stderr[-400:]
-    assert message in proc.stderr
+    assert "AYOAI_LANE must be prod or dev" in proc.stderr
 
 
-def test_main_accepts_warm_memory_on_the_dev_lane(tmp_path: Path) -> None:
-    # Positive control: both checks pass, and the run stops at the closed local ARC
+def test_main_accepts_the_dev_lane(tmp_path: Path) -> None:
+    # Positive control: the lane check passes, and the run stops at the closed local ARC
     # port, before any AyoAI call.
     proc = _main_py(
         ["--use-solver-v2", "--use-port-client", "--oracle"],
         tmp_path,
-        {"SOLVER_V2_THEORY_ARM": "1", "ARC_THEORY_MEMORY": "warm", "AYOAI_LANE": "dev"},
+        {"SOLVER_V2_THEORY_ARM": "1", "AYOAI_LANE": "dev"},
     )
     out = proc.stdout + proc.stderr
-    assert "ARC_THEORY_MEMORY" not in out and "AYOAI_LANE" not in out, out[-400:]
+    assert "AYOAI_LANE" not in out, out[-400:]
     # rc 2 is also EXIT_ARC_UPSTREAM, so read where the run stopped instead.
     assert "usage:" not in out and "Connection refused" in out, out[-400:]
 

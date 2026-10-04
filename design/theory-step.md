@@ -8,6 +8,8 @@ related: v4-synthesized-world-model.md, win-condition-discovery.md, win-conditio
 
 # The Theory Step
 
+> **Retired 2026-10-04 (g-376-84):** section 12 (the warm memory regime), the `TheoryMemory` client and the env-server routes it called (`POST /ArcTheory`, `GET /ArcTheories`) were removed. The arm is cold-only. The text below is kept as the design record.
+
 The theory step is how the asp-376 agent learns a game while it plays it. Between
 moves, the smallest model writes a **theory**: a short Python module that predicts
 what each move does and states a **guess of what finishes the level**. Plain code
