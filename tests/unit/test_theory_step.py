@@ -12,6 +12,7 @@ prove the wiring, never a live score.
 from __future__ import annotations
 
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -629,7 +630,7 @@ def test_metered_writer_uses_the_meter_the_smallest_model_and_temperature_zero(t
                 )
 
     ledger = tmp_path / "ledger.jsonl"
-    in_window = lambda: spend_meter.WINDOW_START  # noqa: E731
+    in_window = lambda: datetime(2026, 9, 24, tzinfo=timezone.utc)  # noqa: E731
     writer = MeteredTheoryWriter(spend_meter.MeteredClient(Inner(), ledger=ledger, now=in_window))
     result = writer.write("system", "prompt")
     assert sent[0]["model"] == "claude-haiku-4-5-20251001"

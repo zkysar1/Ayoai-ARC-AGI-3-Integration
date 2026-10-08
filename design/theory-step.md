@@ -31,7 +31,7 @@ From the asp-376 plan and `HOUSE_RULES.md`:
 |---|---|
 | D1: smallest model by default, no silent step-up (guard-894) | Model `claude-haiku-4-5-20251001`. `spend_meter.RATES` has rows for Haiku only, so any other model is refused before the call. A step-up means adding a rate row in a visible diff and reporting that game separately. |
 | D2: the model runs only between moves; plain code picks every move | The model returns code, never an action. Moves come from the planner (§8.3) or the plain-code explorer (§8.4). ARC-AGI-3 waits for each action, so a model call costs wall-clock time and dollars, never moves. |
-| D3: $250 cap to 2026-10-08, cost per game | Every call goes through `spend_meter.MeteredClient` (global cap, window, fail closed) and a per-game budget (§10). |
+| D3: $250 cap per UTC calendar month, cost per game (ruled monthly 2026-10-08; it read "to 2026-10-08" before) | Every call goes through `spend_meter.MeteredClient` (monthly cap, no end date, fail closed) and a per-game budget (§10). |
 | D4: games run through an AyoAI session, learning kept in AyoAI memory | The theory step lives inside the solver the AyoAI session routes (the v4 `V4Arm` in `solver_v2/streaming_adapter.py`). At each level-up it writes a theory record for AyoAI memory (§12, built by g-376-10). |
 | Rule 1: screen and allowed moves only, never game source | The model sees the frame, the allowed actions and the level counter. Theory code runs in a sandbox with no files, no imports and no network (§6.3), so it cannot read `environment_files/`. |
 | Rule 2: general purpose only, no game named in code or prompt | One prompt template for every game. The prompt builder takes no game id argument, so it cannot put one in the prompt. |
@@ -409,7 +409,7 @@ Three layers, all in code, all fail closed:
 
 | Layer | Enforced by | Limit | On refusal |
 |---|---|---|---|
-| Global | `spend_meter.MeteredClient` (g-376-08) | spent + pre-call worst case ≤ $250; 2026-09-24 ≤ now < 2026-10-09; model must have a rate row | raises `SpendRefused`; the theory step stops calling for the rest of the run |
+| Global | `spend_meter.MeteredClient` (g-376-08) | this UTC month's spend + pre-call worst case ≤ $250 (no end date; earlier months do not count); model must have a rate row | raises `SpendRefused`; the theory step stops calling for the rest of the run |
 | Per game | `GameBudget` (new, g-376-09), checked before each call | 60 calls per game; 15 calls per level; game cost (summed from the ledger rows with this `run_id` and `game_id`) + the meter's pre-call estimate ≤ $2.00 | no call; the solver keeps the last admitted theory and the explorer (strict superset: never worse than the plain-code solver) |
 | Per call | request parameters | `max_tokens` 4,000; theory ≤ 12,000 characters | the call is capped; an oversized theory is refused at check 1 |
 
@@ -445,8 +445,8 @@ The meter's pre-call check counts UTF-8 bytes as input tokens, so it over-reserv
 Assuming no more than 4 bytes per token (prose runs about 4, the screen about 1), a
 12,000-token prompt is at most about 48,000 bytes, and the reservation is at most
 48,000 × $1.00/1M + 4,000 × $5.00/1M = $0.068 per call. That matters only near the
-cap. The spend window ends 2026-10-08, the checkpoint date (g-376-12) and before the
-exam (g-376-14), so the exam budget is decided at the checkpoint.
+cap. The cap is $250 per UTC calendar month with no end date (owner ruling 2026-10-08,
+g-376-124), so the exam draws on the month it runs in.
 
 ## 11. Measures
 
