@@ -1,12 +1,15 @@
 """Model-spend meter and hard cap for the ARC program (asp-376, decision D3).
 
 Every model call goes through ``MeteredClient``. It prices the call from
-``RATES``, refuses it when recorded spend plus the call's worst-case cost
-would pass the cap, and appends the actual cost to a JSONL ledger. It FAILS
-CLOSED:
+``RATES``, refuses it when this UTC calendar month's recorded spend plus the
+call's worst-case cost would pass the cap, and appends the actual cost to a
+JSONL ledger. The cap is monthly with no end date (owner ruling 2026-10-08):
+ledger rows stamped in an earlier month do not count; rows stamped in the call's
+month or later do, so a clock set back cannot reset the month. It FAILS CLOSED:
 - a model with no rate row is refused (no fallback rate, so no silent step-up);
-- an unreadable ledger is refused;
-- a call after the spend window ends is refused;
+- an unreadable ledger is refused, including a row whose ``ts`` is missing,
+  unparseable or has no timezone, because its month cannot be placed;
+- a clock that returns a time with no timezone is refused;
 - a response that reports no usage is charged the pre-call worst case.
 
 Scope: the cap holds per ledger file. The default ledger is in the user's home,
@@ -31,9 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-CAP_USD = 250.0
-WINDOW_START = datetime(2026, 9, 24, tzinfo=timezone.utc)
-WINDOW_END = datetime(2026, 10, 9, tzinfo=timezone.utc)  # exclusive: through 2026-10-08
+CAP_USD = 250.0  # per UTC calendar month, per ledger file; no end date
 
 # USD per million tokens (input, output), list price for Claude Haiku 4.5 from
 # https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-24).
@@ -65,6 +66,12 @@ def call_cost(model: str, input_tokens: int, output_tokens: int) -> float:
     return (input_tokens * rate_in + output_tokens * rate_out) / 1_000_000
 
 
+def month_start(now: datetime) -> datetime:
+    """00:00 UTC on the first day of the UTC calendar month holding ``now``."""
+    utc = now.astimezone(timezone.utc)
+    return datetime(utc.year, utc.month, 1, tzinfo=timezone.utc)
+
+
 def read_ledger(path: Path) -> list[dict[str, Any]]:
     """All ledger rows. Any unreadable line raises SpendRefused (fail closed)."""
     if not path.exists():
@@ -80,17 +87,25 @@ def read_ledger(path: Path) -> list[dict[str, Any]]:
         try:
             row = json.loads(line)
             cost = float(row["cost_usd"])
+            stamped = datetime.fromisoformat(str(row["ts"]))
         except (ValueError, KeyError, TypeError) as exc:
             raise SpendRefused(f"ledger line {n} unreadable: {exc}") from exc
         # json.loads accepts NaN, and a NaN total makes every cap check pass.
         if not math.isfinite(cost) or cost < 0:
             raise SpendRefused(f"ledger line {n} unreadable: cost_usd {cost!r}")
+        # A time with no zone cannot be placed in a UTC month.
+        if stamped.tzinfo is None:
+            raise SpendRefused(f"ledger line {n} unreadable: ts {row['ts']!r} has no timezone")
         rows.append(row)
     return rows
 
 
-def spent_usd(rows: list[dict[str, Any]]) -> float:
-    return sum(float(r["cost_usd"]) for r in rows)
+def spent_usd(rows: list[dict[str, Any]], since: datetime | None = None) -> float:
+    """Sum of ``cost_usd`` over the rows stamped at or after ``since`` (all rows when
+    None). The rows come from ``read_ledger``, which guarantees a timezone on each ``ts``."""
+    return sum(
+        float(r["cost_usd"]) for r in rows if since is None or datetime.fromisoformat(str(r["ts"])) >= since
+    )
 
 
 class _Messages:
@@ -137,13 +152,14 @@ class MeteredClient:
         model = str(kwargs.get("model", ""))
         max_tokens = int(kwargs.get("max_tokens", 0))
         now = self._now()
-        if not WINDOW_START <= now < WINDOW_END:
-            raise SpendRefused(f"outside the spend window ({now.isoformat()})")
+        if now.tzinfo is None:  # month_start would read it as local time
+            raise SpendRefused(f"clock returned a time with no timezone ({now.isoformat()})")
         estimate = self._estimate(model, max_tokens, kwargs)
-        spent = spent_usd(read_ledger(self.ledger))
+        month = month_start(now)
+        spent = spent_usd(read_ledger(self.ledger), month)
         if spent + estimate > self.cap_usd:
             raise SpendRefused(
-                f"cap ${self.cap_usd:.2f}: spent ${spent:.4f} + estimate ${estimate:.4f}"
+                f"cap ${self.cap_usd:.2f} for {month:%Y-%m}: spent ${spent:.4f} + estimate ${estimate:.4f}"
             )
         response = self._inner.messages.create(**kwargs)
         usage = getattr(response, "usage", None)
@@ -177,8 +193,9 @@ def metered_anthropic(game_id: str = "", run_id: str = "") -> MeteredClient:
     return MeteredClient(anthropic.Anthropic(), game_id=game_id, run_id=run_id)
 
 
-def summary(rows: list[dict[str, Any]]) -> str:
-    """Spend by ISO week, game and model, plus the cap line."""
+def summary(rows: list[dict[str, Any]], now: datetime | None = None) -> str:
+    """Spend by ISO week, game and model, plus the cap line for the current UTC month."""
+    month = month_start(now or datetime.now(timezone.utc))
     by: dict[str, dict[str, float]] = {"week": defaultdict(float), "game": defaultdict(float), "model": defaultdict(float)}
     for r in rows:
         cost = float(r["cost_usd"])
@@ -186,7 +203,10 @@ def summary(rows: list[dict[str, Any]]) -> str:
         by["week"][f"{year}-W{week:02d}"] += cost
         by["game"][str(r.get("game_id") or "(none)")] += cost
         by["model"][str(r.get("model") or "(none)")] += cost
-    head = f"spent ${spent_usd(rows):.4f} of ${CAP_USD:.2f} cap over {len(rows)} call(s)"
+    head = (
+        f"spent ${spent_usd(rows, month):.4f} of ${CAP_USD:.2f} cap in {month:%Y-%m} (UTC calendar month); "
+        f"${spent_usd(rows):.4f} over {len(rows)} call(s) in the ledger"
+    )
     estimated = sum(1 for r in rows if r.get("estimated"))
     if estimated:
         head += f", {estimated} charged at the pre-call worst case (no usage reported)"
