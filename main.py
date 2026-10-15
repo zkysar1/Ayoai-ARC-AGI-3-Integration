@@ -10,8 +10,10 @@ import json
 import logging
 import os
 import random
+import shutil
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -35,7 +37,7 @@ from ayoai_streaming_client import (
 )
 from house_rules import heldout_refusal
 from random_streaming_adapter import RandomStreamingAdapter
-from recorder import Recorder
+from recorder import Recorder, get_recordings_dir
 from solver_v0.streaming_adapter import SolverV0StreamingAdapter
 from solver_v2.refiner import (
     RefinerSeedProvider,
@@ -452,6 +454,25 @@ class RunServerStop:
         stop_ayoai_server(server_key, env_key)
 
 
+def _attach_run_log(game: str, guid: str, like: logging.Handler) -> str:
+    """Give this run its own log file beside its recording (g-376-152).
+
+    The harness opens logs.log with mode "w" (rb-13037), so the next run in the same
+    directory would erase it. The file starts as a copy of logs.log so far and then
+    takes every line the run logs, so a run that is killed keeps its log. Returns
+    the path; `like` supplies the level and format."""
+    directory = get_recordings_dir()
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, f"{game}.{guid}.logs.log")
+    shutil.copyfile("logs.log", path)
+    handler = logging.FileHandler(path, mode="a")
+    handler.setLevel(like.level)
+    handler.setFormatter(like.formatter)
+    logger.addHandler(handler)
+    return path
+
+
 def _play(server_stop: RunServerStop) -> int:
     """The body of main(), which owns the server stop (see main)."""
     log_level = logging.INFO
@@ -489,8 +510,12 @@ def _play(server_stop: RunServerStop) -> int:
     parser.add_argument(
         "-r",
         "--record",
-        action="store_true",
-        help="Record gameplay to JSONL file",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Record gameplay to a JSONL file and keep a per-run copy of logs.log "
+            "beside it (g-376-152). On by default; --no-record turns it off"
+        ),
     )
     parser.add_argument(
         "--exam",
@@ -1023,6 +1048,14 @@ def _play(server_stop: RunServerStop) -> int:
 
     logger.info(f"Connecting to API at: {ROOT_URL}")
 
+    # One guid names this run's recording and its log, so the two pair up (g-376-152)
+    run_guid = str(uuid.uuid4())
+    if args.record:
+        try:
+            logger.info(f"Run log: {_attach_run_log(args.game, run_guid, file_handler)}")
+        except OSError as e:
+            logger.warning(f"Could not keep a per-run log: {e}")
+
     # Create session that will be used throughout
     session = requests.Session()
     session.headers.update(HEADERS)
@@ -1541,7 +1574,7 @@ def _play(server_stop: RunServerStop) -> int:
             else "ayoai"
         )
         prefix = f"{args.game}.{solver_name}.{args.level}"
-        recorder = Recorder(prefix=prefix)
+        recorder = Recorder(prefix=prefix, guid=run_guid)
         logger.info(f"Recording to: {recorder.filename}")
         # Record the session-open evidence (or mock-URL bind) as the first
         # entry — preserves g-315-03 outcome 3 for live mode, documents

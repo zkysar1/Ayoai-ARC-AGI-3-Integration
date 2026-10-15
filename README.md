@@ -104,7 +104,8 @@ uv run main.py --game ls20-fa137e247ce6 --tags "experiment,v1.0"
 
 ```
 -g, --game      Game ID to play (required). Example: "ls20-fa137e247ce6"
--r, --record    Record gameplay to JSONL file (optional)
+-r, --record    Record gameplay to a JSONL file and keep a per-run copy of logs.log
+                (on by default; --no-record turns it off)
 -t, --tags      Comma-separated tags for scorecard (optional)
 ```
 
