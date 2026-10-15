@@ -15,6 +15,9 @@ The default is `first-affordance`, the seam's positive control, which must match
 harness's `first-available` decider move for move. `reflexes` is that core under the
 restart and hazard-quarantine reflexes (g-376-51-b). `frontier` is the port of the
 oracle's policy under the same reflexes (g-376-51-c).
+VESSEL_HINT: the path of a hint file (vessel_hint.py), handed to the driver as `--hint`
+(g-376-141). Unset, the driver runs as it always did. The driver is the authority on the hint
+and stops at start-up on a bad one, with its message on stderr.
 """
 
 from __future__ import annotations
@@ -56,10 +59,10 @@ def to_game_action(reply: dict[str, Any]) -> GameAction:
 class VesselDecider:
     """One driver process per game, so the core keeps its state across moves."""
 
-    def __init__(self, core: str) -> None:
+    def __init__(self, core: str, hint: str | None = None) -> None:
         self.core = core
         self.proc = subprocess.Popen(
-            ["java", "-cp", str(vessel_jar()), DRIVER, core],
+            ["java", "-cp", str(vessel_jar()), DRIVER, core, *(["--hint", hint] if hint else [])],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             text=True,
@@ -79,4 +82,4 @@ class VesselDecider:
 
 def factory(game: str) -> VesselDecider:
     """decision_parity's module:factory hook; every game gets a fresh process."""
-    return VesselDecider(os.environ.get("VESSEL_CORE", "first-affordance"))
+    return VesselDecider(os.environ.get("VESSEL_CORE", "first-affordance"), os.environ.get("VESSEL_HINT"))
