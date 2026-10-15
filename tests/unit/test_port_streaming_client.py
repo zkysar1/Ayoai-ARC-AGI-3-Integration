@@ -8,6 +8,7 @@ eval/adapter_run.py --player port (eval/port-client-2026-09-25.json)."""
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import os
@@ -554,15 +555,37 @@ def test_main_refuses_a_vessel_hint_file_the_server_would_refuse(
     assert "Connection refused" not in proc.stdout + proc.stderr
 
 
-@pytest.mark.parametrize("text", ['{"force_first": [{"action": "ACTION6", "x": 5, "y": 5}], "avoid": ["ACTION3"]}', "{}"])
-def test_main_accepts_a_vessel_hint_file_under_the_vessel_decider(tmp_path: Path, text: str) -> None:
+@pytest.mark.parametrize(
+    ("text", "loaded"),
+    [('{"force_first": [{"action": "ACTION6", "x": 5, "y": 5}], "avoid": ["ACTION3"]}', True), ("{}", False)],
+)
+def test_main_accepts_a_vessel_hint_file_under_the_vessel_decider(tmp_path: Path, text: str, loaded: bool) -> None:
     # Positive control for the refusals above: a good hint, or an empty one, passes the checks and
-    # the run stops at the closed local ARC port, before any AyoAI call.
+    # the run stops at the closed local ARC port, before any AyoAI call. The log line is the proof
+    # that main KEPT the hint (g-376-141): a good one is announced, an empty one is no hint and is not.
     hint = tmp_path / "hint.json"
     hint.write_text(text)
     proc = _main_py(["--use-solver-v2", "--use-port-client", "--vessel-hint", str(hint)], tmp_path, {})
     out = proc.stdout + proc.stderr
     assert "usage:" not in out and "--vessel-hint" not in out and "Connection refused" in out, out[-400:]
+    assert ("Vessel hint loaded from" in out) is loaded, out[-400:]
+
+
+def test_main_hands_the_loaded_hint_to_every_port_client_it_builds() -> None:
+    # The run above stops at the closed ARC port, before main builds the port client, so no
+    # subprocess test reaches that call. Pin it over the DERIVED set of call sites instead
+    # (g-376-141): a call that stopped passing the hint would leave --vessel-hint a silent no-op.
+    tree = ast.parse((REPO / "main.py").read_text(encoding="utf-8"))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (getattr(node.func, "attr", None) or getattr(node.func, "id", None)) == "PortStreamingClient"
+    ]
+    assert calls, "main.py builds no PortStreamingClient: the call site moved, so update this test"
+    for call in calls:
+        value = {kw.arg: kw.value for kw in call.keywords}.get("vessel_hint")
+        assert isinstance(value, ast.Name) and value.id == "vessel_hint", ast.unparse(call)
 
 
 @pytest.mark.parametrize("lane", [{}, {"AYOAI_LANE": "prod"}, {"AYOAI_LANE": "dev"}])
