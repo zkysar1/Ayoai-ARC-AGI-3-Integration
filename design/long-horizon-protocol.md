@@ -155,3 +155,42 @@ games outside the 15.
 2. First learning curve (two or more games in sequence by one persistent Mind): not measured.
    The gate in section 6 applies to E as well, because a web lookup would corrupt even E's curve.
 3. Transfer-delta protocol names the fresh-mind control arm: section 2.
+
+## Amendment 1 (2026-10-09, g-376-56): who writes the visit record, and what it cannot count yet
+
+Section 8 said no harness writes `eval/long-horizon/<run-id>/visits.jsonl`. `eval/visits_assembler.py`
+now writes it after a run. It is not a harness hook: it runs offline over files, makes no network or
+cloud call, reads no credential, and leaves the billable path as it was. Its docstring lists the
+inputs and the command line; what a reader of a row needs is below.
+
+- **One id joins the sources**: the card id. The recording's first line carries it as `ayo_server_key`,
+  the official scorecard as `card_id`, and the AyoAI meter row of the session is keyed by it. A recording
+  that does not open with an `ayoai_session_open` line carrying it (a mocked session, or none) is not a
+  served visit, and the assembler refuses it.
+- **The plan.** `eval/long-horizon/<run-id>/plan.json` lists the visits in the order played: arm (E, F, E2),
+  game, block (B1, B2, B3), visit index and recording file. For E and E2 the visit index counts the arm's
+  visits to one game from 1, so a re-entry is 2, and the plan must list the arm's visits in start-time order
+  (section 3: a delta is never compared across runs whose orders differ). For F the index is 1. The assembler
+  refuses a plan that breaks either rule, a plan whose game differs from the recording's, and two visits
+  that share a card id. The row order is the plan's order.
+- **Counted from the recording.** `actions` is the recording's tick lines, RESET included (as
+  `action_budget` counts). `first_level_action` is the tick count at the first line whose
+  `levels_completed` is 1 or more; a visit that never gets there has it null and `censored` true, and
+  nothing is imputed.
+- **Levels come from the official scorecard** (house rule 5) as `levels`, beside the recording's own count
+  as `levels_recording` and a `levels_agree` flag. The scorecard exists only in main.py's log (the API
+  answers 404 after the close), and main.py opens `logs.log` with mode "w", so each run replaces the last
+  run's file: copy it away after every visit. With no block for the card the row says
+  `scorecard block missing` and `levels` is null.
+- **References**: `card_id` and `scorecard` for the official scorecard, `recording` (the file name) for the replay.
+- **Spend is two meters, reported apart and never summed.** `spend.ledger` is the ARC-repo ledger of the
+  box or boxes that made model calls, summed over the rows for the visit's game id inside its time window
+  (a ledger row's run_id is `theory-<game>-<epoch>`, not the card id); two visits of one game that overlap in
+  time make it `ambiguous` and the assembler gives no dollars. `spend.meter` carries the operator's read-only
+  copy of the AyoAI meter row for the card, its `accrued_*` fields and `last_flush_at` under their own
+  names. A missing ledger or snapshot reads `no ledger given` or `no snapshot given`, never zero.
+- **Mind wakes are not counted yet.** `mind_wakes` is null in every row. A search of the repo's py, md, json,
+  sh and toml files outside `vendor/` at 7d55519 finds the phrase only in this file; a recording tick holds one
+  decision; and the meter's `accrued_inference_calls` counts model calls, which is not a wake count.
+  `agent_wake_client.py` is the bounded wake-schedule client, a different thing. Until zeta names a source,
+  "Mind wakes per game" in section 4 is not computed and the counted definition wins.
