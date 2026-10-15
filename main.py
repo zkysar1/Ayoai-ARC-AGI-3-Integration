@@ -993,6 +993,10 @@ def _play(server_stop: RunServerStop) -> int:
             vessel_hint = load_vessel_hint(args.vessel_hint) or None
         except VesselHintError as e:
             parser.error(f"--vessel-hint: {e}")
+        if vessel_hint is not None:
+            # The only place the loaded hint shows before any network call; the port
+            # client below is handed it (pinned by tests/unit/test_port_streaming_client.py).
+            logger.info(f"Vessel hint loaded from {args.vessel_hint}: {vessel_hint}")
 
     # --use-port-client swaps the player inside the --use-solver-v2 session
     # (g-376-30). Options that only the adapter reads would do nothing, so they
