@@ -70,6 +70,31 @@ def test_two_runs_in_one_directory_keep_two_logs(run_dir: Path, like: logging.Ha
     assert Path(first).exists() and Path(second).exists()
 
 
+def test_the_copy_never_takes_a_line_listing_game_ids_under_any_wording(
+    run_dir: Path, like: logging.Handler
+) -> None:
+    path = main._attach_run_log("game-1", "guid-1", like)
+    ids = ", ".join(f"ab{n:02d}-0123abc{n}" for n in range(5))
+    main.logger.warning(f"Available games: {ids}")
+    main.logger.warning(f"The API offers these: {ids}")
+    main.logger.warning("Selected game: ab00-0123abc0")
+    main.logger.warning("kept")
+    text = Path(path).read_text(encoding="utf-8")
+    assert "Available games" not in text
+    assert "The API offers" not in text
+    assert "WARNING | kept" in text
+    assert "Selected game" in text  # one id is not a list
+
+
+def test_a_held_out_game_is_named_heldout_in_the_files_a_run_leaves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(main, "heldout_ids", lambda: {"sealed"})
+    assert main._artifact_label("sealed-1") == "heldout"
+    assert main._artifact_label("sealed") == "heldout"
+    assert main._artifact_label("open-1") == "open-1"
+
+
 def test_a_missing_logs_log_raises_for_the_caller_to_report_and_leaves_no_handler(
     run_dir: Path, like: logging.Handler
 ) -> None:

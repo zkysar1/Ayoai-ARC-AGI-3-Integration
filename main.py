@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import random
+import re
 import shutil
 import sys
 import time
@@ -35,7 +36,7 @@ from ayoai_streaming_client import (
     AyoaiStreamingError,
     StreamingDecisionClient,
 )
-from house_rules import heldout_refusal
+from house_rules import heldout_ids, heldout_refusal
 from random_streaming_adapter import RandomStreamingAdapter
 from recorder import Recorder, get_recordings_dir
 from solver_v0.streaming_adapter import SolverV0StreamingAdapter
@@ -454,7 +455,19 @@ class RunServerStop:
         stop_ayoai_server(server_key, env_key)
 
 
-def _attach_run_log(game: str, guid: str, like: logging.Handler) -> str:
+# A full game id: 4 lowercase alphanumerics, a dash, 8 hex digits.
+GAME_ID_SHAPE = re.compile(r"\b[a-z0-9]{4}-[0-9a-f]{8}\b")
+
+
+def _artifact_label(game: str) -> str:
+    """The game's name in the files a run leaves behind (g-376-152).
+
+    A held-out game's id stays out of file names, so a directory listing never
+    shows it. The guid still pairs a run's recording with its log."""
+    return "heldout" if game.split("-")[0] in heldout_ids() else game
+
+
+def _attach_run_log(label: str, guid: str, like: logging.Handler) -> str:
     """Give this run its own log file beside its recording (g-376-152).
 
     The harness opens logs.log with mode "w" (rb-13037), so the next run in the same
@@ -464,11 +477,15 @@ def _attach_run_log(game: str, guid: str, like: logging.Handler) -> str:
     directory = get_recordings_dir()
     if directory:
         os.makedirs(directory, exist_ok=True)
-    path = os.path.join(directory, f"{game}.{guid}.logs.log")
+    path = os.path.join(directory, f"{label}.{guid}.logs.log")
     shutil.copyfile("logs.log", path)
     handler = logging.FileHandler(path, mode="a")
     handler.setLevel(like.level)
     handler.setFormatter(like.formatter)
+    # A bad --game makes the harness list every game id, held-out ones included, and
+    # its wording is not ours to rely on. logs.log keeps that line (the exam wrapper
+    # scrubs it there); the copy drops any line that carries five or more game ids.
+    handler.addFilter(lambda record: len(GAME_ID_SHAPE.findall(record.getMessage())) < 5)
     logger.addHandler(handler)
     return path
 
@@ -1050,9 +1067,10 @@ def _play(server_stop: RunServerStop) -> int:
 
     # One guid names this run's recording and its log, so the two pair up (g-376-152)
     run_guid = str(uuid.uuid4())
+    artifact_label = _artifact_label(args.game)
     if args.record:
         try:
-            logger.info(f"Run log: {_attach_run_log(args.game, run_guid, file_handler)}")
+            logger.info(f"Run log: {_attach_run_log(artifact_label, run_guid, file_handler)}")
         except OSError as e:
             logger.warning(f"Could not keep a per-run log: {e}")
 
@@ -1573,7 +1591,7 @@ def _play(server_stop: RunServerStop) -> int:
             else "mock" if args.mock_url
             else "ayoai"
         )
-        prefix = f"{args.game}.{solver_name}.{args.level}"
+        prefix = f"{artifact_label}.{solver_name}.{args.level}"
         recorder = Recorder(prefix=prefix, guid=run_guid)
         logger.info(f"Recording to: {recorder.filename}")
         # Record the session-open evidence (or mock-URL bind) as the first
