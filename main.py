@@ -52,6 +52,7 @@ from solver_v2.seed_provider import (
 )
 from solver_v2.streaming_adapter import SolverV2StreamingAdapter
 from structs import FrameData, GameAction, GameState
+from vessel_hint import VesselHintError, load_vessel_hint
 
 if TYPE_CHECKING:
     # Imported where it is built (--use-port-client), so other runs never load
@@ -676,6 +677,22 @@ def _play(server_stop: RunServerStop) -> int:
         ),
     )
     parser.add_argument(
+        "--vessel-hint",
+        metavar="PATH",
+        default=None,
+        help=(
+            "With the vessel decider, send the plain-data hint in the JSON file PATH "
+            "with the session's ADD and UPDATE ops (g-376-141, vessel_hint.py): "
+            "force_first (moves played, in order, before the vessel's own first move) "
+            "and avoid (actions hidden from the vessel for the whole game). The env "
+            "server reads it once, when the game session's stack is built. It is "
+            "checked before any request, and a hint the server would refuse stops the "
+            "run. An instrument input for the persistent-versus-fresh comparison, not a "
+            "solution: a hint a person wrote for a scored run is a human hint "
+            "(HOUSE_RULES.md rule 3). Off by default; an empty hint sends nothing."
+        ),
+    )
+    parser.add_argument(
         "--random",
         action="store_true",
         help=(
@@ -968,6 +985,14 @@ def _play(server_stop: RunServerStop) -> int:
     args.vessel_decides = args.use_port_client and not args.oracle
     if args.ingest_world and not args.vessel_decides:
         parser.error("--ingest-world needs the vessel decider (--use-port-client without --oracle)")
+    vessel_hint: dict[str, Any] | None = None
+    if args.vessel_hint is not None:
+        if not args.vessel_decides:
+            parser.error("--vessel-hint needs the vessel decider (--use-port-client without --oracle)")
+        try:
+            vessel_hint = load_vessel_hint(args.vessel_hint) or None
+        except VesselHintError as e:
+            parser.error(f"--vessel-hint: {e}")
 
     # --use-port-client swaps the player inside the --use-solver-v2 session
     # (g-376-30). Options that only the adapter reads would do nothing, so they
@@ -1360,6 +1385,7 @@ def _play(server_stop: RunServerStop) -> int:
                     if args.vessel_decides
                     else port_streaming_client.DECIDER_PORT
                 ),
+                vessel_hint=vessel_hint,
             )
         else:
             streaming_client = SolverV2StreamingAdapter(

@@ -28,6 +28,7 @@ OUT OF SCOPE (g-315-04 outcome 2, blocked on g-315-11):
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 import requests
@@ -45,6 +46,7 @@ from ayoai_streaming_client import (
     resolve_streaming_host_with_retry,
 )
 from structs import ActionInput, FrameData, GameAction, GameState
+from vessel_hint import VesselHintError
 
 CARD_ID = "test-card-1234"
 
@@ -1124,3 +1126,64 @@ def test_warm_dns_propagates_dns_error():
             )
     finally:
         client.close()
+
+
+# ---------- Vessel hint (g-376-141) ---------- #
+
+HINT = {"force_first": [{"action": "ACTION6", "x": 5, "y": 5}], "avoid": ["ACTION3"]}
+HINT_TEXT = '{"avoid":["ACTION3"],"force_first":[{"action":"ACTION6","x":5,"y":5}]}'
+
+
+def _hint_frame() -> FrameData:
+    return FrameData(
+        game_id="ls20",
+        state=GameState.NOT_FINISHED,
+        score=0,
+        frame=[[[0, 0], [0, 0]]],
+        guid="g",
+        available_actions=[GameAction.ACTION1, GameAction.ACTION6],
+    )
+
+
+def test_vessel_hint_rides_on_every_add_and_update_but_not_the_delete(mock_ayoai_server, caplog):
+    mock_ayoai_server.add_response({"status": "success", "data": {}})
+    mock_ayoai_server.add_response(_decision_response("ACTION1"))
+    mock_ayoai_server.add_response({"status": "success", "data": {}})
+    with caplog.at_level(logging.INFO):
+        client = AyoaiStreamingClient(
+            streaming_url=mock_ayoai_server.streaming_url,
+            ayo_server_key=CARD_ID,
+            api_key="",
+            vessel_hint=HINT,
+        )
+    with client:
+        client.send_add(_hint_frame())
+        client.choose_action(_hint_frame())
+        client.send_delete()
+    ops = [_single_op(p) for p in mock_ayoai_server.received_payloads]
+    assert [op["op"] for op in ops] == ["ADD", "UPDATE", "DELETE"]
+    assert [op["attributes"].get("vessel_hint") for op in ops] == [HINT_TEXT, HINT_TEXT, None]
+    assert HINT_TEXT in caplog.text  # the per-run log says the run was hinted
+
+
+@pytest.mark.parametrize("hint", [None, {}, {"force_first": [], "avoid": []}])
+def test_without_a_hint_the_wire_is_exactly_what_it_was(hint):
+    url = "http://stream.test/AyoStreamingUpdates"
+    with AyoaiStreamingClient(url, CARD_ID, api_key="") as plain:
+        with AyoaiStreamingClient(url, CARD_ID, api_key="", vessel_hint=hint) as hinted:
+            for op, pending in (("ADD", False), ("UPDATE", True)):
+                a = _single_op(plain._encode_frame(_hint_frame(), op=op, pending_decision=pending))["attributes"]
+                b = _single_op(hinted._encode_frame(_hint_frame(), op=op, pending_decision=pending))["attributes"]
+                assert "vessel_hint" not in a
+                assert a == b
+
+
+def test_a_hint_the_server_would_refuse_stops_construction_before_any_request(mock_ayoai_server):
+    with pytest.raises(VesselHintError, match="both forced first and avoided"):
+        AyoaiStreamingClient(
+            streaming_url=mock_ayoai_server.streaming_url,
+            ayo_server_key=CARD_ID,
+            api_key="",
+            vessel_hint={"force_first": [{"action": "ACTION2"}], "avoid": ["ACTION2"]},
+        )
+    assert mock_ayoai_server.received_payloads == []

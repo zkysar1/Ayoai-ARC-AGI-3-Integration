@@ -34,6 +34,8 @@ which comes before send_add, when the session has no unit to ask. Open the
 session with VESSEL_WORLD_FLAGS, or the env server answers with its baseline
 instead of the frontier stack; vessel_world_flags adds the flag that also puts
 each decided frame into the session world, by default on the DEV lane (g-376-52).
+An optional plain-data vessel_hint (g-376-141, vessel_hint.py) rides on the session's ADD
+and UPDATE ops for the vessel to read; the port decides without the vessel, so it refuses one.
 decider="port" (this class's default, which the offline harnesses use) is oracle
 mode, the behaviour described above. main.py plays with the vessel and asks the port
 only under --oracle (g-376-57, OB-31): the port is the parity oracle.
@@ -43,7 +45,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -122,10 +124,13 @@ class PortStreamingClient:
         api_key: str | None = None,
         *,
         decider: str = DECIDER_PORT,
+        vessel_hint: Mapping[str, Any] | None = None,
         **network_kwargs: Any,
     ) -> None:
         if decider not in (DECIDER_PORT, DECIDER_VESSEL):
             raise ValueError(f"decider must be {DECIDER_PORT!r} or {DECIDER_VESSEL!r}, not {decider!r}")
+        if vessel_hint and decider != DECIDER_VESSEL:
+            raise ValueError(f"vessel_hint needs decider={DECIDER_VESSEL!r}: the port decides without the vessel")
         if decider == DECIDER_VESSEL and not streaming_url:
             raise ValueError("decider='vessel' needs the session's streaming_url")
         self.decider = decider
@@ -138,6 +143,7 @@ class PortStreamingClient:
                 arc_game_id,
                 api_key,
                 local_game_control=decider == DECIDER_PORT,
+                vessel_hint=vessel_hint,
                 **network_kwargs,
             )
             if streaming_url

@@ -51,6 +51,7 @@ import logging
 import os
 import socket
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 from urllib.parse import urlparse
@@ -58,6 +59,7 @@ from urllib.parse import urlparse
 import requests
 
 from structs import FrameData, GameAction, GameState
+from vessel_hint import VESSEL_HINT_ATTRIBUTE, encode_vessel_hint
 
 logger = logging.getLogger(__name__)
 
@@ -334,6 +336,12 @@ class AyoaiStreamingClient:
             .close() / __exit__.
         local_game_control: True (default) answers GAME_OVER with a local
             RESET; False sends it to the server (see the short-circuit above).
+        vessel_hint: Optional plain-data hint for the env server's vessel
+            (vessel_hint.py, g-376-141), sent as the `vessel_hint` attribute of
+            every ADD and UPDATE; the server reads it once, when the game
+            session's stack is built. None or an empty hint sends nothing, so the
+            wire is byte-identical to a client built without one. A hint the
+            server would refuse raises VesselHintError here, before any request.
     """
 
     def __init__(
@@ -347,6 +355,7 @@ class AyoaiStreamingClient:
         session: requests.Session | None = None,
         retry_sleep: Any = None,
         local_game_control: bool = True,
+        vessel_hint: Mapping[str, Any] | None = None,
     ) -> None:
         if not streaming_url:
             raise AyoaiStreamingError("streaming_url is required")
@@ -372,6 +381,12 @@ class AyoaiStreamingClient:
         # A NOT_PLAYED frame is answered here either way: it is the game's
         # opening frame, before send_add, so the server has no unit to ask.
         self.local_game_control = local_game_control
+
+        # g-376-141: validated and encoded once, here, so a bad hint stops the run before
+        # any request. None means nothing is sent.
+        self.vessel_hint = encode_vessel_hint(vessel_hint)
+        if self.vessel_hint is not None:
+            logger.info("Vessel hint set (g-376-141); sent on every ADD and UPDATE: %s", self.vessel_hint)
 
         # Tick counter for stream correlation. Increments on every server
         # call; resets are NOT counted (they don't reach the server).
@@ -599,6 +614,8 @@ class AyoaiStreamingClient:
         if "x" in last_action_data and "y" in last_action_data:
             attributes["last_action_x"] = last_action_data["x"]
             attributes["last_action_y"] = last_action_data["y"]
+        if self.vessel_hint is not None:
+            attributes[VESSEL_HINT_ATTRIBUTE] = self.vessel_hint
 
         return {
             "ayoServerKey": self.ayo_server_key,
