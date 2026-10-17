@@ -23,6 +23,7 @@ from pydantic import ValidationError
 
 from action_budget import DEFAULT_ACTION_BUDGET
 from ayoai_client import (
+    STARTUP_UNITS_LANES,
     AyoaiSessionError,
     AyoaiSessionInfo,
     open_ayoai_session,
@@ -51,6 +52,13 @@ from solver_v2.seed_provider import (
     SeedProvider,
 )
 from solver_v2.streaming_adapter import SolverV2StreamingAdapter
+from spec_units import (
+    ENV_GRAVITY,
+    blank_board,
+    build_startup_units,
+    scope_of,
+    split_batches,
+)
 from structs import FrameData, GameAction, GameState
 from vessel_hint import VesselHintError, load_vessel_hint
 
@@ -693,6 +701,20 @@ def _play(server_stop: RunServerStop) -> int:
         ),
     )
     parser.add_argument(
+        "--startup-units",
+        action="store_true",
+        help=(
+            "Open the session with the board as AyoaiV1 startupUnits[] batches (g-376-199, "
+            "spec_units.py): the ArcGrid, the cursor character and one unit per cell of a blank "
+            "64 x 64 board, about 2000 units a batch, parents first, with envConfig gravity "
+            "and isLastBatch on the last. The board is blank because the first frame does not "
+            "exist until the opening RESET, which comes after the session opens. Collect saves "
+            "the batches and starts the server on the last; the server's use of the units is "
+            "g-376-198. DEV lane only (AYOAI_LANE=dev) until Collect's startupUnits lane is "
+            "promoted to prod (g-376-197); needs a live AyoAI session. Off by default."
+        ),
+    )
+    parser.add_argument(
         "--random",
         action="store_true",
         help=(
@@ -1074,6 +1096,28 @@ def _play(server_stop: RunServerStop) -> int:
     except AyoaiSessionError as exc:
         parser.error(str(exc))
 
+    # g-376-199: the startup units are built here, before any network call, so a world that cannot be
+    # built opens no scorecard. open_ayoai_session refuses them on a lane without Collect's batch lane too.
+    startup_batches: list[list[dict[str, Any]]] | None = None
+    startup_env_config: dict[str, Any] | None = None
+    if args.startup_units:
+        if args.use_solver_v0 or args.random or args.mock_url:
+            parser.error("--startup-units needs a live AyoAI session (not --use-solver-v0, --random or --mock-url)")
+        if resolve_lane().name not in STARTUP_UNITS_LANES:
+            parser.error(
+                "--startup-units needs the DEV lane (AYOAI_LANE=dev): Collect's startupUnits lane "
+                "is not on prod yet (g-376-197)"
+            )
+        startup_scope = scope_of(args.game)
+        if startup_scope is None:
+            parser.error("--startup-units needs a game id")
+        startup_batches = split_batches(build_startup_units(blank_board(), startup_scope))
+        startup_env_config = {"gravity": ENV_GRAVITY}
+        logger.info(
+            f"Startup units: {sum(len(b) for b in startup_batches)} unit(s) in {len(startup_batches)} "
+            f"batch(es) of a blank board, key scope {startup_scope}, envConfig {startup_env_config}"
+        )
+
     # --state-graph only takes effect under --use-solver-v2 (the v2 adapter is
     # the sole StateGraphExplorer build site). Warn rather than error so the
     # SOLVER_V2_STATE_GRAPH env-var path and harmless no-op invocations still
@@ -1229,7 +1273,13 @@ def _play(server_stop: RunServerStop) -> int:
 
                 session_world_flags = vessel_world_flags(ingest_world=args.ingest_world)
                 logger.info(f"Session worldFlags for the vessel decider: {session_world_flags}")
-            ayoai_session = open_ayoai_session(card_id, env_key=env_key, world_flags=session_world_flags)
+            ayoai_session = open_ayoai_session(
+                card_id,
+                env_key=env_key,
+                world_flags=session_world_flags,
+                startup_batches=startup_batches,
+                env_config=startup_env_config,
+            )
             logger.info(
                 f"AyoAI session OPEN (solver-v2): "
                 f"hostname={ayoai_session.ayoai_hostname} "
@@ -1268,7 +1318,12 @@ def _play(server_stop: RunServerStop) -> int:
                 f"ayoEnvironmentKey={env_key})..."
             )
             server_stop.arm(card_id, env_key)
-            ayoai_session = open_ayoai_session(card_id, env_key=env_key)
+            ayoai_session = open_ayoai_session(
+                card_id,
+                env_key=env_key,
+                startup_batches=startup_batches,
+                env_config=startup_env_config,
+            )
             logger.info(
                 f"AyoAI session OPEN: hostname={ayoai_session.ayoai_hostname} "
                 f"streaming_url={ayoai_session.streaming_url} "

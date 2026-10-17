@@ -510,6 +510,14 @@ def _main_py(args: list[str], cwd: Path, extra_env: dict[str, str]) -> subproces
         (["--use-solver-v2", "--oracle"], {}, "--oracle needs --use-port-client"),
         (["--use-solver-v2", "--use-port-client", "--oracle", "--vessel-decides"], {},
          "--oracle and --vessel-decides are mutually exclusive"),
+        # g-376-199: startupUnits go to a Collect that has the batch lane (dev only for now) and only into a live session.
+        (["--use-solver-v2", "--use-port-client", "--startup-units"], {}, "--startup-units needs the DEV lane"),
+        (["--use-solver-v2", "--use-port-client", "--startup-units"], {"AYOAI_LANE": "prod"},
+         "--startup-units needs the DEV lane"),
+        (["--use-solver-v0", "--startup-units"], {"AYOAI_LANE": "dev"}, "--startup-units needs a live AyoAI session"),
+        (["--random", "--startup-units"], {"AYOAI_LANE": "dev"}, "--startup-units needs a live AyoAI session"),
+        (["--mock-url", "http://127.0.0.1:9", "--startup-units"], {"AYOAI_LANE": "dev"},
+         "--startup-units needs a live AyoAI session"),
     ],
 )
 def test_main_refuses_port_client_combinations_that_would_do_nothing(
@@ -518,6 +526,36 @@ def test_main_refuses_port_client_combinations_that_would_do_nothing(
     proc = _main_py(args, tmp_path, extra_env)
     assert proc.returncode == 2, proc.stdout[-400:] + proc.stderr[-400:]
     assert message in proc.stderr
+
+
+@pytest.mark.parametrize("route", [["--use-solver-v2", "--use-port-client"], []])
+def test_main_builds_the_startup_units_on_the_dev_lane_before_any_request(tmp_path: Path, route: list[str]) -> None:
+    # Positive control for the --startup-units refusals above (g-376-199): on the DEV lane the checks pass, the
+    # blank board's 4,101 units are built in 3 batches, and the run stops at the closed local ARC port.
+    proc = _main_py([*route, "--startup-units"], tmp_path, {"AYOAI_LANE": "dev"})
+    out = proc.stdout + proc.stderr
+    assert "--startup-units needs" not in out and "usage:" not in out, out[-400:]
+    assert "Startup units: 4101 unit(s) in 3 batch(es) of a blank board" in out, out[-600:]
+    assert "Connection refused" in out, out[-400:]
+
+
+def test_main_hands_the_startup_units_to_every_session_it_opens() -> None:
+    # The run above stops at the closed ARC port, before main opens a session, so no subprocess test reaches these
+    # calls. Pin them over the DERIVED set of call sites (g-376-199): a call that stopped passing the units would
+    # leave --startup-units a silent no-op, and the run would look verified.
+    tree = ast.parse((REPO / "main.py").read_text(encoding="utf-8"))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (getattr(node.func, "attr", None) or getattr(node.func, "id", None)) == "open_ayoai_session"
+    ]
+    assert len(calls) == 2, "main.py opens a session at a new number of sites: update this test"
+    for call in calls:
+        keywords = {kw.arg: kw.value for kw in call.keywords}
+        for name, variable in (("startup_batches", "startup_batches"), ("env_config", "startup_env_config")):
+            value = keywords.get(name)
+            assert isinstance(value, ast.Name) and value.id == variable, ast.unparse(call)
 
 
 @pytest.mark.parametrize("explicit", [[], ["--vessel-decides"]])
