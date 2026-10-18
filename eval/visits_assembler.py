@@ -1,7 +1,7 @@
 """Assemble a long-horizon run's visits.jsonl from the files a served visit leaves behind (g-376-56).
 
     .venv/bin/python eval/visits_assembler.py --run-dir eval/long-horizon/<run-id> \
-        --recordings-dir <dir> --log <logs.log> [--log <more.log> ...] \
+        --recordings-dir <dir> --log <game>.<guid>.logs.log [--log <more> ...] \
         [--ledger <spend-ledger.jsonl> ...] [--meter-snapshot <snapshot.json>]
 
 design/long-horizon-protocol.md section 8 wants one row per visit in
@@ -24,9 +24,11 @@ Inputs
   one tick that sent one action, RESET included. A recording that opens with anything else
   (``ayoai_session_open_mocked``) is not a served visit and is refused.
 - --log: main.py's log file. The official scorecard is logged once, just before the card is
-  closed, and the API answers 404 afterwards, so that block is the run's only copy. main.py
-  opens logs.log with mode "w": each run replaces the last run's file, so copy it away after
-  every visit or that visit reads "scorecard block missing".
+  closed, and the API answers 404 afterwards, so that block is the run's only copy. Pass the
+  per-run log, <game>.<guid>.logs.log: each recording run writes one beside its recording
+  (g-376-152) and it pairs with the recording by the guid. main.py still opens logs.log with
+  mode "w", so a logs.log that was not copied away holds only the last run's block and the
+  other visits read "scorecard block missing".
 - --ledger (repeatable): the spend ledger (spend_meter.py) of each box that made model calls in
   this run. Rows are attributed to a visit by game id inside the visit's time window, because a
   ledger row's run_id is theory-<game>-<epoch>, not the card id.
@@ -93,7 +95,9 @@ def read_recording(path: Path) -> dict[str, Any]:
                 stamp = str(entry["timestamp"])
                 data = entry["data"] or {}
                 if opened:
-                    levels = int(data.get("levels_completed") or 0)
+                    # levels_completed is per run and a lost run restarts at 0, so the visit's count is the
+                    # best any tick shows (the scorecard counts it that way), not the last tick's.
+                    levels = max(levels, int(data.get("levels_completed") or 0))
             except (ValueError, KeyError, TypeError) as exc:
                 raise AssemblyRefused(f"{path.name} line {n}: unreadable ({exc})") from exc
             if not opened:

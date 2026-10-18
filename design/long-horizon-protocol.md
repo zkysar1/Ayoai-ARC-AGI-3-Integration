@@ -194,3 +194,11 @@ inputs and the command line; what a reader of a row needs is below.
   decision; and the meter's `accrued_inference_calls` counts model calls, which is not a wake count.
   `agent_wake_client.py` is the bounded wake-schedule client, a different thing. Until zeta names a source,
   "Mind wakes per game" in section 4 is not computed and the counted definition wins.
+
+## Amendment 2 (2026-10-18, g-376-56): what the first real recordings and logs showed the assembler
+
+The first positive control ran the assembler on three real vessel visits: the three g-376-171 reruns (two ON lanes and one OFF lane) of one dev game, each with its recording and its per-run log. It found one defect and one superseded note. Neither changes what a row means in section 8; both correct how Amendment 1 and the first version of the assembler counted or sourced a value.
+
+- **`levels_recording` is the best tick, not the last.** `levels_completed` is per run, and a lost run (GAME_OVER, then RESET) restarts at 0. In the 2,189-tick visit (32 RESETs) the count rose to 1 twelve times and fell back to 0 twelve times; in the two 3,001-tick visits (44 RESETs each) it did so sixteen times. The last tick sat in a run that had not reached level 1 yet, so it read 0 while the official scorecard said 1, and every real visit read `levels_agree` false. The assembler now takes the largest `levels_completed` any tick shows, which is how the scorecard counts it. `first_level_action` was not affected: it is the first tick whose count is 1 or more (tick 24 in all three visits).
+- **The `--log` input is the per-run log.** Since g-376-152 each recording run also writes `<game>.<guid>.logs.log` beside its recording, paired to it by the guid, and the scorecard block is in it (3 of 3 visits read their block). `logs.log` is still opened with mode "w", so the note in Amendment 1 about copying it away applies to `logs.log` only.
+- **`actions` stays the tick count.** The recording's ticks exceed the scorecard's `total_actions` by exactly the RESET ticks (2,189 ticks against 2,157 actions for 32 RESETs; 3,001 against 2,957 for 44). Section 4 counts RESET, so nothing changes.
