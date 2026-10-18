@@ -213,3 +213,27 @@ def test_without_a_scope_every_report_stays_on_the_operations_wire() -> None:
     client.send_add(_frame({(1, 1): 2}))
     client.send_update(_frame({(1, 1): 3}))
     assert all("operations" in body and "envUnitUpdates" not in body for body in session.bodies)
+
+
+@pytest.mark.parametrize("scope", [None, SCOPE])
+def test_the_gap_runs_from_the_previous_response_not_from_its_send(
+    monkeypatch: pytest.MonkeyPatch, scope: str | None
+) -> None:
+    # g-376-201, live DEV run: a request with a large body reaches the server late, so a gap counted from the send
+    # read 114 to 176 ms there (HTTP 429 RATE_LIMIT_BURST, minimum 200 ms). Here every POST takes 0.4 s: counted from
+    # the send, the second request would not wait; counted from the response, it waits the whole gap.
+    clock = [100.0]
+
+    class _SlowSession(_Session):
+        def post(self, url: str, json: dict[str, Any], **kwargs: Any) -> _Resp:
+            clock[0] += 0.4
+            return super().post(url, json, **kwargs)
+
+    sleeps: list[float] = []
+    kwargs: dict[str, Any] = {"unit_wire_scope": scope} if scope else {}
+    client = _client(_SlowSession(), sleeps, **kwargs)
+    with monkeypatch.context() as patched:
+        patched.setattr(ayoai_streaming_client.time, "monotonic", lambda: clock[0])
+        client.send_add(_frame({(1, 1): 2}))
+        client.send_update(_frame({(1, 1): 3}))
+    assert sleeps == [MIN_REQUEST_GAP_S]

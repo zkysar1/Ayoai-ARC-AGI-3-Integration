@@ -253,6 +253,11 @@ class PortStreamingClient:
                     self._report_failure_streak,
                     self._reports_stopped,
                 )
+            else:
+                # g-376-201: a single failure left no line anywhere, so a live run could not say why one of its reports failed.
+                logger.warning(
+                    "[port-report] a report failed (%d in a row): %s", self._report_failure_streak, f"{type(exc).__name__}: {exc}"[:300]
+                )
             return
         self.reports_sent += 1
         self._report_failure_streak = 0

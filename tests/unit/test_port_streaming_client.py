@@ -261,6 +261,20 @@ def test_failed_reports_keep_the_move_and_three_in_a_row_stop_reporting(monkeypa
     assert len(session.bodies) == 5  # the success reset the streak; the 3rd failure in a row stopped it
 
 
+def test_a_failed_report_is_logged_with_its_reason(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # g-376-201: one failed report used to leave no line, so a live run could not say why it failed.
+    session = _RecordingSession([400, 200])
+    client = _reporting_client([arcengine.GameAction.ACTION1] * 2, monkeypatch, session)
+    with caplog.at_level(logging.WARNING):
+        client.choose_action(_frame())
+        client.choose_action(_frame())
+    assert (client.reports_sent, client.reports_failed) == (1, 1)
+    lines = [r.getMessage() for r in caplog.records if "[port-report]" in r.getMessage()]
+    assert len(lines) == 1 and "a report failed (1 in a row)" in lines[0] and "AyoaiStreamingApiError" in lines[0], lines
+
+
 def test_add_delete_and_dns_go_to_the_session_and_close_logs_the_count(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

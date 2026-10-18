@@ -91,7 +91,10 @@ TRANSIENT_RETRY_BASE_DELAY_S = 2.0
 # RATE_LIMIT_BURST ("minimum: 200ms"). The MockAyoaiServer never modeled this,
 # so the client fired ADD->UPDATE->DELETE at ~40ms gaps and tripped the live
 # limit (g-315-301 live thin-border run). 0.25s sits safely above the 200ms
-# floor with margin for clock jitter.
+# floor with margin for clock jitter. The gap runs from the previous request's
+# RESPONSE, not from its send (g-376-201): the server stamps a request when it
+# handles it, after the body arrived, so a gap counted from the send read 114 to
+# 176 ms there when the body was hundreds of KB (3 of 62 requests of a live DEV run).
 MIN_REQUEST_GAP_S = 0.25
 
 # §3.6 line 308: transient-network patterns the spec says to retry. Matched
@@ -727,7 +730,7 @@ class AyoaiStreamingClient:
             elif self._last_post_monotonic is not None:
                 # Inter-call rate-limit throttle (FIRST attempt only — within-call
                 # retries are already spaced by the backoff above). Enforces
-                # >=MIN_REQUEST_GAP_S since the previous _post call's request so
+                # >=MIN_REQUEST_GAP_S since the previous _post call's response so
                 # the per-tick ADD->UPDATE->DELETE burst stays under the live
                 # server's 200ms-gap limit (HTTP 429 RATE_LIMIT_BURST) that the
                 # MockAyoaiServer never modeled. Uses self._retry_sleep so the
@@ -743,7 +746,9 @@ class AyoaiStreamingClient:
                     json=payload,
                     timeout=self.http_timeout_s,
                 )
+                self._last_post_monotonic = time.monotonic()
             except requests.exceptions.RequestException as e:
+                self._last_post_monotonic = time.monotonic()
                 # Transport-level failure. Check if it's transient.
                 err_str = repr(e)
                 if self._is_transient_error(err_str) and attempt < MAX_TRANSIENT_RETRIES:
