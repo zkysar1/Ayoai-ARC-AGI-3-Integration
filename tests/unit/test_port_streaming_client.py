@@ -212,7 +212,7 @@ class _RecordingSession:
 
 
 def _reporting_client(
-    port_moves: list[Any], monkeypatch: pytest.MonkeyPatch, session: _RecordingSession
+    port_moves: list[Any], monkeypatch: pytest.MonkeyPatch, session: _RecordingSession, **extra: Any
 ) -> PortStreamingClient:
     client = PortStreamingClient(
         streaming_url="http://session.test/AyoStreamingUpdates",
@@ -221,6 +221,7 @@ def _reporting_client(
         api_key="",
         session=session,
         retry_sleep=lambda _s: None,
+        **extra,
     )
     moves = iter(port_moves)
     monkeypatch.setattr(client._agent, "choose_action", lambda frames, latest: next(moves))
@@ -518,6 +519,14 @@ def _main_py(args: list[str], cwd: Path, extra_env: dict[str, str]) -> subproces
         (["--random", "--startup-units"], {"AYOAI_LANE": "dev"}, "--startup-units needs a live AyoAI session"),
         (["--mock-url", "http://127.0.0.1:9", "--startup-units"], {"AYOAI_LANE": "dev"},
          "--startup-units needs a live AyoAI session"),
+        # g-376-201: the unit wire rides on the startup units' cells and cursor, and only the port decider can
+        # use it (a vessel move is asked for on the operations wire).
+        (["--use-solver-v2", "--use-port-client", "--oracle", "--unit-updates"], {"AYOAI_LANE": "dev"},
+         "--unit-updates needs --startup-units"),
+        (["--use-solver-v2", "--use-port-client", "--startup-units", "--unit-updates"], {"AYOAI_LANE": "dev"},
+         "--unit-updates needs the port decider"),
+        (["--use-solver-v2", "--startup-units", "--unit-updates"], {"AYOAI_LANE": "dev"},
+         "--unit-updates needs the port decider"),
     ],
 )
 def test_main_refuses_port_client_combinations_that_would_do_nothing(
@@ -701,3 +710,87 @@ def test_main_accepts_the_dev_lane(tmp_path: Path) -> None:
     # rc 2 is also EXIT_ARC_UPSTREAM, so read where the run stopped instead.
     assert "usage:" not in out and "Connection refused" in out, out[-400:]
 
+
+def _board_frame(cells: dict[tuple[int, int], int], action: ActionInput | None = None) -> FrameData:
+    board = [[0] * 64 for _ in range(64)]
+    for (row, col), value in cells.items():
+        board[row][col] = value
+    frame = FrameData(
+        game_id="test",
+        frame=[board],
+        state=GameState.NOT_FINISHED,
+        levels_completed=0,
+        win_levels=3,
+        available_actions=[GameAction.RESET, GameAction.ACTION1, GameAction.ACTION6],
+    )
+    if action is not None:
+        frame.action_input = action
+    return frame
+
+
+def test_unit_updates_report_each_frame_as_units_and_the_moves_do_not_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    # g-376-201 outcome 3: the report wire changes and the port's moves do not. The same frames with no session, over
+    # the operations wire and over the unit wire give the same decisions.
+    moves = [arcengine.GameAction.ACTION1, arcengine.GameAction.ACTION3, arcengine.GameAction.ACTION1]
+    frames = [
+        _board_frame({(1, 1): 2}),
+        _board_frame({(1, 1): 2, (3, 4): 5}, ActionInput(id=GameAction.ACTION6, data={"x": 4, "y": 3})),
+        _board_frame({(3, 4): 5}, ActionInput(id=GameAction.ACTION1)),
+    ]
+
+    def decided(client: PortStreamingClient) -> list[Any]:
+        return [(d.action, d.x, d.y, d.provenance) for d in (client.choose_action(f) for f in frames)]
+
+    plain = decided(_client(list(moves), monkeypatch))
+    legacy_session, unit_session = _RecordingSession(), _RecordingSession()
+    assert decided(_reporting_client(list(moves), monkeypatch, legacy_session)) == plain
+    unit_client = _reporting_client(list(moves), monkeypatch, unit_session, unit_wire_scope="gd2f7ac")
+    assert decided(unit_client) == plain
+    assert all("operations" in body and "envUnitUpdates" not in body for body in legacy_session.bodies)
+    assert all(
+        set(body) == {"ayoServerKey", "updateEpochMillis", "isLastBatch", "envUnitUpdates"}
+        for body in unit_session.bodies
+    )
+    assert [body["envUnitUpdates"][-1]["operationType"] for body in unit_session.bodies] == ["ADD", "UPDATE", "UPDATE"]
+    assert (unit_client.reports_sent, unit_client.reports_failed) == (3, 0)
+
+
+def test_the_vessel_decider_refuses_the_unit_wire() -> None:
+    with pytest.raises(ValueError, match="unit_wire_scope needs decider='port'"):
+        PortStreamingClient(
+            streaming_url="http://session.test/AyoStreamingUpdates",
+            ayo_server_key="card",
+            arc_game_id="test",
+            api_key="",
+            decider="vessel",
+            unit_wire_scope="gd2f7ac",
+        )
+
+
+def test_main_accepts_the_unit_wire_on_the_dev_lane_under_the_port_decider(tmp_path: Path) -> None:
+    # Positive control for the --unit-updates refusals above (g-376-201): the checks pass, the startup units are
+    # built, and the run stops at the closed local ARC port.
+    proc = _main_py(
+        ["--use-solver-v2", "--use-port-client", "--oracle", "--startup-units", "--unit-updates"],
+        tmp_path,
+        {"AYOAI_LANE": "dev"},
+    )
+    out = proc.stdout + proc.stderr
+    assert "--unit-updates needs" not in out and "usage:" not in out, out[-400:]
+    assert "Startup units: 4101 unit(s) in 3 batch(es) of a blank board" in out, out[-600:]
+    assert "Connection refused" in out, out[-400:]
+
+
+def test_main_hands_the_unit_wire_scope_to_the_port_client() -> None:
+    # The run above stops at the closed ARC port, before the client is built. Pin the call over the DERIVED set of
+    # call sites (g-376-201): a call that stopped passing the scope would leave --unit-updates a silent no-op on the
+    # operations wire, and the run would look verified.
+    tree = ast.parse((REPO / "main.py").read_text(encoding="utf-8"))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "PortStreamingClient"
+    ]
+    assert len(calls) == 1, "main.py builds the port client at a new number of sites: update this test"
+    value = {kw.arg: kw.value for kw in calls[0].keywords}.get("unit_wire_scope")
+    assert isinstance(value, ast.Name) and value.id == "unit_wire_scope", ast.unparse(calls[0])

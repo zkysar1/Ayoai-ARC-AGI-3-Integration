@@ -125,12 +125,17 @@ class PortStreamingClient:
         *,
         decider: str = DECIDER_PORT,
         vessel_hint: Mapping[str, Any] | None = None,
+        unit_wire_scope: str | None = None,
         **network_kwargs: Any,
     ) -> None:
         if decider not in (DECIDER_PORT, DECIDER_VESSEL):
             raise ValueError(f"decider must be {DECIDER_PORT!r} or {DECIDER_VESSEL!r}, not {decider!r}")
         if vessel_hint and decider != DECIDER_VESSEL:
             raise ValueError(f"vessel_hint needs decider={DECIDER_VESSEL!r}: the port decides without the vessel")
+        if unit_wire_scope and decider != DECIDER_PORT:
+            raise ValueError(
+                f"unit_wire_scope needs decider={DECIDER_PORT!r}: a vessel move is asked for on the operations wire"
+            )
         if decider == DECIDER_VESSEL and not streaming_url:
             raise ValueError("decider='vessel' needs the session's streaming_url")
         self.decider = decider
@@ -144,6 +149,7 @@ class PortStreamingClient:
                 api_key,
                 local_game_control=decider == DECIDER_PORT,
                 vessel_hint=vessel_hint,
+                unit_wire_scope=unit_wire_scope,
                 **network_kwargs,
             )
             if streaming_url
