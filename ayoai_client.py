@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote
@@ -80,6 +81,13 @@ class AyoaiLane:
 
 PROD_LANE = AyoaiLane("prod", COLD_START_URL, RESOLUTION_URL, None)
 DEV_LANE = AyoaiLane("dev", DEV_COLD_START_URL, DEV_RESOLUTION_URL, DEV_SERVER_VERSION)
+
+# The lanes that may send the board as startupUnits[] batches (g-376-199). Collect's startupUnits lane is merged
+# to its dev branch only (CollectAyoEnvironmentInBatchesOnStartUp #82, g-376-197). Until a promotion carries it to
+# prod, the prod Collect has no such lane: its non-roblox path (49ff3b9) starts the server on the FIRST POST and
+# never reads startupUnits, so a batched cold start there would launch a server with the first batch's fields
+# only (no worldFlags, no units) and answer every later batch 409.
+STARTUP_UNITS_LANES = ("dev",)
 
 
 def resolve_lane(lane: str | None = None) -> AyoaiLane:
@@ -221,81 +229,19 @@ def _build_env_server_url(hostname: str) -> str:
     return f"https://{hostname}:8686"
 
 
-def _initiate_cold_start(
+def _post_cold_start(
     card_id: str,
-    env_key: str,
-    api_key: str,
+    cold_start_url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
     sess: requests.Session,
     http_timeout_s: float,
-    *,
-    lane: AyoaiLane = PROD_LANE,
-    world_flags: list[str] | None = None,
-) -> dict[str, Any] | None:
-    """POST to Collect with client_type='arc' to start the AyoAI server.
+) -> requests.Response:
+    """POST one cold-start request to Collect, retrying TRANSPORT failures only (g-315-509).
 
-    Idempotent w.r.t. server-side state: 409 (duplicate startup) is treated
-    as success — the cold-start may have already been initiated by a prior
-    process for the same `card_id`, and the subsequent readiness poll
-    captures the current state regardless. All other non-200 responses
-    are terminal (env not registered, auth failure, pre-bake missing).
-
-    Args:
-        card_id: ARC scorecard card_id (used as ayoServerKey).
-        env_key: AyoAI environment key (e.g. "arc-agi-3").
-        api_key: AYOAI-API-KEY value.
-        sess: requests.Session for the POST.
-        http_timeout_s: Per-request timeout.
-        lane: Where to POST, and which jar to ask for (see AyoaiLane).
-        world_flags: Env flags for the server process, sent as ``worldFlags``
-            (g-376-53). Collect accepts only its allowlist and cold-starts every
-            flagged launch; StartAyoServerEnvironment writes ``<FLAG>=true`` into
-            the server's env file. None or empty sends no field.
-
-    Returns:
-        Parsed response body dict on 200 (with status, server_key,
-        instance_id, invocation_type) or None on 409 (duplicate startup —
-        no body parsing required).
-
-    Raises:
-        AyoaiApiError: Lambda returned 4xx other than 409, or 5xx, or
-            transport failure. Terminal for the caller — the env is not
-            in a state from which polling can succeed.
+    Every HTTP response is returned for the caller to decide on. Raises AyoaiApiError when no attempt
+    got a response.
     """
-    payload: dict[str, Any] = {
-        "ayoServerKey": card_id,
-        "ayoEnvironmentKey": env_key,
-        "client_type": CLIENT_TYPE_ARC,
-    }
-    if lane.server_version is not None:
-        payload["ayoaiServerVersion"] = lane.server_version  # camelCase, unlike client_type
-    if world_flags:
-        payload["worldFlags"] = list(world_flags)
-    headers = {
-        "Content-Type": "application/json",
-        "AYOAI-API-KEY": api_key,
-    }
-    # Bounded retry on TRANSPORT failures only (g-315-509). MOST HTTP responses
-    # are decisions from the server and are handled below verbatim: 200 success,
-    # 409 already-initiated, everything else terminal. Retrying a 4xx would be
-    # wrong (it will not change) and retrying a non-idempotent write is only safe
-    # here because Collect is idempotent per ayoServerKey — a repeat POST returns
-    # 409 rather than provisioning twice, which is exactly what the 409 branch
-    # below already treats as success.
-    #
-    # 504 IS THE EXCEPTION, AND IT IS NOT A DECISION FROM THE SERVER (g-335-911).
-    # This comment previously said "an HTTP *response* — ANY status — is a
-    # decision from the server", and that generalization is what made the 504
-    # terminal. API Gateway SYNTHESIZES a 504 when the integration outlives the
-    # gateway's own timeout — it is the CALLER giving up, not the server
-    # answering. The Lambda behind it most likely SUCCEEDED and is still
-    # provisioning. Structurally this is "poll budget exhausted" wearing the
-    # clothes of "observed a terminal state" (guard-2539, read from the consumer
-    # side), so it gets 409's handling below: return None and let the readiness
-    # poll — which has its own far longer budget — adjudicate the real state.
-    # It is deliberately NOT retried: a retry would re-POST into a provisioning
-    # already under way, and the retry loop here bounds transport failures only
-    # (guard-2839 — a per-request timeout cannot bound what a caller upstream
-    # already abandoned).
     max_attempts = _env_int("AYOAI_COLD_START_ATTEMPTS", COLD_START_MAX_ATTEMPTS)
     base_delay = _env_float("AYOAI_COLD_START_RETRY_DELAY_S", COLD_START_RETRY_DELAY_S)
     r = None
@@ -303,7 +249,7 @@ def _initiate_cold_start(
     for attempt in range(1, max_attempts + 1):
         try:
             r = sess.post(
-                lane.cold_start_url, headers=headers, json=payload, timeout=http_timeout_s
+                cold_start_url, headers=headers, json=payload, timeout=http_timeout_s
             )
             break
         except requests.exceptions.RequestException as e:
@@ -327,6 +273,161 @@ def _initiate_cold_start(
             f"Cold-start request to Collect failed (transport) after "
             f"{max_attempts} attempt(s) at timeout={http_timeout_s}s: {last_exc!r}"
         ) from last_exc
+    return r
+
+
+def _send_startup_batch(
+    number: int,
+    total: int,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    sess: requests.Session,
+    http_timeout_s: float,
+    lane: AyoaiLane,
+) -> bool:
+    """POST one startupUnits batch that is NOT the last (g-376-199); True once Collect has saved it.
+
+    Collect answers a saved batch HTTP 200 {"status": "success", "batch_count": N} and starts nothing.
+    A repeated batch is saved again and leaves the tree unchanged (g-376-197), so the transport retry of
+    _post_cold_start is safe here. False on 409: a server was already started for this key, so further
+    batches would only be refused and the readiness poll adjudicates, as for the last batch.
+
+    Raises AyoaiApiError on any other answer, 504 included: a save the caller gave up on may or may not
+    have landed, and the server would start on a world with units missing. A 200 that is not "success"
+    means Collect started the server before the last batch (an older Collect, which would ignore the
+    units), so the run stops here and not after a 5-minute readiness poll of a server that lacks them.
+    """
+    card_id = payload["ayoServerKey"]
+    r = _post_cold_start(card_id, lane.cold_start_url, headers, payload, sess, http_timeout_s)
+    if r.status_code == 200:
+        try:
+            body = r.json()
+        except ValueError:
+            body = None
+        answer = body.get("status") if isinstance(body, dict) else None
+        if answer != "success":
+            raise AyoaiApiError(
+                f"Cold-start batch {number} of {total} to Collect was answered {answer!r}, not 'success': "
+                f"the server may have started before the last batch, so its units are incomplete: {body}"
+            )
+        logger.info(
+            "Cold-start batch %d of %d saved for ayoServerKey=%s (%d unit(s), lane=%s): %s",
+            number, total, card_id, len(payload["startupUnits"]), lane.name, body,
+        )
+        return True
+    if r.status_code == 409:
+        logger.info(
+            "Cold-start already initiated for ayoServerKey=%s (HTTP 409 on batch %d of %d); "
+            "proceeding to readiness poll",
+            card_id, number, total,
+        )
+        return False
+    try:
+        body_text = r.text[:500]
+    except Exception:
+        body_text = "<unreadable>"
+    raise AyoaiApiError(
+        f"Cold-start batch {number} of {total} to Collect failed (HTTP {r.status_code}): {body_text}"
+    )
+
+
+def _initiate_cold_start(
+    card_id: str,
+    env_key: str,
+    api_key: str,
+    sess: requests.Session,
+    http_timeout_s: float,
+    *,
+    lane: AyoaiLane = PROD_LANE,
+    world_flags: list[str] | None = None,
+    startup_batches: Sequence[Sequence[Mapping[str, Any]]] | None = None,
+    env_config: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """POST to Collect with client_type='arc' to start the AyoAI server.
+
+    Idempotent w.r.t. server-side state: 409 (duplicate startup) is treated
+    as success — the cold-start may have already been initiated by a prior
+    process for the same `card_id`, and the subsequent readiness poll
+    captures the current state regardless. All other non-200 responses
+    are terminal (env not registered, auth failure, pre-bake missing).
+
+    Args:
+        card_id: ARC scorecard card_id (used as ayoServerKey).
+        env_key: AyoAI environment key (e.g. "arc-agi-3").
+        api_key: AYOAI-API-KEY value.
+        sess: requests.Session for the POST.
+        http_timeout_s: Per-request timeout.
+        lane: Where to POST, and which jar to ask for (see AyoaiLane).
+        world_flags: Env flags for the server process, sent as ``worldFlags``
+            (g-376-53). Collect accepts only its allowlist and cold-starts every
+            flagged launch; StartAyoServerEnvironment writes ``<FLAG>=true`` into
+            the server's env file. None or empty sends no field.
+        startup_batches: The environment as AyoaiV1 startupUnits[] batches, parents
+            before descendants (g-376-199, spec_units.split_batches). Each batch but the
+            last is POSTed alone with isLastBatch false and only saves; the last carries
+            isLastBatch true, ``env_config`` and ``world_flags``, and starts the server
+            exactly as a request without batches does. None or empty sends no units.
+        env_config: The spec's envConfig (gravity), sent with the last batch.
+
+    Returns:
+        Parsed response body dict on 200 (with status, server_key,
+        instance_id, invocation_type) or None on 409 (duplicate startup —
+        no body parsing required).
+
+    Raises:
+        AyoaiApiError: Lambda returned 4xx other than 409, or 5xx, or
+            transport failure. Terminal for the caller — the env is not
+            in a state from which polling can succeed.
+    """
+    payload: dict[str, Any] = {
+        "ayoServerKey": card_id,
+        "ayoEnvironmentKey": env_key,
+        "client_type": CLIENT_TYPE_ARC,
+    }
+    if lane.server_version is not None:
+        payload["ayoaiServerVersion"] = lane.server_version  # camelCase, unlike client_type
+    headers = {
+        "Content-Type": "application/json",
+        "AYOAI-API-KEY": api_key,
+    }
+    if startup_batches:
+        # Collect starts the server on the batch with isLastBatch and reads the launch fields
+        # (worldFlags) from that request, so they ride it alone; ayoaiServerVersion rides every
+        # batch (the spec: "send in first batch at least").
+        for number, batch in enumerate(startup_batches[:-1], start=1):
+            batch_payload = {**payload, "startupUnits": list(batch), "isLastBatch": False}
+            if not _send_startup_batch(
+                number, len(startup_batches), batch_payload, headers, sess, http_timeout_s, lane
+            ):
+                return None
+        payload["startupUnits"] = list(startup_batches[-1])
+        payload["isLastBatch"] = True
+        payload["envConfig"] = dict(env_config or {})
+    if world_flags:
+        payload["worldFlags"] = list(world_flags)
+    # Bounded retry on TRANSPORT failures only (g-315-509). MOST HTTP responses
+    # are decisions from the server and are handled below verbatim: 200 success,
+    # 409 already-initiated, everything else terminal. Retrying a 4xx would be
+    # wrong (it will not change) and retrying a non-idempotent write is only safe
+    # here because Collect is idempotent per ayoServerKey — a repeat POST returns
+    # 409 rather than provisioning twice, which is exactly what the 409 branch
+    # below already treats as success.
+    #
+    # 504 IS THE EXCEPTION, AND IT IS NOT A DECISION FROM THE SERVER (g-335-911).
+    # This comment previously said "an HTTP *response* — ANY status — is a
+    # decision from the server", and that generalization is what made the 504
+    # terminal. API Gateway SYNTHESIZES a 504 when the integration outlives the
+    # gateway's own timeout — it is the CALLER giving up, not the server
+    # answering. The Lambda behind it most likely SUCCEEDED and is still
+    # provisioning. Structurally this is "poll budget exhausted" wearing the
+    # clothes of "observed a terminal state" (guard-2539, read from the consumer
+    # side), so it gets 409's handling below: return None and let the readiness
+    # poll — which has its own far longer budget — adjudicate the real state.
+    # It is deliberately NOT retried: a retry would re-POST into a provisioning
+    # already under way, and the retry loop here bounds transport failures only
+    # (guard-2839 — a per-request timeout cannot bound what a caller upstream
+    # already abandoned).
+    r = _post_cold_start(card_id, lane.cold_start_url, headers, payload, sess, http_timeout_s)
 
     if r.status_code == 200:
         body: dict[str, Any] | None
@@ -456,6 +557,8 @@ def open_ayoai_session(
     session: requests.Session | None = None,
     lane: str | None = None,
     world_flags: list[str] | None = None,
+    startup_batches: Sequence[Sequence[Mapping[str, Any]]] | None = None,
+    env_config: Mapping[str, Any] | None = None,
 ) -> AyoaiSessionInfo:
     """Open an AyoAI Environment Server session and wait for streaming-ready.
 
@@ -485,6 +588,11 @@ def open_ayoai_session(
         world_flags: Env flags for the server process, passed to the cold
             start as ``worldFlags`` (see _initiate_cold_start). None (default)
             sends none.
+        startup_batches: The environment as AyoaiV1 startupUnits[] batches (see
+            _initiate_cold_start). None (default) sends the cold start without units, as
+            before. Refused unless the lane is in STARTUP_UNITS_LANES.
+        env_config: The spec's envConfig, sent with the last batch. Required, with a
+            gravity, whenever ``startup_batches`` is given.
 
     Returns:
         AyoaiSessionInfo with hostname, URLs, attempts, elapsed, status_log.
@@ -505,6 +613,18 @@ def open_ayoai_session(
     if max_attempts is None:
         max_attempts = _env_int("AYOAI_READY_POLL_ATTEMPTS", DEFAULT_MAX_ATTEMPTS)
     resolved_lane = resolve_lane(lane)
+    if startup_batches is not None:
+        # Refused before any request: sent to a Collect without the lane, the first batch would start
+        # the server and the rest would be refused (see STARTUP_UNITS_LANES).
+        if resolved_lane.name not in STARTUP_UNITS_LANES:
+            raise AyoaiSessionError(
+                f"startupUnits are sent on the {'/'.join(STARTUP_UNITS_LANES)} lane only (Collect's "
+                f"startupUnits lane is not on {resolved_lane.name} yet, g-376-197), not on {resolved_lane.name}"
+            )
+        if not startup_batches or not all(startup_batches):
+            raise AyoaiSessionError("startup_batches needs at least one batch, each of at least one unit")
+        if not env_config or "gravity" not in env_config:
+            raise AyoaiSessionError("env_config with a gravity is required with startup_batches (the spec: Set Environment Configurations)")
     resolved_api_key = resolve_api_key(api_key)
     if not resolved_api_key:
         raise AyoaiSessionError(
@@ -533,6 +653,7 @@ def open_ayoai_session(
         cold_start_body = _initiate_cold_start(
             card_id, env_key, resolved_api_key, sess, http_timeout_s,
             lane=resolved_lane, world_flags=world_flags,
+            startup_batches=startup_batches, env_config=env_config,
         )
         status_log.append({
             "t": round(time.time() - start_t, 3),
