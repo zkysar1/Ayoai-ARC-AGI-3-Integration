@@ -80,11 +80,14 @@ def _tick(game: str, at: float, port_tick: int, levels: int, state: str = "NOT_F
 
 
 def _recording(
-    path: Path, card_id: str, game: str, start: float, ticks: int = 8, level_up_at: int | None = 5
+    path: Path, card_id: str, game: str, start: float, ticks: int = 8, level_up_at: int | None = 5,
+    lose_at: int | None = None,
 ) -> Path:
     lines = [_open_line(card_id, start)]
     for n in range(1, ticks + 1):
         levels = 1 if level_up_at is not None and n >= level_up_at else 0
+        if lose_at is not None and n >= lose_at:
+            levels = 0  # the run was lost and the game restarted: levels_completed is per run
         lines.append(_tick(game, start + n, n, levels))
     path.write_text("".join(json.dumps(line) + "\n" for line in lines))
     return path
@@ -245,6 +248,23 @@ def test_a_scorecard_that_disagrees_with_the_recording_is_flagged(tmp_path: Path
     (row,), _ = va.assemble(run_dir, rec_dir, [log])
 
     assert (row["levels"], row["levels_recording"], row["levels_agree"]) == (2, 1, False)
+
+
+def test_a_visit_that_reaches_a_level_and_then_loses_the_run_keeps_the_level(tmp_path: Path, rec_dir: Path) -> None:
+    """levels_completed is per run and a lost run restarts at 0, so the visit's count is the best tick.
+
+    Measured on three real vessel recordings (g-376-56, first positive control): runs reached level 1 at
+    tick 24 and were lost, and the last tick, inside a run that had not reached it yet, read 0 while the
+    official scorecard said 1.
+    """
+    rec = _recording(rec_dir / "a.recording.jsonl", "card-a", GAME, start=0, level_up_at=3, lose_at=6)
+    log = _main_log(tmp_path / "logs.log", [_scorecard("card-a", levels=1)])
+    run_dir = _run(tmp_path, [_visit("E", GAME, "B1", 1, rec)])
+
+    (row,), _ = va.assemble(run_dir, rec_dir, [log])
+
+    assert (row["levels"], row["levels_recording"], row["levels_agree"]) == (1, 1, True)
+    assert row["first_level_action"] == 3 and row["censored"] is False
 
 
 def test_the_parser_reads_what_main_writes_and_picks_by_card_id(tmp_path: Path) -> None:
