@@ -546,6 +546,95 @@ def resolve_api_key(api_key: str | None = None) -> str:
     return os.getenv("AYOAI_API_KEY") or os.getenv("AYO_OPERATOR_KEY", "")
 
 
+# The Character Definitions API (AyoaiV1 spec, Get Character). Characters belong to the account, not to a
+# lane or an environment, so one URL serves every lane. Limit: 60 requests an hour per account.
+CHARACTERS_URL = "https://api.ayoai.com/httpV1/characters"
+CHARACTER_CHECK_MAX_ATTEMPTS = 3
+
+
+def verify_characters(
+    ayo_keys: Sequence[str],
+    api_key: str,
+    sess: requests.Session,
+    http_timeout_s: float,
+) -> None:
+    """Stop with a clear message unless every character in ``ayo_keys`` is registered on the account (g-376-203).
+
+    The spec's Character Definitions prerequisite: "Characters MUST be created via this API BEFORE
+    launching a server with character units. If a unit with ayoType "character" has an ayoKey that does
+    not match a registered character definition, that character will not receive behavior streams -- the
+    server logs the unmatched key and continues without activating it (silent non-activation, not an
+    error)." A run on an unregistered cursor plays on and spends its scorecard receiving nothing, so it is
+    stopped before the cold start, where the check costs one GET per character.
+
+    Raises AyoaiSessionError when a character is absent (HTTP 404), the key is refused (401/403), the rate
+    limit is hit (429) or the answer is not a character; AyoaiApiError when no usable answer came after
+    CHARACTER_CHECK_MAX_ATTEMPTS tries (transport failure or HTTP 5xx). A character that cannot be verified
+    stops the run like one that is absent: the failure it guards against is silent.
+    """
+    base_delay = _env_float("AYOAI_COLD_START_RETRY_DELAY_S", COLD_START_RETRY_DELAY_S)
+    headers = {"AYOAI-API-KEY": api_key}
+    for ayo_key in ayo_keys:
+        url = f"{CHARACTERS_URL}/{quote(ayo_key, safe='')}"
+        problem = ""
+        for attempt in range(1, CHARACTER_CHECK_MAX_ATTEMPTS + 1):
+            if attempt > 1:
+                delay = min(base_delay * (2 ** (attempt - 2)), COLD_START_RETRY_DELAY_CAP_S)
+                logger.warning(
+                    "Characters API check for %r (attempt %d/%d): %s — retrying in %.1fs",
+                    ayo_key, attempt - 1, CHARACTER_CHECK_MAX_ATTEMPTS, problem, delay,
+                )
+                time.sleep(delay)
+            try:
+                r = sess.get(url, headers=headers, timeout=http_timeout_s)
+            except requests.exceptions.RequestException as e:
+                problem = f"transport failure {e!r}"
+                continue
+            if r.status_code >= 500:
+                problem = f"HTTP {r.status_code}"
+                continue
+            if r.status_code == 404:
+                raise AyoaiSessionError(
+                    f"Character {ayo_key!r} is not registered on this AyoAI account (Characters API: HTTP 404). "
+                    "A server started with a character unit whose ayoKey matches no registered character gives "
+                    "it no behavior streams, without an error (AyoaiV1 spec, Character Definitions). Create the "
+                    f"character first (POST {CHARACTERS_URL}) and launch again; nothing was started."
+                )
+            if r.status_code in (401, 403):
+                raise AyoaiSessionError(
+                    f"The Characters API refused the API key (HTTP {r.status_code}) while checking character "
+                    f"{ayo_key!r}; nothing was started. Check AYOAI_API_KEY / AYO_OPERATOR_KEY."
+                )
+            if r.status_code == 429:
+                raise AyoaiSessionError(
+                    f"The Characters API rate limit (60 requests per hour per account) is reached; character "
+                    f"{ayo_key!r} could not be verified and nothing was started. Launch again later."
+                )
+            try:
+                body = r.json()
+            except ValueError:
+                body = None
+            character = body.get("character") if isinstance(body, dict) else None
+            if not (
+                r.status_code == 200
+                and isinstance(body, dict)
+                and body.get("status") == "success"
+                and isinstance(character, dict)
+                and character.get("ayoKey", ayo_key) == ayo_key
+            ):
+                raise AyoaiSessionError(
+                    f"The Characters API did not answer with character {ayo_key!r} (HTTP {r.status_code}); "
+                    "nothing was started."
+                )
+            logger.info("Character %r is registered on the account", ayo_key)
+            break
+        else:
+            raise AyoaiApiError(
+                f"Character {ayo_key!r} could not be verified after {CHARACTER_CHECK_MAX_ATTEMPTS} attempts "
+                f"(last: {problem}); nothing was started."
+            )
+
+
 def open_ayoai_session(
     card_id: str,
     env_key: str = DEFAULT_ENV_KEY,
@@ -559,6 +648,7 @@ def open_ayoai_session(
     world_flags: list[str] | None = None,
     startup_batches: Sequence[Sequence[Mapping[str, Any]]] | None = None,
     env_config: Mapping[str, Any] | None = None,
+    required_characters: Sequence[str] | None = None,
 ) -> AyoaiSessionInfo:
     """Open an AyoAI Environment Server session and wait for streaming-ready.
 
@@ -593,6 +683,10 @@ def open_ayoai_session(
             before. Refused unless the lane is in STARTUP_UNITS_LANES.
         env_config: The spec's envConfig, sent with the last batch. Required, with a
             gravity, whenever ``startup_batches`` is given.
+        required_characters: ayoKeys of the character definitions the units name (the cursor,
+            ``arc_agent``). Each is read through the Characters API BEFORE the cold start, and the
+            session stops (AyoaiSessionError) if one is absent: see verify_characters. None (default)
+            checks nothing.
 
     Returns:
         AyoaiSessionInfo with hostname, URLs, attempts, elapsed, status_log.
@@ -645,6 +739,8 @@ def open_ayoai_session(
     last_status: str | None = None
 
     try:
+        if required_characters:
+            verify_characters(required_characters, resolved_api_key, sess, http_timeout_s)
         # Initiate cold-start before polling. This was the missing wire-up:
         # GetStreamingUrlAndStatus only REPORTS readiness — something has to
         # tell the backend to provision the server first. Unified with the
