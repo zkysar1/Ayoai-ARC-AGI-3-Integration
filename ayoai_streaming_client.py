@@ -59,6 +59,7 @@ from urllib.parse import urlparse
 import requests
 
 from structs import FrameData, GameAction, GameState
+from unit_wire import UnitWireError, UnitWireState
 from vessel_hint import VESSEL_HINT_ATTRIBUTE, encode_vessel_hint
 
 logger = logging.getLogger(__name__)
@@ -90,7 +91,10 @@ TRANSIENT_RETRY_BASE_DELAY_S = 2.0
 # RATE_LIMIT_BURST ("minimum: 200ms"). The MockAyoaiServer never modeled this,
 # so the client fired ADD->UPDATE->DELETE at ~40ms gaps and tripped the live
 # limit (g-315-301 live thin-border run). 0.25s sits safely above the 200ms
-# floor with margin for clock jitter.
+# floor with margin for clock jitter. The gap runs from the previous request's
+# RESPONSE, not from its send (g-376-201): the server stamps a request when it
+# handles it, after the body arrived, so a gap counted from the send read 114 to
+# 176 ms there when the body was hundreds of KB (3 of 62 requests of a live DEV run).
 MIN_REQUEST_GAP_S = 0.25
 
 # §3.6 line 308: transient-network patterns the spec says to retry. Matched
@@ -356,6 +360,7 @@ class AyoaiStreamingClient:
         retry_sleep: Any = None,
         local_game_control: bool = True,
         vessel_hint: Mapping[str, Any] | None = None,
+        unit_wire_scope: str | None = None,
     ) -> None:
         if not streaming_url:
             raise AyoaiStreamingError("streaming_url is required")
@@ -387,6 +392,14 @@ class AyoaiStreamingClient:
         self.vessel_hint = encode_vessel_hint(vessel_hint)
         if self.vessel_hint is not None:
             logger.info("Vessel hint set (g-376-141); sent on every ADD and UPDATE: %s", self.vessel_hint)
+
+        # g-376-201: the unit wire. None keeps every report on the operations wire; a scope
+        # (spec_units.scope_of(game id)) sends send_add and send_update as envUnitUpdates.
+        self._unit_wire: UnitWireState | None = None
+        if unit_wire_scope is not None:
+            if not arc_game_id:
+                raise AyoaiStreamingError("the unit wire needs arc_game_id: it scopes every cell key")
+            self._unit_wire = UnitWireState(scope=unit_wire_scope)
 
         # Tick counter for stream correlation. Increments on every server
         # call; resets are NOT counted (they don't reach the server).
@@ -487,6 +500,9 @@ class AyoaiStreamingClient:
 
         Raises AyoaiStreamingApiError on transport / non-200 / status=fail.
         """
+        if self._unit_wire is not None:
+            self._send_unit_frame(frame)
+            return
         payload = self._encode_frame(frame, op="ADD", pending_decision=False)
         self._post(payload)
 
@@ -498,6 +514,9 @@ class AyoaiStreamingClient:
 
         Raises AyoaiStreamingApiError on transport / non-200 / status=fail.
         """
+        if self._unit_wire is not None:
+            self._send_unit_frame(frame)
+            return
         payload = self._encode_frame(frame, op="UPDATE", pending_decision=False)
         self._post(payload)
 
@@ -545,22 +564,9 @@ class AyoaiStreamingClient:
             headers["AYOAI-API-KEY"] = self.api_key
         return headers
 
-    def _encode_frame(
-        self,
-        frame: FrameData,
-        op: str = "UPDATE",
-        pending_decision: bool = True,
-    ) -> dict[str, Any]:
-        """Serialize FrameData into the canonical AyoaiV1 wire shape.
-
-        Mirrors integration-design.md §3.2 (full attribute enumeration) +
-        §3.4 (tick-by-tick flow) exactly — no abbreviations, no missing
-        fields. The `frame` 3D int list is JSON-string-encoded under
-        attributes; its shape is materialized as three int attributes
-        (frame_layers/rows/cols) so the AyoAI solver can index without
-        re-parsing. available_actions is a CSV per §3.2 — the AyoAI side
-        splits on comma.
-        """
+    def _frame_attributes(self, frame: FrameData, pending_decision: bool) -> dict[str, Any]:
+        """The attributes of one frame (integration-design.md §3.2): the operations wire sends them as
+        they are and the unit wire sends them on the game-state unit with `frame` replaced by `grid`."""
         state_name = (
             frame.state.value
             if isinstance(frame.state, GameState)
@@ -616,6 +622,25 @@ class AyoaiStreamingClient:
             attributes["last_action_y"] = last_action_data["y"]
         if self.vessel_hint is not None:
             attributes[VESSEL_HINT_ATTRIBUTE] = self.vessel_hint
+        return attributes
+
+    def _encode_frame(
+        self,
+        frame: FrameData,
+        op: str = "UPDATE",
+        pending_decision: bool = True,
+    ) -> dict[str, Any]:
+        """Serialize FrameData into the canonical AyoaiV1 wire shape.
+
+        Mirrors integration-design.md §3.2 (full attribute enumeration) +
+        §3.4 (tick-by-tick flow) exactly — no abbreviations, no missing
+        fields. The `frame` 3D int list is JSON-string-encoded under
+        attributes; its shape is materialized as three int attributes
+        (frame_layers/rows/cols) so the AyoAI solver can index without
+        re-parsing. available_actions is a CSV per §3.2 — the AyoAI side
+        splits on comma.
+        """
+        attributes = self._frame_attributes(frame, pending_decision)
 
         return {
             "ayoServerKey": self.ayo_server_key,
@@ -636,6 +661,31 @@ class AyoaiStreamingClient:
                 "attributes": attributes,
             }],
         }
+
+    def _send_unit_frame(self, frame: FrameData) -> None:
+        """Report `frame` as envUnitUpdates (g-376-201): the cells and cursor that changed, then the game-state
+        unit, and no `operations` key. Each request holds at most MAX_OPS_PER_REQUEST ops, `_post` keeps the
+        gap between requests, and `isLastBatch` is true only on the last request of the frame. The state the
+        server now holds is adopted only after every request was accepted, so a failed frame is re-sent as
+        a diff against what the server last confirmed. A frame the wire cannot carry raises
+        AyoaiStreamingProtocolError before any request is made."""
+        assert self._unit_wire is not None
+        attributes = self._frame_attributes(frame, pending_decision=False)
+        has_xy = "last_action_x" in attributes and "last_action_y" in attributes
+        xy = (int(attributes["last_action_x"]), int(attributes["last_action_y"])) if has_xy else None
+        try:
+            plan = self._unit_wire.plan_frame(frame.frame, attributes, xy)
+        except UnitWireError as exc:
+            raise AyoaiStreamingProtocolError(f"frame cannot be sent as units: {exc}") from exc
+        last = len(plan.batches) - 1
+        for index, ops in enumerate(plan.batches):
+            self._post({
+                "ayoServerKey": self.ayo_server_key,
+                "updateEpochMillis": str(int(time.time() * 1000)),
+                "isLastBatch": index == last,
+                "envUnitUpdates": ops,
+            })
+        self._unit_wire.commit(plan)
 
     @staticmethod
     def _is_transient_error(payload: str) -> bool:
@@ -680,7 +730,7 @@ class AyoaiStreamingClient:
             elif self._last_post_monotonic is not None:
                 # Inter-call rate-limit throttle (FIRST attempt only — within-call
                 # retries are already spaced by the backoff above). Enforces
-                # >=MIN_REQUEST_GAP_S since the previous _post call's request so
+                # >=MIN_REQUEST_GAP_S since the previous _post call's response so
                 # the per-tick ADD->UPDATE->DELETE burst stays under the live
                 # server's 200ms-gap limit (HTTP 429 RATE_LIMIT_BURST) that the
                 # MockAyoaiServer never modeled. Uses self._retry_sleep so the
@@ -696,7 +746,9 @@ class AyoaiStreamingClient:
                     json=payload,
                     timeout=self.http_timeout_s,
                 )
+                self._last_post_monotonic = time.monotonic()
             except requests.exceptions.RequestException as e:
+                self._last_post_monotonic = time.monotonic()
                 # Transport-level failure. Check if it's transient.
                 err_str = repr(e)
                 if self._is_transient_error(err_str) and attempt < MAX_TRANSIENT_RETRIES:

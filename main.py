@@ -715,6 +715,18 @@ def _play(server_stop: RunServerStop) -> int:
         ),
     )
     parser.add_argument(
+        "--unit-updates",
+        action="store_true",
+        help=(
+            "Report each frame to the AyoAI session as envUnitUpdates[] (g-376-201, unit_wire.py): "
+            "UPDATE ops for the cells that changed, the cursor and one game-state unit, at most 3000 "
+            "ops a request and no operations key. Needs --startup-units (the cells and the cursor are "
+            "created there) and the port decider (--use-port-client --oracle): a vessel move is asked "
+            "for on the operations wire, which this wire does not carry. The closing DELETE stays on "
+            "the operations wire, which is the only wire the server reads it from. Off by default."
+        ),
+    )
+    parser.add_argument(
         "--random",
         action="store_true",
         help=(
@@ -1100,6 +1112,9 @@ def _play(server_stop: RunServerStop) -> int:
     # built opens no scorecard. open_ayoai_session refuses them on a lane without Collect's batch lane too.
     startup_batches: list[list[dict[str, Any]]] | None = None
     startup_env_config: dict[str, Any] | None = None
+    unit_wire_scope: str | None = None
+    if args.unit_updates and not args.startup_units:
+        parser.error("--unit-updates needs --startup-units (the cells and the cursor it updates are created there)")
     if args.startup_units:
         if args.use_solver_v0 or args.random or args.mock_url:
             parser.error("--startup-units needs a live AyoAI session (not --use-solver-v0, --random or --mock-url)")
@@ -1117,6 +1132,13 @@ def _play(server_stop: RunServerStop) -> int:
             f"Startup units: {sum(len(b) for b in startup_batches)} unit(s) in {len(startup_batches)} "
             f"batch(es) of a blank board, key scope {startup_scope}, envConfig {startup_env_config}"
         )
+        if args.unit_updates:
+            if not (args.use_port_client and args.oracle):
+                parser.error(
+                    "--unit-updates needs the port decider (--use-port-client --oracle): a vessel move is "
+                    "asked for on the operations wire (pending_decision), which the unit wire does not carry"
+                )
+            unit_wire_scope = startup_scope
 
     # --state-graph only takes effect under --use-solver-v2 (the v2 adapter is
     # the sole StateGraphExplorer build site). Warn rather than error so the
@@ -1445,6 +1467,7 @@ def _play(server_stop: RunServerStop) -> int:
                     else port_streaming_client.DECIDER_PORT
                 ),
                 vessel_hint=vessel_hint,
+                unit_wire_scope=unit_wire_scope,
             )
         else:
             streaming_client = SolverV2StreamingAdapter(
