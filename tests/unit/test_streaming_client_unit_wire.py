@@ -1,8 +1,9 @@
 """AyoaiStreamingClient on the unit wire (g-376-201): send_add and send_update report a frame as
 envUnitUpdates[] -- the cells that changed, the cursor and one game-state unit -- with no operations key.
 
-The decision (choose_action) and the closing DELETE are not reports and stay on the operations wire; the
-tests pin that, because the server reads a decision's pending_decision and the DELETE from that wire only."""
+A decision (choose_action) is asked for on the same wire (g-376-242): the game-state unit carries pending_decision
+and the move comes back as a tree in ayoBTs[]. The closing DELETE is not a report and stays on the operations wire;
+a test pins that, because the server reads the DELETE from that wire only."""
 
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from ayoai_streaming_client import (
     AyoaiStreamingError,
     AyoaiStreamingProtocolError,
 )
+from solver_v2.bt_reporting import BTUpdateReporter
 from spec_units import (
     BOARD_SIZE,
     CURSOR_HEAD_KEY,
@@ -27,6 +29,7 @@ from spec_units import (
     cell_key,
 )
 from structs import ActionInput, FrameData, GameAction, GameState
+from tests.fixtures.served_tree import ask_answer, served_tree
 from unit_wire import GAME_STATE_UNIT_KEY, MAX_OPS_PER_REQUEST, hex_rows
 
 SCOPE = "gd2f7ac"
@@ -58,6 +61,18 @@ class _Session:
 
     def close(self) -> None:
         pass
+
+
+class _ScriptedSession(_Session):
+    """Answers the n-th request with the n-th body, and every request after the last body with that body."""
+
+    def __init__(self, *bodies: dict[str, Any]) -> None:
+        super().__init__()
+        self._scripted = list(bodies)
+
+    def post(self, url: str, json: dict[str, Any], **_: Any) -> _Resp:
+        self.bodies.append(json)
+        return _Resp(200, self._scripted.pop(0) if len(self._scripted) > 1 else self._scripted[0])
 
 
 def _client(session: _Session, sleeps: list[float] | None = None, **kwargs: Any) -> AyoaiStreamingClient:
@@ -196,15 +211,153 @@ def test_a_frame_the_wire_cannot_carry_is_refused_before_any_request() -> None:
     assert session.bodies == []
 
 
-def test_a_decision_and_the_closing_delete_stay_on_the_operations_wire() -> None:
-    session = _Session(body=DECISION)
-    client = _client(session, unit_wire_scope=SCOPE)
-    client.choose_action(_frame({(1, 1): 2}))
-    client.send_delete()
-    ask, close = session.bodies
-    assert ask["operations"][0]["attributes"]["pending_decision"] is True
+def test_the_closing_delete_stays_on_the_operations_wire() -> None:
+    session = _Session()
+    _client(session, unit_wire_scope=SCOPE).send_delete()
+    (close,) = session.bodies
     assert close["operations"][0]["op"] == "DELETE"
-    assert "envUnitUpdates" not in ask and "envUnitUpdates" not in close
+    assert "envUnitUpdates" not in close
+
+
+def test_an_ask_is_a_unit_updates_request_whose_game_state_unit_asks_and_the_move_is_the_served_leaf() -> None:
+    session = _Session(body=ask_answer(served_tree("ACTION1", "arc__1")))
+    decision = _client(session, unit_wire_scope=SCOPE).choose_action(_frame({(1, 1): 2}))
+    (body,) = session.bodies
+    assert set(body) == {"ayoServerKey", "updateEpochMillis", "isLastBatch", "envUnitUpdates"}
+    assert body["isLastBatch"] is True
+    asking = body["envUnitUpdates"][-1]
+    assert asking["unitKey"] == GAME_STATE_UNIT_KEY
+    assert asking["unitProperties"]["attributes"]["pending_decision"] is True  # the boolean: "true" is no ask
+    assert (decision.action, decision.x, decision.y) == (GameAction.ACTION1, None, None)
+    assert decision.provenance["decided_by"] == "ayoai-v1"
+    assert decision.provenance["served_tree_key"] == "arc__1"
+
+
+def test_the_ask_carries_the_operations_wire_decision_attributes_with_a_grid_for_the_frame() -> None:
+    frame = _frame({(2, 3): 6}, x=3, y=2)
+    legacy, units = _Session(body=DECISION), _Session(body=ask_answer(served_tree()))
+    _client(legacy).choose_action(frame)
+    _client(units, unit_wire_scope=SCOPE).choose_action(frame)
+    legacy_attributes = legacy.bodies[0]["operations"][0]["attributes"]
+    unit_attributes = units.bodies[0]["envUnitUpdates"][-1]["unitProperties"]["attributes"]
+    assert legacy_attributes["pending_decision"] is True
+    assert {k: v for k, v in legacy_attributes.items() if k != "frame"} == {
+        k: v for k, v in unit_attributes.items() if k != "grid"
+    }
+    assert unit_attributes["grid"] == hex_rows(frame.frame[-1])
+
+
+def test_a_click_comes_from_the_leafs_node_params_and_the_tree_is_the_decisions_reasoning() -> None:
+    tree = served_tree("ACTION6", "arc__4", x=3, y=5, reason="frontier-core: a test")
+    decision = _client(_Session(body=ask_answer(tree)), unit_wire_scope=SCOPE).choose_action(_frame())
+    assert (decision.action, decision.x, decision.y) == (GameAction.ACTION6, 3, 5)
+    # The tree with the key the server issued on its root: where ServedTreeStreamingAdapter reads both.
+    assert decision.reasoning == {**tree["envSeed"], "envBTExecKey": "arc__4"}
+    assert decision.provenance["reasoning_preview"] == "frontier-core: a test"
+    assert decision.provenance["served_tree_key"] == "arc__4"
+
+
+def test_a_move_the_game_does_not_offer_is_reset_with_the_deviation_recorded_as_on_the_operations_wire() -> None:
+    session = _Session(body=ask_answer(served_tree("ACTION4")))
+    decision = _client(session, unit_wire_scope=SCOPE).choose_action(_frame())  # offers RESET, ACTION1, ACTION6
+    assert decision.action == GameAction.RESET
+    assert decision.provenance["deviation"] is True
+    assert decision.provenance["deviation_original_action"] == "ACTION4"
+
+
+def test_the_last_tree_served_is_the_answer() -> None:
+    session = _Session(body=ask_answer(served_tree("ACTION1", "arc__1"), served_tree("ACTION6", "arc__2", x=2, y=3)))
+    decision = _client(session, unit_wire_scope=SCOPE).choose_action(_frame())
+    assert (decision.action, decision.x, decision.y) == (GameAction.ACTION6, 2, 3)
+    assert decision.provenance["served_tree_key"] == "arc__2"
+
+
+def _without(tree: dict[str, Any], *path: str) -> dict[str, Any]:
+    """`tree` with the field at `path` (keys, then 0 for the first child of `nodes`) removed."""
+    copy = json.loads(json.dumps(tree))
+    node = copy
+    for step in path[:-1]:
+        node = node[0] if step == "0" else node[step]
+    del node[path[-1]]
+    return copy
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        pytest.param(ask_answer(), "no tree in ayoBTs", id="no tree"),
+        pytest.param({"status": "success"}, "no tree in ayoBTs", id="no ayoBTs"),
+        pytest.param(ask_answer({**served_tree(), "envBTExecKey": ""}), "no envBTExecKey or envSeed", id="empty key"),
+        pytest.param(ask_answer(_without(served_tree(), "envBTExecKey")), "no envBTExecKey or envSeed", id="no key"),
+        pytest.param(ask_answer(_without(served_tree(), "envSeed")), "no envBTExecKey or envSeed", id="no seed"),
+        pytest.param(
+            ask_answer({**served_tree(), "envSeed": {"nodeType": "Sequence", "nodeId": "arc_1", "nodes": []}}),
+            "no Task leaf with an ayoTaskKey",
+            id="no leaf",
+        ),
+        pytest.param(
+            ask_answer(_without(served_tree(), "envSeed", "nodes", "0", "ayoTaskKey")),
+            "no Task leaf with an ayoTaskKey",
+            id="leaf without a task key",
+        ),
+        pytest.param(ask_answer(served_tree("ACTION9")), "unknown action name", id="unknown action"),
+        pytest.param(ask_answer(served_tree("ACTION6")), "requires x and y", id="click without a cell"),
+    ],
+)
+def test_an_ask_without_a_readable_tree_is_a_protocol_error(body: dict[str, Any], message: str) -> None:
+    # Each body departs from the one the first ask test decodes in a single field, so that test is the control.
+    with pytest.raises(AyoaiStreamingProtocolError, match=message):
+        _client(_Session(body=body), unit_wire_scope=SCOPE).choose_action(_frame())
+
+
+def test_the_answer_is_read_from_the_last_request_of_a_frame_and_only_that_one_asks() -> None:
+    session = _ScriptedSession(
+        ask_answer(served_tree("ACTION1", "arc__0")), ask_answer(served_tree("ACTION6", "arc__9", x=1, y=2))
+    )
+    decision = _client(session, unit_wire_scope=SCOPE).choose_action(_frame(fill=1))  # 2 requests
+    first, last = session.bodies
+    assert [first["isLastBatch"], last["isLastBatch"]] == [False, True]
+    assert GAME_STATE_UNIT_KEY not in [op["unitKey"] for op in first["envUnitUpdates"]]
+    assert last["envUnitUpdates"][-1]["unitProperties"]["attributes"]["pending_decision"] is True
+    assert (decision.action, decision.provenance["served_tree_key"]) == (GameAction.ACTION6, "arc__9")
+
+
+def test_a_failed_ask_adopts_nothing_and_the_frame_is_asked_again_in_full() -> None:
+    session = _Session([400], body=ask_answer(served_tree()))
+    client = _client(session, unit_wire_scope=SCOPE)
+    frame = _frame({(2, 3): 6}, x=3, y=2)
+    with pytest.raises(AyoaiStreamingApiError):
+        client.choose_action(frame)
+    assert client.choose_action(frame).action == GameAction.ACTION1
+    failed, again = session.bodies
+    assert failed["envUnitUpdates"] == again["envUnitUpdates"]
+    assert again["envUnitUpdates"][-1]["operationType"] == "ADD"
+    assert again["envUnitUpdates"][-1]["unitProperties"]["attributes"]["pending_decision"] is True
+
+
+def test_the_opening_frame_is_answered_locally_on_the_unit_wire_too() -> None:
+    session = _Session()
+    opening = _frame()
+    opening.state = GameState.NOT_PLAYED
+    decision = _client(session, unit_wire_scope=SCOPE).choose_action(opening)
+    assert decision.action == GameAction.RESET and decision.provenance["decided_by"] == "client"
+    assert session.bodies == []
+
+
+def test_the_pending_tree_events_ride_the_last_request_of_an_ask() -> None:
+    reporter = BTUpdateReporter()
+    reporter.running("arc__1", "arc_1_1")
+    reporter.success("arc__1", "arc_1_1")
+    session = _ScriptedSession(ask_answer(), ask_answer(served_tree("ACTION1", "arc__2")))
+    client = _client(session, unit_wire_scope=SCOPE)
+    client.attach_bt_reporter(reporter)
+    client.choose_action(_frame(fill=1))  # 2 requests
+    first, last = session.bodies
+    assert "envBTUpdates" not in first
+    assert [(u["envBTExecKey"], [e["nodeOutcome"] for e in u["envBTEvents"]]) for u in last["envBTUpdates"]] == [
+        ("arc__1", ["Running", "Success"])
+    ]
+    assert reporter.pending == 0
 
 
 def test_without_a_scope_every_report_stays_on_the_operations_wire() -> None:
