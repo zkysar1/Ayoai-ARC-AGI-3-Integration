@@ -20,17 +20,21 @@ decision source". Mirrors tests/integration/test_solver_v2_mock_game.py.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from ayoai_streaming_client import AyoaiStreamingClient
 from main import run_game_loop
 from recorder import Recorder
 from solver_v2.bt_streaming_adapter import (
     DECIDED_BY_BT_EXECUTOR,
     BehaviorTreeStreamingAdapter,
+    ServedTreeStreamingAdapter,
 )
 from structs import FrameData, GameAction, GameState
 
@@ -335,3 +339,135 @@ def test_recording_captures_emitted_action(
     assert a6, "ACTION6 never emitted in this cycle"
     assert a6[0]["data"]["emitted_action"]["x"] == 7
     assert a6[0]["data"]["emitted_action"]["y"] == 11
+
+
+# ---------- g-376-203: the same moves from an ayoTaskKey tree, on the recorded frames ---------- #
+
+RECORDING = Path(__file__).resolve().parents[1] / "fixtures" / "ls20-synthetic.recording.jsonl"
+MOVES = ["ACTION1", "ACTION2", "ACTION3", "ACTION4"]
+
+
+def _recorded_frames() -> list[FrameData]:
+    """The frames of the tracked recording (a cursor walking right across a bordered 64 x 64 board), in order."""
+    frames: list[FrameData] = []
+    for line in RECORDING.read_text(encoding="utf-8").splitlines():
+        data = json.loads(line)["data"]
+        if "frame" not in data:
+            continue  # the session-open preamble
+        frames.append(
+            FrameData(
+                game_id="ls20-synthetic",
+                frame=data["frame"],
+                state=GameState.NOT_FINISHED,
+                score=data["score"],
+                guid="recorded",
+                available_actions=[GameAction.from_id(i) for i in data["available_actions"]],
+            )
+        )
+    return frames
+
+
+def _tree(task_field: str) -> dict:
+    """The Env Server's exploration tree over the recording's four legal moves, leaves keyed by task_field."""
+    return {
+        "nodeType": "Selector",
+        "name": "ArcExploration",
+        "nodeId": "arc_1",
+        "nodes": [
+            {
+                "nodeType": "Task",
+                "name": f"Task ({move})",
+                "nodeId": f"t_{move}",
+                task_field: move,
+                "nodeParams": {},
+            }
+            for move in MOVES
+        ],
+    }
+
+
+def _play(streaming_client: Any, frames: list[FrameData]) -> list[tuple[str, int | None, int | None]]:
+    """Drive run_game_loop over the recorded frames (ending in a WIN); the moves the game was sent."""
+    sender = _ScriptedActionSender([*frames, frames[-1].model_copy(update={"state": GameState.WIN})])
+    run_game_loop(
+        streaming_client=streaming_client,
+        action_sender=sender,
+        initial_frame=_initial_not_played(),
+        recorder=None,
+        max_actions=50,
+        game_id="ls20-synthetic",
+        log=logging.getLogger("test"),
+    )
+    return [(action.name, x, y) for action, _guid, x, y in sender.calls]
+
+
+def test_ayo_task_key_tree_plays_the_moves_the_arc_action_tree_played_on_the_recorded_frames() -> None:
+    frames = _recorded_frames()
+    assert len(frames) == 6, "the tracked recording changed: re-derive this test's expectations"
+
+    def moves(task_field: str) -> list[tuple[str, int | None, int | None]]:
+        adapter = BehaviorTreeStreamingAdapter(
+            _tree(task_field), ayo_server_key="card-g376203", arc_game_id="ls20-synthetic"
+        )
+        return _play(adapter, frames)
+
+    modern, legacy = moves("ayoTaskKey"), moves("arcAction")
+
+    assert modern == legacy
+    # RESET to open, then the tree's leaves in walk order, one per recorded frame.
+    assert modern == [("RESET", None, None)] + [(MOVES[i % 4], None, None) for i in range(6)]
+
+
+def _cursor_cell(frame: FrameData) -> int:
+    """Where the cursor (colour 4 in the recording) is, as a flat cell index: the frame-derived input to the choice."""
+    return [cell for layer in frame.frame for row in layer for cell in row].index(4)
+
+
+@pytest.mark.parametrize("task_field", ["ayoTaskKey", "arcAction"])
+def test_served_tree_run_plays_the_moves_a_plain_run_plays_and_reports_each_one(
+    mock_ayoai_server: Any, task_field: str
+) -> None:
+    """The server picks the leaf from the frame (its grid-hash baseline does; here: the cursor cell) and serves the tree with it.
+
+    A run through ServedTreeStreamingAdapter and a run without it send the game the same moves, and the
+    adapter's report (on the closing DELETE) names each leaf it played: Running then Success.
+    """
+    frames = _recorded_frames()
+    chosen = [MOVES[_cursor_cell(frame) % len(MOVES)] for frame in frames]
+    assert len(set(chosen)) > 1, "the recorded frames must make the server vary its choice"
+
+    def run(wrap: bool) -> tuple[list[tuple[str, int | None, int | None]], list[Any]]:
+        mock_ayoai_server.received_payloads.clear()
+        mock_ayoai_server.add_response({"status": "success"})  # the ADD
+        for move in chosen:
+            mock_ayoai_server.add_response(
+                {"status": "success", "data": {"decision": {"action": move, "reasoning": _tree(task_field)}}}
+            )
+        client: Any = AyoaiStreamingClient(
+            streaming_url=mock_ayoai_server.streaming_url,
+            ayo_server_key="card-g376203",
+            arc_game_id="ls20-synthetic",
+            api_key="",
+            retry_sleep=lambda _s: None,
+        )
+        if wrap:
+            client = ServedTreeStreamingAdapter(client)
+        try:
+            moves = _play(client, frames)
+        finally:
+            client.close()
+        return moves, list(mock_ayoai_server.received_payloads)
+
+    plain_moves, plain_payloads = run(wrap=False)
+    served_moves, served_payloads = run(wrap=True)
+
+    assert served_moves == plain_moves == [("RESET", None, None)] + [(m, None, None) for m in chosen]
+
+    # Plain: no report anywhere. Served: only the DELETE carries one, and it names every leaf played.
+    assert not any("envBTUpdates" in p for p in plain_payloads)
+    reported = [p for p in served_payloads if "envBTUpdates" in p]
+    assert len(reported) == 1 and reported[0]["operations"][0]["op"] == "DELETE"
+    (update,) = reported[0]["envBTUpdates"]
+    assert update["envBTExecKey"] == "arc_1"
+    events = [(e["nodeId"], e["nodeOutcome"]) for e in update["envBTEvents"]]
+    assert events == [(f"t_{m}", outcome) for m in chosen for outcome in ("Running", "Success")]

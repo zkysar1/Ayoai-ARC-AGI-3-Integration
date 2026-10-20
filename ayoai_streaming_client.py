@@ -240,6 +240,18 @@ class AyoaiDecision:
     provenance: dict[str, Any] = field(default_factory=dict)
 
 
+class BTReportSource(Protocol):
+    """Where the client takes behavior-tree events from (g-376-203): solver_v2.bt_reporting.BTUpdateReporter.
+
+    ``take`` hands out the envBTUpdates to send and forgets them; ``restore`` puts back what a failed
+    request was carrying.
+    """
+
+    def take(self) -> list[dict[str, Any]]: ...
+
+    def restore(self, updates: list[dict[str, Any]]) -> None: ...
+
+
 class StreamingDecisionClient(Protocol):
     """Structural interface ``run_game_loop`` drives per tick.
 
@@ -413,9 +425,23 @@ class AyoaiStreamingClient:
         # under the live server's 200ms-gap limit.
         self._last_post_monotonic: float | None = None
 
+        # g-376-203: where behavior-tree reports come from (attach_bt_reporter). None sends none.
+        self._bt_reporter: BTReportSource | None = None
+
     @property
     def tick(self) -> int:
         return self._tick
+
+    def attach_bt_reporter(self, source: BTReportSource | None) -> None:
+        """Send the events ``source`` holds as ``envBTUpdates`` on the requests that may carry them.
+
+        Those are every request EXCEPT a decision request: the server answers a ``pending_decision``
+        UPDATE before it reads the batch, and with the world ingest on it refuses to run the perception
+        step on a decision frame that carries envBTUpdates ([ARC-REPORT] ... it carries envBTUpdates).
+        So the events ride the next report (ADD, a report-only UPDATE, the last unit batch of a frame)
+        or the DELETE that ends the game. None detaches.
+        """
+        self._bt_reporter = source
 
     def close(self) -> None:
         if self._owned_session:
@@ -698,7 +724,35 @@ class AyoaiStreamingClient:
         lower = payload.lower()
         return any(p.lower() in lower for p in _TRANSIENT_PATTERNS)
 
+    def _bt_updates_for(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        """The envBTUpdates ``payload`` may carry (g-376-203), taken from the attached reporter.
+
+        Never a decision request (see attach_bt_reporter), and never a unit batch that is not the last
+        of its frame.
+        """
+        if self._bt_reporter is None or not payload.get("isLastBatch"):
+            return []
+        operations = payload.get("operations")
+        if operations and operations[0].get("attributes", {}).get("pending_decision"):
+            return []
+        return self._bt_reporter.take()
+
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """_post_raw, with the pending behavior-tree events added to the body when it may carry them.
+
+        A request that fails gives its events back to the reporter, so the next one carries them.
+        """
+        updates = self._bt_updates_for(payload)
+        if not updates:
+            return self._post_raw(payload)
+        try:
+            return self._post_raw({**payload, "envBTUpdates": updates})
+        except BaseException:
+            assert self._bt_reporter is not None
+            self._bt_reporter.restore(updates)
+            raise
+
+    def _post_raw(self, payload: dict[str, Any]) -> dict[str, Any]:
         """POST + parse + status-success gate with §3.6 retry-with-backoff.
 
         Centralizes transport/HTTP/JSON/status checks so choose_action,

@@ -41,6 +41,7 @@ from house_rules import heldout_ids, heldout_refusal
 from random_streaming_adapter import RandomStreamingAdapter
 from recorder import Recorder, get_recordings_dir
 from solver_v0.streaming_adapter import SolverV0StreamingAdapter
+from solver_v2.bt_streaming_adapter import ServedTreeStreamingAdapter
 from solver_v2.refiner import (
     RefinerSeedProvider,
     SkillLibrary,
@@ -53,6 +54,7 @@ from solver_v2.seed_provider import (
 )
 from solver_v2.streaming_adapter import SolverV2StreamingAdapter
 from spec_units import (
+    CURSOR_AYO_KEY,
     ENV_GRAVITY,
     blank_board,
     build_startup_units,
@@ -317,6 +319,11 @@ def run_game_loop(
             )
 
             if new_frame:
+                # The game answered the move. A client that reports each move's outcome settles it as run
+                # only now: a move no frame comes back for must not read as Success at game end.
+                move_answered = getattr(streaming_client, "move_answered", None)
+                if move_answered is not None:
+                    move_answered()
                 frames.append(new_frame)
                 action_counter += 1
                 elapsed = time.time() - timer
@@ -727,6 +734,20 @@ def _play(server_stop: RunServerStop) -> int:
         ),
     )
     parser.add_argument(
+        "--execute-tree",
+        action="store_true",
+        help=(
+            "Execute the Task-leaf behavior tree each AyoAI decision comes with (g-376-203, "
+            "solver_v2/bt_streaming_adapter.py): the leaf the server chose is found in its tree "
+            "(ayoTaskKey + nodeParams), played, and reported to the session as envBTUpdates "
+            "(Running when dispatched, Success when the next frame answers, Fail when the move was "
+            "not offered). The reports ride the next request that is not a decision request (the "
+            "server reads none from a decision frame) and the closing DELETE. The moves are the "
+            "server's, so a run with the flag and a run without it play the same ones. Only with "
+            "the plain AyoAI decider: not --use-solver-v0, --use-solver-v2 or --random. Off by default."
+        ),
+    )
+    parser.add_argument(
         "--random",
         action="store_true",
         help=(
@@ -1112,9 +1133,12 @@ def _play(server_stop: RunServerStop) -> int:
     # built opens no scorecard. open_ayoai_session refuses them on a lane without Collect's batch lane too.
     startup_batches: list[list[dict[str, Any]]] | None = None
     startup_env_config: dict[str, Any] | None = None
+    startup_required_characters: tuple[str, ...] | None = None
     unit_wire_scope: str | None = None
     if args.unit_updates and not args.startup_units:
         parser.error("--unit-updates needs --startup-units (the cells and the cursor it updates are created there)")
+    if args.execute_tree and (args.use_solver_v0 or args.use_solver_v2 or args.random):
+        parser.error("--execute-tree wraps the plain AyoAI decider (not --use-solver-v0, --use-solver-v2 or --random)")
     if args.startup_units:
         if args.use_solver_v0 or args.random or args.mock_url:
             parser.error("--startup-units needs a live AyoAI session (not --use-solver-v0, --random or --mock-url)")
@@ -1128,6 +1152,9 @@ def _play(server_stop: RunServerStop) -> int:
             parser.error("--startup-units needs a game id")
         startup_batches = split_batches(build_startup_units(blank_board(), startup_scope))
         startup_env_config = {"gravity": ENV_GRAVITY}
+        # g-376-203: the cursor unit names this character; the session reads it through the Characters API
+        # before the cold start and stops if it is absent (it would get no behavior streams, silently).
+        startup_required_characters = (CURSOR_AYO_KEY,)
         logger.info(
             f"Startup units: {sum(len(b) for b in startup_batches)} unit(s) in {len(startup_batches)} "
             f"batch(es) of a blank board, key scope {startup_scope}, envConfig {startup_env_config}"
@@ -1301,6 +1328,7 @@ def _play(server_stop: RunServerStop) -> int:
                 world_flags=session_world_flags,
                 startup_batches=startup_batches,
                 env_config=startup_env_config,
+                required_characters=startup_required_characters,
             )
             logger.info(
                 f"AyoAI session OPEN (solver-v2): "
@@ -1345,6 +1373,7 @@ def _play(server_stop: RunServerStop) -> int:
                 env_key=env_key,
                 startup_batches=startup_batches,
                 env_config=startup_env_config,
+                required_characters=startup_required_characters,
             )
             logger.info(
                 f"AyoAI session OPEN: hostname={ayoai_session.ayoai_hostname} "
@@ -1387,6 +1416,7 @@ def _play(server_stop: RunServerStop) -> int:
         | PortStreamingClient
         | RandomStreamingAdapter
         | AyoaiStreamingClient
+        | ServedTreeStreamingAdapter
     )
     if args.use_solver_v0:
         streaming_client = SolverV0StreamingAdapter(
@@ -1663,6 +1693,8 @@ def _play(server_stop: RunServerStop) -> int:
             arc_game_id=args.game,
             api_key=resolve_api_key() if not args.mock_url else "",
         )
+        if args.execute_tree:
+            streaming_client = ServedTreeStreamingAdapter(streaming_client)
 
     # g-315-96: warm DNS for live mode only. Closes the CNAME-propagation
     # window between Lambda READY and first send_add (alpha's g-315-95
