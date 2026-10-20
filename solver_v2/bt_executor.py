@@ -228,8 +228,13 @@ def _flatten(node: object, depth: int) -> list[LeafStep]:
         ]
 
     if node_type in _COMPOSITE_TYPES:
+        children = node.get("nodes")
+        if children is not None and not isinstance(children, list):
+            raise ValueError(
+                f"behavior-tree node {name!r}: nodes is not a list (got {type(children).__name__})"
+            )
         plan: list[LeafStep] = []
-        for child in node.get("nodes") or []:
+        for child in children or []:
             plan.extend(_flatten(child, depth + 1))
         return plan
 

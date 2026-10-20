@@ -149,8 +149,9 @@ class ServedTreeStreamingAdapter:
     BTExecutor, finds the leaf the decision names, and plays the move the leaf encodes (the move is the
     server's, so a run with the adapter and a run without it play the same moves). It then reports the leaf
     as envBTUpdates (solver_v2/bt_reporting.py): Running when the move is dispatched, Success when the game
-    answers with the next frame, Fail when the leaf named a move the game does not offer (the client
-    substituted RESET, provenance.deviation).
+    answers with the next frame (the game loop says so through ``move_answered``; the next ``choose_action``
+    settles it too), Fail when the leaf named a move the game does not offer (the client substituted RESET,
+    provenance.deviation). A move the game never answers stays Running.
 
     A decision with no tree behind it (the client's own RESET, a frontier answer whose reasoning is prose)
     passes through unchanged. A tree that cannot be read, or whose leaves do not hold the decision, passes
@@ -180,9 +181,16 @@ class ServedTreeStreamingAdapter:
     def __exit__(self, *_exc: object) -> None:
         self.close()
 
-    def send_delete(self) -> None:
-        """The game is over: the move in flight ran, and its report rides this request."""
+    def move_answered(self) -> None:
+        """The game answered the move in flight with a frame: that leaf ran. run_game_loop calls this per frame."""
         self._settle(success=True)
+
+    def send_delete(self) -> None:
+        """The game is over and the report rides this request.
+
+        A leaf still in flight here was never answered by a frame (move_answered settled every answered one),
+        so it stays Running: the run ended without learning what the move did.
+        """
         self._client.send_delete()
 
     def choose_action(self, frame: FrameData) -> AyoaiDecision:

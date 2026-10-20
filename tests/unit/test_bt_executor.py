@@ -141,6 +141,22 @@ def test_non_dict_node_raises() -> None:
         BTExecutor(_composite("Selector", "not-a-node"))  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("nodes", [5, 1.5, True, 0, False, "t", {}, {"nodeType": "Task"}])
+def test_a_composite_whose_nodes_is_not_a_list_raises(nodes: object) -> None:
+    # A good leaf stands beside it: without the check the walk dies with a TypeError (5, 1.5, True) or
+    # silently drops the subtree (0, False, {}), and BTExecutor's contract is ValueError on a malformed tree.
+    tree = _composite("Selector", _task("ACTION1"), {**_composite("Sequence"), "nodes": nodes})
+    with pytest.raises(ValueError, match="nodes is not a list"):
+        BTExecutor(tree)
+
+
+@pytest.mark.parametrize("children", [{}, {"nodes": None}, {"nodes": []}])
+def test_a_composite_with_no_children_is_an_empty_subtree(children: dict) -> None:
+    empty = {"nodeType": "Sequence", "name": "empty", "nodeId": "e", **children}
+    ex = BTExecutor(_composite("Selector", _task("ACTION1"), empty))
+    assert len(ex) == 1
+
+
 # ---------- drift guard ---------- #
 
 def test_action_id_map_matches_enum() -> None:

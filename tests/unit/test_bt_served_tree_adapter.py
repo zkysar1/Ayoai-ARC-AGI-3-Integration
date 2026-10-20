@@ -21,6 +21,7 @@ from ayoai_streaming_client import (
     AyoaiStreamingApiError,
     AyoaiStreamingClient,
 )
+from main import run_game_loop
 from solver_v2.bt_reporting import BTUpdateReporter
 from solver_v2.bt_streaming_adapter import ServedTreeStreamingAdapter
 from structs import FrameData, GameAction, GameState
@@ -155,13 +156,12 @@ def test_a_move_is_running_when_dispatched_and_success_when_the_next_frame_answe
     ]
 
 
-def test_the_closing_delete_settles_the_last_move_and_carries_the_whole_report(
-    mock_ayoai_server: Any, adapter: Any
-) -> None:
+def test_the_closing_delete_carries_the_whole_report(mock_ayoai_server: Any, adapter: Any) -> None:
     mock_ayoai_server.add_response(_reply("ACTION1"))
     mock_ayoai_server.add_response(_reply("ACTION3"))
     adapter.choose_action(_frame())
     adapter.choose_action(_frame())
+    adapter.move_answered()  # the game answered the last move; run_game_loop says so per frame
     adapter.send_delete()
 
     decision_requests, delete_request = mock_ayoai_server.received_payloads[:2], mock_ayoai_server.received_payloads[2]
@@ -179,6 +179,50 @@ def test_the_closing_delete_settles_the_last_move_and_carries_the_whole_report(
     # perception step on a decision frame that carries envBTUpdates): none of them carries any.
     assert all("envBTUpdates" not in p for p in decision_requests)
     assert adapter.reporter.pending == 0
+
+
+def _action_sender(*answers: FrameData | Exception | None) -> Any:
+    """An action_sender for run_game_loop: the next answer per call; None is "no frame", an exception is raised."""
+    queue = iter(answers)
+
+    def send(*_args: Any) -> FrameData | None:
+        answer = next(queue)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    return send
+
+
+@pytest.mark.parametrize(
+    ("last_answer", "settled"),
+    [
+        pytest.param(_frame(state=GameState.WIN), [("n2", "Success")], id="the-game-answers-with-a-frame"),
+        pytest.param(None, [], id="no-frame-comes-back"),
+        pytest.param(RuntimeError("the game API went away"), [], id="the-sender-raises"),
+    ],
+)
+def test_the_last_move_is_success_only_if_the_game_answered_it(
+    last_answer: FrameData | Exception | None, settled: list[tuple[str, str]]
+) -> None:
+    session = MagicMock(spec=requests.Session)
+    # ADD, a decision for ACTION1, a decision for ACTION2, the DELETE.
+    session.post.side_effect = [_ok(), _ok(_reply("ACTION1")), _ok(_reply("ACTION2")), _ok()]
+    adapter = ServedTreeStreamingAdapter(_client_with_session(session))
+    run_game_loop(
+        streaming_client=adapter,
+        action_sender=_action_sender(_frame(), _frame(), last_answer),  # RESET and ACTION1 are answered
+        initial_frame=_frame(state=GameState.NOT_PLAYED),
+        recorder=None,
+        max_actions=50,
+        game_id="g",
+        log=logging.getLogger("test"),
+    )
+    delete = session.post.call_args.kwargs["json"]
+    assert delete["operations"][0]["op"] == "DELETE"
+    events = [(e["nodeId"], e["nodeOutcome"]) for e in delete["envBTUpdates"][0]["envBTEvents"]]
+    # An answered move ends Success; one the game never answered ends at its Running, with no outcome after it.
+    assert events == [("n1", "Running"), ("n1", "Success"), ("n2", "Running"), *settled]
 
 
 def test_a_move_the_game_does_not_offer_is_reported_running_then_fail(mock_ayoai_server: Any, adapter: Any) -> None:
@@ -228,6 +272,18 @@ def test_a_tree_that_cannot_be_executed_keeps_the_servers_move_and_says_why(
     assert decision.action == GameAction.ACTION1
     assert "Java-only" in decision.provenance["bt_error"]
     assert "Java-only" in caplog.text
+    assert adapter.reporter.pending == 0
+
+
+@pytest.mark.parametrize("nodes", [5, True])
+def test_a_tree_whose_nodes_is_not_a_list_keeps_the_servers_move_and_says_why(
+    mock_ayoai_server: Any, adapter: Any, nodes: Any
+) -> None:
+    broken = {**_tree(_leaf("ACTION1", "n1")), "nodes": nodes}
+    mock_ayoai_server.add_response(_reply("ACTION1", reasoning=broken))
+    decision = adapter.choose_action(_frame())  # a TypeError here would end the run
+    assert decision.action == GameAction.ACTION1
+    assert "nodes is not a list" in decision.provenance["bt_error"]
     assert adapter.reporter.pending == 0
 
 
