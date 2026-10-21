@@ -323,7 +323,7 @@ def run_game_loop(
                 # only now: a move no frame comes back for must not read as Success at game end.
                 move_answered = getattr(streaming_client, "move_answered", None)
                 if move_answered is not None:
-                    move_answered()
+                    move_answered(new_frame)
                 frames.append(new_frame)
                 action_counter += 1
                 elapsed = time.time() - timer

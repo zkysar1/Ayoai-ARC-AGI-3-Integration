@@ -23,7 +23,10 @@ from ayoai_streaming_client import (
 )
 from main import run_game_loop
 from solver_v2.bt_reporting import BTUpdateReporter
-from solver_v2.bt_streaming_adapter import ServedTreeStreamingAdapter
+from solver_v2.bt_streaming_adapter import (
+    ServedTreeStreamingAdapter,
+    _frame_change_reason,
+)
 from structs import FrameData, GameAction, GameState
 
 CARD_ID = "card-g376203"
@@ -40,7 +43,8 @@ def _leaf(key: str, node_id: str, x: int | None = None, y: int | None = None, sh
     }
 
 
-def _tree(*leaves: dict, root_id: str | None = "arc_1", exec_key: str | None = None) -> dict:
+def _tree(*leaves: dict, root_id: str | None = "arc_1", exec_key: str | None = "arc_1") -> dict:
+    """A served tree. It carries the envBTExecKey the server issued for it unless exec_key is None."""
     tree: dict = {"nodeType": "Selector", "name": "ArcExploration", "nodes": list(leaves)}
     if root_id is not None:
         tree["nodeId"] = root_id
@@ -65,12 +69,16 @@ def _reply(action: str, reasoning: Any = DEFAULT_TREE, **extras: Any) -> dict:
     return {"status": "success", "data": {"decision": decision}}
 
 
-def _frame(state: GameState = GameState.NOT_FINISHED, available: list[GameAction] | None = None) -> FrameData:
+def _frame(
+    state: GameState = GameState.NOT_FINISHED,
+    available: list[GameAction] | None = None,
+    layer: list[list[int]] | None = None,
+) -> FrameData:
     return FrameData(
         game_id="g-1",
         state=state,
         score=0,
-        frame=[[[0, 1], [2, 3]]],
+        frame=[[[0, 1], [2, 3]] if layer is None else layer],
         guid="guid-1",
         available_actions=ALL_ACTIONS if available is None else available,
     )
@@ -94,6 +102,15 @@ def adapter(mock_ayoai_server: Any):
 def _events(reporter: BTUpdateReporter) -> list[tuple[str, str, str]]:
     return [
         (u["envBTExecKey"], e.get("nodeId", ""), e["nodeOutcome"])
+        for u in reporter.take()
+        for e in u["envBTEvents"]
+    ]
+
+
+def _outcomes(reporter: BTUpdateReporter) -> list[dict[str, str]]:
+    """Every event the reporter holds, as it would be sent but for its clock."""
+    return [
+        {k: v for k, v in e.items() if k != "bTEventEpochMillis"}
         for u in reporter.take()
         for e in u["envBTEvents"]
     ]
@@ -244,6 +261,103 @@ def test_a_game_over_frame_settles_the_move_that_ended_the_game(mock_ayoai_serve
     assert _events(adapter.reporter) == [("arc_1", "n2", "Running"), ("arc_1", "n2", "Success")]
 
 
+# ---------- the finishing event says why (failReason, successReason) ---------- #
+
+
+def test_a_move_the_game_does_not_offer_fails_with_the_reason(mock_ayoai_server: Any, adapter: Any) -> None:
+    mock_ayoai_server.add_response(_reply("ACTION3"))
+    adapter.choose_action(_frame(available=[GameAction.ACTION1]))
+    assert _outcomes(adapter.reporter) == [
+        {"nodeOutcome": "Running", "nodeId": "n3"},
+        {"nodeOutcome": "Fail", "nodeId": "n3", "failReason": "ACTION3 not in available_actions"},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("answer_layer", "reason"),
+    [
+        pytest.param([[0, 1], [2, 9]], "frame changed", id="the-screen-changed"),
+        pytest.param([[0, 1], [2, 3]], "frame unchanged", id="the-screen-is-the-same"),
+    ],
+)
+def test_a_success_says_whether_the_answering_frame_changed_the_screen(
+    mock_ayoai_server: Any, adapter: Any, answer_layer: list[list[int]], reason: str
+) -> None:
+    mock_ayoai_server.add_response(_reply("ACTION1"))
+    adapter.choose_action(_frame())
+    adapter.move_answered(_frame(layer=answer_layer))
+    assert _outcomes(adapter.reporter) == [
+        {"nodeOutcome": "Running", "nodeId": "n1"},
+        {"nodeOutcome": "Success", "nodeId": "n1", "successReason": reason},
+    ]
+
+
+def test_the_next_decision_frame_gives_the_reason_when_the_loop_did_not_say(
+    mock_ayoai_server: Any, adapter: Any
+) -> None:
+    mock_ayoai_server.add_response(_reply("ACTION1"))
+    mock_ayoai_server.add_response(_reply("ACTION2"))
+    adapter.choose_action(_frame())
+    adapter.choose_action(_frame(layer=[[0, 1], [2, 9]]))  # the answer to ACTION1, and the frame ACTION2 is chosen on
+    assert _outcomes(adapter.reporter) == [
+        {"nodeOutcome": "Running", "nodeId": "n1"},
+        {"nodeOutcome": "Success", "nodeId": "n1", "successReason": "frame changed"},
+        {"nodeOutcome": "Running", "nodeId": "n2"},
+    ]
+
+
+def test_a_success_with_no_answering_frame_carries_no_reason(mock_ayoai_server: Any, adapter: Any) -> None:
+    mock_ayoai_server.add_response(_reply("ACTION1"))
+    adapter.choose_action(_frame())
+    adapter.move_answered()
+    assert _outcomes(adapter.reporter) == [
+        {"nodeOutcome": "Running", "nodeId": "n1"},
+        {"nodeOutcome": "Success", "nodeId": "n1"},
+    ]
+
+
+def test_the_screen_compared_is_the_last_layer() -> None:
+    def layers(*grids: list[list[int]]) -> FrameData:
+        return _frame().model_copy(update={"frame": list(grids)})
+
+    # An earlier layer moved but the screen the move left did not; then the reverse.
+    assert _frame_change_reason(layers([[0]], [[1]]), layers([[9]], [[1]])) == "frame unchanged"
+    assert _frame_change_reason(layers([[0]], [[1]]), layers([[0]], [[2]])) == "frame changed"
+
+
+def test_a_frame_with_no_layers_gives_no_reason() -> None:
+    no_layers = _frame().model_copy(update={"frame": []})
+    assert _frame_change_reason(_frame(), no_layers) == ""
+    assert _frame_change_reason(no_layers, _frame()) == ""
+    assert _frame_change_reason(None, _frame()) == ""
+    assert _frame_change_reason(_frame(), None) == ""
+
+
+def test_run_game_loop_hands_over_the_answering_frame_so_each_success_says_why() -> None:
+    session = MagicMock(spec=requests.Session)
+    # ADD, a decision for ACTION1, a decision for ACTION2, the DELETE.
+    session.post.side_effect = [_ok(), _ok(_reply("ACTION1")), _ok(_reply("ACTION2")), _ok()]
+    adapter = ServedTreeStreamingAdapter(_client_with_session(session))
+    changed = [[0, 1], [2, 9]]
+    run_game_loop(
+        streaming_client=adapter,
+        # RESET is answered with the start screen; ACTION1 changes it; ACTION2 leaves it as it was and wins.
+        action_sender=_action_sender(_frame(), _frame(layer=changed), _frame(state=GameState.WIN, layer=changed)),
+        initial_frame=_frame(state=GameState.NOT_PLAYED),
+        recorder=None,
+        max_actions=50,
+        game_id="g",
+        log=logging.getLogger("test"),
+    )
+    events = session.post.call_args.kwargs["json"]["envBTUpdates"][0]["envBTEvents"]
+    assert [(e["nodeId"], e["nodeOutcome"], e.get("successReason")) for e in events] == [
+        ("n1", "Running", None),
+        ("n1", "Success", "frame changed"),
+        ("n2", "Running", None),
+        ("n2", "Success", "frame unchanged"),
+    ]
+
+
 # ---------- what is not a tree, or not an executable one, passes through ---------- #
 
 
@@ -295,13 +409,22 @@ def test_a_decision_no_leaf_encodes_keeps_the_servers_move_and_says_why(mock_ayo
     assert adapter.reporter.pending == 0
 
 
-def test_a_tree_with_no_key_to_file_a_report_under_is_not_reported(mock_ayoai_server: Any, adapter: Any) -> None:
-    keyless = _tree(_leaf("ACTION1", "n1"), root_id=None)
+@pytest.mark.parametrize("root_id", ["arc_1", None], ids=["the-root-has-a-node-id", "the-root-has-none"])
+def test_a_tree_with_no_server_issued_key_is_not_reported_and_the_log_says_so_once(
+    mock_ayoai_server: Any, adapter: Any, caplog: pytest.LogCaptureFixture, root_id: str | None
+) -> None:
+    # A root nodeId is not a key the server issued, so a report filed under it joins to nothing (g-376-241):
+    # nothing is reported, every decision says why, and the log says it once for the run.
+    keyless = _tree(_leaf("ACTION1", "n1"), root_id=root_id, exec_key=None)
     mock_ayoai_server.add_response(_reply("ACTION1", reasoning=keyless))
-    decision = adapter.choose_action(_frame())
-    assert decision.provenance["bt_node_id"] == "n1"
-    assert "no envBTExecKey" in decision.provenance["bt_error"]
+    mock_ayoai_server.add_response(_reply("ACTION1", reasoning=keyless))
+    with caplog.at_level(logging.WARNING):
+        decisions = [adapter.choose_action(_frame()), adapter.choose_action(_frame())]
+    for decision in decisions:
+        assert decision.provenance["bt_node_id"] == "n1"
+        assert "no envBTExecKey" in decision.provenance["bt_error"]
     assert adapter.reporter.pending == 0
+    assert caplog.text.count("has no envBTExecKey") == 1
 
 
 def test_the_same_tree_served_every_tick_is_read_once(mock_ayoai_server: Any, adapter: Any) -> None:

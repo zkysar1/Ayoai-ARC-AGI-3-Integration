@@ -241,11 +241,11 @@ class PortStreamingClient:
             provenance={**decision.provenance, "mode": DECIDER_VESSEL, "port_tick": self._tick},
         )
 
-    def move_answered(self) -> None:
-        """The game answered the move in flight with a frame: the served tree's leaf ran (g-376-242).
+    def move_answered(self, frame: FrameData | None = None) -> None:
+        """The game answered the move in flight with ``frame``: the served tree's leaf ran (g-376-242).
         run_game_loop calls this per frame; without a served tree there is nothing to settle."""
         if self._served is not None:
-            self._served.move_answered()
+            self._served.move_answered(frame)
 
     def _report(self, frame: FrameData) -> None:
         """Send the frame's top layer, the screen the last move left, to the session as

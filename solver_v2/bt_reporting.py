@@ -9,7 +9,9 @@ performance to Ayoai) has a builder report when nodes start (Running) and finish
                        "nodeId": "<node>"}]}]
 
 ``nodeId`` is optional (the spec: "Not required for root updates"), and a streaming request carries at most
-100 envBTUpdates (the server refuses more with HTTP 400). This module only collects and shapes the events;
+100 envBTUpdates (the server refuses more with HTTP 400). A finishing event may also carry ``successReason`` or
+``failReason``, a short text that says how the outcome is known; the server stores either when it is not empty,
+so an event carries the field only when a reason was given. This module only collects and shapes the events;
 the streaming client decides which request carries them (AyoaiStreamingClient.attach_bt_reporter).
 
 Pure and offline: the clock is injectable, there is no I/O.
@@ -40,13 +42,13 @@ class BTUpdateReporter:
         """The node started."""
         self._add(exec_key, node_id, OUTCOME_RUNNING)
 
-    def success(self, exec_key: str, node_id: str) -> None:
-        """The node finished and did what it was for."""
-        self._add(exec_key, node_id, OUTCOME_SUCCESS)
+    def success(self, exec_key: str, node_id: str, reason: str = "") -> None:
+        """The node finished and did what it was for. ``reason`` is sent as successReason when it is not empty."""
+        self._add(exec_key, node_id, OUTCOME_SUCCESS, "successReason", reason)
 
-    def fail(self, exec_key: str, node_id: str) -> None:
-        """The node finished and could not do it."""
-        self._add(exec_key, node_id, OUTCOME_FAIL)
+    def fail(self, exec_key: str, node_id: str, reason: str = "") -> None:
+        """The node finished and could not do it. ``reason`` is sent as failReason when it is not empty."""
+        self._add(exec_key, node_id, OUTCOME_FAIL, "failReason", reason)
 
     @property
     def pending(self) -> int:
@@ -70,10 +72,12 @@ class BTUpdateReporter:
             key = update["envBTExecKey"]
             self._pending[key] = list(update["envBTEvents"]) + self._pending.get(key, [])
 
-    def _add(self, exec_key: str, node_id: str, outcome: str) -> None:
+    def _add(self, exec_key: str, node_id: str, outcome: str, reason_field: str = "", reason: str = "") -> None:
         if not exec_key:
             raise ValueError("envBTExecKey is required to report a node")
         event: dict[str, Any] = {"bTEventEpochMillis": int(self._clock_ms()), "nodeOutcome": outcome}
         if node_id:
             event["nodeId"] = node_id
+        if reason:
+            event[reason_field] = reason
         self._pending.setdefault(exec_key, []).append(event)

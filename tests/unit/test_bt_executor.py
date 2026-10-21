@@ -283,14 +283,16 @@ def test_a_leaf_without_a_node_id_has_an_empty_one() -> None:
     assert BTExecutor(_leaf("ACTION1")).step(0).node_id == ""
 
 
-def test_exec_key_is_the_envbtexeckey_else_the_root_node_id_else_empty() -> None:
+def test_exec_key_is_the_servers_envbtexeckey_and_never_the_root_node_id() -> None:
     leaf = _leaf("ACTION1", node_id="n1")
     assert BTExecutor({**_composite("Selector", leaf), "envBTExecKey": "tree-7"}).exec_key == "tree-7"
-    assert BTExecutor({**_composite("Selector", leaf), "nodeId": "arc_1"}).exec_key == "arc_1"
+    # A root nodeId is not a key the server issued: a report filed under it joins to nothing (g-376-241).
+    assert BTExecutor({**_composite("Selector", leaf), "nodeId": "arc_1"}).exec_key == ""
     assert BTExecutor(_leaf("ACTION1")).exec_key == ""  # a bare leaf root with no id
-    # an empty or non-string key is not a key
-    assert BTExecutor({**_composite("Selector", leaf), "envBTExecKey": "", "nodeId": "arc_1"}).exec_key == "arc_1"
-    assert BTExecutor({**_composite("Selector", leaf), "envBTExecKey": 5, "nodeId": "arc_1"}).exec_key == "arc_1"
+    # an empty or non-string key is not a key, whatever the root's nodeId is
+    assert BTExecutor({**_composite("Selector", leaf), "envBTExecKey": "", "nodeId": "arc_1"}).exec_key == ""
+    assert BTExecutor({**_composite("Selector", leaf), "envBTExecKey": 5, "nodeId": "arc_1"}).exec_key == ""
+    assert BTExecutor({**_composite("Selector", leaf), "envBTExecKey": None, "nodeId": "arc_1"}).exec_key == ""
 
 
 def test_find_traces_a_move_back_to_its_first_leaf() -> None:
