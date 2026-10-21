@@ -728,9 +728,11 @@ def _play(server_stop: RunServerStop) -> int:
             "Report each frame to the AyoAI session as envUnitUpdates[] (g-376-201, unit_wire.py): "
             "UPDATE ops for the cells that changed, the cursor and one game-state unit, at most 3000 "
             "ops a request and no operations key. Needs --startup-units (the cells and the cursor are "
-            "created there) and the port decider (--use-port-client --oracle): a vessel move is asked "
-            "for on the operations wire, which this wire does not carry. The closing DELETE stays on "
-            "the operations wire, which is the only wire the server reads it from. Off by default."
+            "created there) and the port client (--use-port-client). Under the vessel decider, the "
+            "default, the move is asked for on this wire too (g-376-242): the game-state unit carries "
+            "pending_decision, the move comes back as a tree in ayoBTs[], and the client runs it and "
+            "reports its leaf as envBTUpdates. The closing DELETE stays on the operations wire, which "
+            "is the only wire the server reads it from. Off by default."
         ),
     )
     parser.add_argument(
@@ -1160,10 +1162,10 @@ def _play(server_stop: RunServerStop) -> int:
             f"batch(es) of a blank board, key scope {startup_scope}, envConfig {startup_env_config}"
         )
         if args.unit_updates:
-            if not (args.use_port_client and args.oracle):
+            if not args.use_port_client:
                 parser.error(
-                    "--unit-updates needs the port decider (--use-port-client --oracle): a vessel move is "
-                    "asked for on the operations wire (pending_decision), which the unit wire does not carry"
+                    "--unit-updates needs the port client (--use-port-client): it is the only player "
+                    "that reports on the unit wire"
                 )
             unit_wire_scope = startup_scope
 

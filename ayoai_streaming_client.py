@@ -270,6 +270,20 @@ class StreamingDecisionClient(Protocol):
     def send_delete(self) -> None: ...
 
 
+def _first_task_leaf(node: Any) -> dict[str, Any] | None:
+    """The first Task leaf, pre-order, of a served behavior tree; None when it has none."""
+    if not isinstance(node, dict):
+        return None
+    if node.get("nodeType") == "Task":
+        return node
+    children = node.get("nodes")
+    for child in children if isinstance(children, list) else []:
+        leaf = _first_task_leaf(child)
+        if leaf is not None:
+            return leaf
+    return None
+
+
 class AyoaiStreamingClient:
     """Per-tick decision client. Posts FrameData, receives a GameAction.
 
@@ -407,6 +421,7 @@ class AyoaiStreamingClient:
 
         # g-376-201: the unit wire. None keeps every report on the operations wire; a scope
         # (spec_units.scope_of(game id)) sends send_add and send_update as envUnitUpdates.
+        # g-376-242: choose_action asks on it too, and the move comes back as a tree in ayoBTs[].
         self._unit_wire: UnitWireState | None = None
         if unit_wire_scope is not None:
             if not arc_game_id:
@@ -435,11 +450,12 @@ class AyoaiStreamingClient:
     def attach_bt_reporter(self, source: BTReportSource | None) -> None:
         """Send the events ``source`` holds as ``envBTUpdates`` on the requests that may carry them.
 
-        Those are every request EXCEPT a decision request: the server answers a ``pending_decision``
-        UPDATE before it reads the batch, and with the world ingest on it refuses to run the perception
-        step on a decision frame that carries envBTUpdates ([ARC-REPORT] ... it carries envBTUpdates).
-        So the events ride the next report (ADD, a report-only UPDATE, the last unit batch of a frame)
-        or the DELETE that ends the game. None detaches.
+        Those are every request EXCEPT a decision request on the operations wire: the server answers a
+        ``pending_decision`` UPDATE before it reads the batch, and with the world ingest on it refuses to
+        run the perception step on a decision frame that carries envBTUpdates ([ARC-REPORT] ... it carries
+        envBTUpdates). So the events ride the next report (ADD, a report-only UPDATE, the last unit batch of
+        a frame, an ask on the unit wire among them: the server reads that batch whole) or the DELETE that
+        ends the game. None detaches.
         """
         self._bt_reporter = source
 
@@ -490,6 +506,10 @@ class AyoaiStreamingClient:
         game-control RESET (`decided_by: "client"`). No random fallback
         path — protocol errors raise exceptions that the game loop must
         surface, not paper over.
+
+        On the unit wire (g-376-242) the frame goes as envUnitUpdates with
+        `pending_decision=true` on the game-state unit, and the decision is
+        read from the tree the response serves in `ayoBTs[]`.
         """
         # Game-control: RESET is decided client-side. Mirrors the prior
         # choose_random_action behavior and skips an empty server call.
@@ -510,6 +530,10 @@ class AyoaiStreamingClient:
             )
 
         self._tick += 1
+        if self._unit_wire is not None:
+            return self._decode_served_decision(
+                self._send_unit_frame(frame, pending_decision=True), frame.available_actions or []
+            )
         payload = self._encode_frame(frame, op="UPDATE", pending_decision=True)
         body = self._post(payload)
         # Pass frame.available_actions through so _decode_decision can
@@ -688,15 +712,17 @@ class AyoaiStreamingClient:
             }],
         }
 
-    def _send_unit_frame(self, frame: FrameData) -> None:
+    def _send_unit_frame(self, frame: FrameData, pending_decision: bool = False) -> dict[str, Any]:
         """Report `frame` as envUnitUpdates (g-376-201): the cells and cursor that changed, then the game-state
         unit, and no `operations` key. Each request holds at most MAX_OPS_PER_REQUEST ops, `_post` keeps the
         gap between requests, and `isLastBatch` is true only on the last request of the frame. The state the
         server now holds is adopted only after every request was accepted, so a failed frame is re-sent as
         a diff against what the server last confirmed. A frame the wire cannot carry raises
-        AyoaiStreamingProtocolError before any request is made."""
+        AyoaiStreamingProtocolError before any request is made. With `pending_decision` the game-state
+        unit asks for a move (g-376-242), and the response of the last request, which holds the answer,
+        is returned."""
         assert self._unit_wire is not None
-        attributes = self._frame_attributes(frame, pending_decision=False)
+        attributes = self._frame_attributes(frame, pending_decision=pending_decision)
         has_xy = "last_action_x" in attributes and "last_action_y" in attributes
         xy = (int(attributes["last_action_x"]), int(attributes["last_action_y"])) if has_xy else None
         try:
@@ -704,14 +730,16 @@ class AyoaiStreamingClient:
         except UnitWireError as exc:
             raise AyoaiStreamingProtocolError(f"frame cannot be sent as units: {exc}") from exc
         last = len(plan.batches) - 1
+        body: dict[str, Any] = {}
         for index, ops in enumerate(plan.batches):
-            self._post({
+            body = self._post({
                 "ayoServerKey": self.ayo_server_key,
                 "updateEpochMillis": str(int(time.time() * 1000)),
                 "isLastBatch": index == last,
                 "envUnitUpdates": ops,
             })
         self._unit_wire.commit(plan)
+        return body
 
     @staticmethod
     def _is_transient_error(payload: str) -> bool:
@@ -881,6 +909,56 @@ class AyoaiStreamingClient:
             )
 
         return body
+
+    def _decode_served_decision(
+        self,
+        body: dict[str, Any],
+        available_actions: list[GameAction],
+    ) -> AyoaiDecision:
+        """The decision a unit-wire ask was answered with (g-376-242): the move of the last tree in ``ayoBTs[]``
+        (the server adds its answer after any tree already queued for the response), a Sequence holding the one
+        Task leaf for the vessel's move, under the key the server issued.
+
+        The tree is the whole answer. A response that serves none, or one this client cannot read, is a
+        protocol error that ends the play, as a response with no ``data.decision`` is on the operations wire.
+        The move goes through ``_decode_decision``, so the §3.6 checks are the operations wire's: a move the
+        game does not offer is RESET with the deviation recorded, and ACTION6 needs integer x,y in [0, 63].
+        ``reasoning`` is the tree with the served key on its root, which is where ServedTreeStreamingAdapter
+        reads the tree and the key a report of it is filed under; ``provenance.served_tree_key`` names the key
+        for the recorder, and ``reasoning_preview`` is the reason the server gave (``treeParams.description``).
+        """
+        trees = body.get("ayoBTs")
+        if not isinstance(trees, list) or not trees:
+            raise AyoaiStreamingProtocolError(
+                f"the ask was answered with no tree in ayoBTs (tick {self._tick}): {str(body)[:300]}"
+            )
+        served = trees[-1]
+        key = served.get("envBTExecKey") if isinstance(served, dict) else None
+        seed = served.get("envSeed") if isinstance(served, dict) else None
+        if not isinstance(key, str) or not key or not isinstance(seed, dict):
+            raise AyoaiStreamingProtocolError(
+                f"the served tree has no envBTExecKey or envSeed (tick {self._tick}): {str(served)[:300]}"
+            )
+        leaf = _first_task_leaf(seed)
+        task_key = leaf.get("ayoTaskKey") if leaf is not None else None
+        if leaf is None or not isinstance(task_key, str) or not task_key:
+            raise AyoaiStreamingProtocolError(
+                f"the served tree {key!r} has no Task leaf with an ayoTaskKey (tick {self._tick})"
+            )
+        params = leaf.get("nodeParams")
+        cell = params if isinstance(params, dict) else {}
+        tree_params = served.get("treeParams")
+        reason = tree_params.get("description") if isinstance(tree_params, dict) else None
+        decision = self._decode_decision(
+            {
+                "status": body.get("status"),
+                "data": {"decision": {"action": task_key, "x": cell.get("x"), "y": cell.get("y"), "reasoning": reason}},
+            },
+            available_actions,
+        )
+        decision.reasoning = {**seed, "envBTExecKey": key}
+        decision.provenance["served_tree_key"] = key
+        return decision
 
     def _decode_decision(
         self,

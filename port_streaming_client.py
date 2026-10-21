@@ -36,6 +36,10 @@ instead of the frontier stack; vessel_world_flags adds the flag that also puts
 each decided frame into the session world, by default on the DEV lane (g-376-52).
 An optional plain-data vessel_hint (g-376-141, vessel_hint.py) rides on the session's ADD
 and UPDATE ops for the vessel to read; the port decides without the vessel, so it refuses one.
+With a unit_wire_scope the vessel's ask and answer ride the unit wire too (g-376-242): the frame goes as
+envUnitUpdates with pending_decision on the game-state unit, the move arrives as a tree in ayoBTs[], and a
+ServedTreeStreamingAdapter around the session client runs it and reports the leaf it played as envBTUpdates
+(Running when dispatched, Success when move_answered says the game replied).
 decider="port" (this class's default, which the offline harnesses use) is oracle
 mode, the behaviour described above. main.py plays with the vessel and asks the port
 only under --oracle (g-376-57, OB-31): the port is the parity oracle.
@@ -62,6 +66,7 @@ from my_agent import MyAgent  # type: ignore[import-not-found]  # noqa: E402
 from ayoai_client import resolve_lane  # noqa: E402
 from ayoai_streaming_client import AyoaiDecision, AyoaiStreamingClient  # noqa: E402
 from primitives.theory_arm import TheoryArm  # noqa: E402
+from solver_v2.bt_streaming_adapter import ServedTreeStreamingAdapter  # noqa: E402
 from structs import FrameData, GameAction, GameState  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -132,10 +137,6 @@ class PortStreamingClient:
             raise ValueError(f"decider must be {DECIDER_PORT!r} or {DECIDER_VESSEL!r}, not {decider!r}")
         if vessel_hint and decider != DECIDER_VESSEL:
             raise ValueError(f"vessel_hint needs decider={DECIDER_VESSEL!r}: the port decides without the vessel")
-        if unit_wire_scope and decider != DECIDER_PORT:
-            raise ValueError(
-                f"unit_wire_scope needs decider={DECIDER_PORT!r}: a vessel move is asked for on the operations wire"
-            )
         if decider == DECIDER_VESSEL and not streaming_url:
             raise ValueError("decider='vessel' needs the session's streaming_url")
         self.decider = decider
@@ -153,6 +154,12 @@ class PortStreamingClient:
                 **network_kwargs,
             )
             if streaming_url
+            else None
+        )
+        # g-376-242: on the unit wire the vessel's move is a served tree; the adapter runs it and reports its leaf.
+        self._served: ServedTreeStreamingAdapter | None = (
+            ServedTreeStreamingAdapter(self._reporter)
+            if self._reporter is not None and decider == DECIDER_VESSEL and unit_wire_scope
             else None
         )
         self.reports_sent = 0
@@ -225,7 +232,7 @@ class PortStreamingClient:
         protocol or transport error propagates: the game loop aborts the play
         rather than let the client pick a move."""
         assert self._reporter is not None
-        decision = self._reporter.choose_action(frame)
+        decision = (self._reporter if self._served is None else self._served).choose_action(frame)
         self._tick += 1
         return AyoaiDecision(
             action=decision.action,
@@ -233,6 +240,12 @@ class PortStreamingClient:
             y=decision.y,
             provenance={**decision.provenance, "mode": DECIDER_VESSEL, "port_tick": self._tick},
         )
+
+    def move_answered(self) -> None:
+        """The game answered the move in flight with a frame: the served tree's leaf ran (g-376-242).
+        run_game_loop calls this per frame; without a served tree there is nothing to settle."""
+        if self._served is not None:
+            self._served.move_answered()
 
     def _report(self, frame: FrameData) -> None:
         """Send the frame's top layer, the screen the last move left, to the session as

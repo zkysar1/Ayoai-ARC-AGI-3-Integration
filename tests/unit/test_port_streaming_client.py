@@ -30,6 +30,7 @@ from port_streaming_client import (  # noqa: E402
     vessel_world_flags,
 )
 from structs import ActionInput, FrameData, GameAction, GameState  # noqa: E402
+from tests.fixtures.served_tree import ask_answer, served_tree  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -533,14 +534,14 @@ def _main_py(args: list[str], cwd: Path, extra_env: dict[str, str]) -> subproces
         (["--random", "--startup-units"], {"AYOAI_LANE": "dev"}, "--startup-units needs a live AyoAI session"),
         (["--mock-url", "http://127.0.0.1:9", "--startup-units"], {"AYOAI_LANE": "dev"},
          "--startup-units needs a live AyoAI session"),
-        # g-376-201: the unit wire rides on the startup units' cells and cursor, and only the port decider can
-        # use it (a vessel move is asked for on the operations wire).
+        # g-376-201: the unit wire rides on the startup units' cells and cursor, and only the port client reports
+        # on it. g-376-242: under either of its deciders, the vessel asks for its move there too.
         (["--use-solver-v2", "--use-port-client", "--oracle", "--unit-updates"], {"AYOAI_LANE": "dev"},
          "--unit-updates needs --startup-units"),
-        (["--use-solver-v2", "--use-port-client", "--startup-units", "--unit-updates"], {"AYOAI_LANE": "dev"},
-         "--unit-updates needs the port decider"),
+        (["--use-solver-v2", "--use-port-client", "--unit-updates"], {"AYOAI_LANE": "dev"},
+         "--unit-updates needs --startup-units"),
         (["--use-solver-v2", "--startup-units", "--unit-updates"], {"AYOAI_LANE": "dev"},
-         "--unit-updates needs the port decider"),
+         "--unit-updates needs the port client"),
     ],
 )
 def test_main_refuses_port_client_combinations_that_would_do_nothing(
@@ -769,23 +770,105 @@ def test_unit_updates_report_each_frame_as_units_and_the_moves_do_not_change(mon
     assert (unit_client.reports_sent, unit_client.reports_failed) == (3, 0)
 
 
-def test_the_vessel_decider_refuses_the_unit_wire() -> None:
-    with pytest.raises(ValueError, match="unit_wire_scope needs decider='port'"):
-        PortStreamingClient(
-            streaming_url="http://session.test/AyoStreamingUpdates",
-            ayo_server_key="card",
-            arc_game_id="test",
-            api_key="",
-            decider="vessel",
-            unit_wire_scope="gd2f7ac",
+class _TreeResp(_Resp):
+    def __init__(self, body: dict[str, Any]) -> None:
+        super().__init__(200)
+        self._body = body
+
+    def json(self) -> dict[str, Any]:
+        return self._body
+
+
+class _UnitVesselSession(_RecordingSession):
+    """Answers a unit-wire request whose game-state unit asks (pending_decision) with the next scripted served tree."""
+
+    def __init__(self, trees: list[dict[str, Any]]) -> None:
+        super().__init__()
+        self._trees = list(trees)
+
+    def post(self, url: str, json: dict[str, Any], **_: Any) -> _Resp:
+        self.bodies.append(json)
+        asks = any(
+            op.get("unitKey") == "arc_game_state" and op["unitProperties"]["attributes"].get("pending_decision") is True
+            for op in json.get("envUnitUpdates", [])
         )
+        return _TreeResp(ask_answer(self._trees.pop(0)) if asks else {"status": "success"})
 
 
-def test_main_accepts_the_unit_wire_on_the_dev_lane_under_the_port_decider(tmp_path: Path) -> None:
-    # Positive control for the --unit-updates refusals above (g-376-201): the checks pass, the startup units are
-    # built, and the run stops at the closed local ARC port.
+def _unit_vessel_client(session: _UnitVesselSession) -> PortStreamingClient:
+    return PortStreamingClient(
+        streaming_url="http://session.test/AyoStreamingUpdates",
+        ayo_server_key="card",
+        arc_game_id="test",
+        api_key="",
+        decider="vessel",
+        unit_wire_scope="gd2f7ac",
+        session=session,
+        retry_sleep=lambda _s: None,
+    )
+
+
+def _tree_reports(body: dict[str, Any]) -> list[tuple[str, list[tuple[str, str]]]]:
+    return [
+        (update["envBTExecKey"], [(e["nodeId"], e["nodeOutcome"]) for e in update["envBTEvents"]])
+        for update in body.get("envBTUpdates", [])
+    ]
+
+
+def test_the_vessel_asks_on_the_unit_wire_plays_the_served_tree_and_reports_its_leaf() -> None:
+    # g-376-242 U3: the ask is pending_decision on the game-state unit, the answer is a tree in ayoBTs[], and the
+    # report of the leaf played rides the next ask. Only the closing DELETE is on the operations wire.
+    session = _UnitVesselSession([
+        served_tree("ACTION6", "arc__1", x=4, y=3, reason="frontier-core"),
+        served_tree("ACTION1", "arc__2"),
+    ])
+    client = _unit_vessel_client(session)
+    opening = _board_frame({})
+    opening.state = GameState.NOT_PLAYED
+    first = _board_frame({(1, 1): 2})
+    second = _board_frame({(1, 1): 2, (3, 4): 5}, ActionInput(id=GameAction.ACTION6, data={"x": 4, "y": 3}))
+
+    # What run_game_loop does: the opening RESET is the client's, then ADD and an ask for the same frame, and
+    # move_answered once the game replied to a move.
+    assert client.choose_action(opening).action == GameAction.RESET
+    client.move_answered()
+    client.send_add(first)
+    one = client.choose_action(first)
+    client.move_answered()
+    two = client.choose_action(second)
+    client.move_answered()
+    client.send_delete()
+
+    assert [(d.action, d.x, d.y) for d in (one, two)] == [(GameAction.ACTION6, 4, 3), (GameAction.ACTION1, None, None)]
+    assert [d.provenance["served_tree_key"] for d in (one, two)] == ["arc__1", "arc__2"]
+    assert {d.provenance["mode"] for d in (one, two)} == {"vessel"}
+    assert (one.provenance["bt_exec_key"], one.provenance["bt_node_id"]) == ("arc__1", "arc_1_1")
+
+    *units, close = session.bodies
+    assert all("operations" not in body and "envUnitUpdates" in body for body in units)
+    assert close["operations"][0]["op"] == "DELETE"
+    asking = [b for b in units if b["envUnitUpdates"][-1]["unitProperties"]["attributes"]["pending_decision"]]
+    assert len(units) == 3 and len(asking) == 2  # the ADD report does not ask
+    ask_one, ask_two = asking
+    # The leaf is Running when played and Success once the game replied; the report rides the next request.
+    assert _tree_reports(ask_one) == []
+    assert _tree_reports(ask_two) == [("arc__1", [("arc_1_1", "Running"), ("arc_1_1", "Success")])]
+    assert _tree_reports(close) == [("arc__2", [("arc_1_1", "Running"), ("arc_1_1", "Success")])]
+
+
+def test_move_answered_settles_nothing_without_a_served_tree() -> None:
+    # run_game_loop calls it per answered frame whatever the decider, so it must be a no-op off the unit wire.
+    session = _VesselSession([])
+    _vessel_client(session).move_answered()
+    assert session.bodies == []
+
+
+@pytest.mark.parametrize("decider", [["--oracle"], []], ids=["port", "vessel"])
+def test_main_accepts_the_unit_wire_on_the_dev_lane_under_either_decider(tmp_path: Path, decider: list[str]) -> None:
+    # Positive control for the --unit-updates refusals above (g-376-201, g-376-242): the checks pass, the startup
+    # units are built, and the run stops at the closed local ARC port.
     proc = _main_py(
-        ["--use-solver-v2", "--use-port-client", "--oracle", "--startup-units", "--unit-updates"],
+        ["--use-solver-v2", "--use-port-client", *decider, "--startup-units", "--unit-updates"],
         tmp_path,
         {"AYOAI_LANE": "dev"},
     )
