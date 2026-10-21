@@ -29,6 +29,11 @@ Inputs
   (g-376-152) and it pairs with the recording by the guid. main.py still opens logs.log with
   mode "w", so a logs.log that was not copied away holds only the last run's block and the
   other visits read "scorecard block missing".
+  The per-run log also says how the visit ended. ``end_cause`` is "aborted" when it holds an ERROR
+  record that says "aborting play" (the client stopped the visit, for example on an HTTP 502 from the
+  streaming server; ``end_cause_detail`` is that record's first line), "exited" when it holds main.py's
+  "Exiting: agent reached" line and no abort, and "unknown" when no log pairs with the recording or
+  the log holds neither line. A recording pairs with its log by the run guid in both file names.
 - --ledger (repeatable): the spend ledger (spend_meter.py) of each box that made model calls in
   this run. Rows are attributed to a visit by game id inside the visit's time window, because a
   ledger row's run_id is theory-<game>-<epoch>, not the card id.
@@ -61,7 +66,17 @@ PERSISTENT_ARMS = ("E", "E2")
 SCORECARD_MARKER = "--- OFFICIAL SCORECARD (read before close) ---"
 SCORECARD_MISSING = "scorecard block missing"
 # main.py's log line: "%(asctime)s | %(levelname)s | %(message)s".
-LOG_RECORD = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} \| [A-Z]+ \| ")
+LOG_RECORD = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} \| (?P<level>[A-Z]+) \| ")
+# main.py's own words for how a run ends: each abort path of the play logs "... aborting play ..." at ERROR, and
+# a run that reaches its end logs one INFO line "Exiting: agent reached N actions". The unit test pins both
+# strings to main.py's source.
+ABORT_MARKER = "aborting play"
+EXIT_PREFIX = "Exiting: agent reached"
+END_CAUSE_DETAIL_MAX = 200
+GUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+# main.py's GAME_ID_SHAPE (a unit test pins the two equal). A log line can name a game, and a row is committed
+# and quoted, so a game id never goes into end_cause_detail.
+GAME_ID_SHAPE = re.compile(r"\b[a-z0-9]{4}-[0-9a-f]{8}\b")
 
 
 class AssemblyRefused(RuntimeError):
@@ -161,6 +176,55 @@ def read_scorecards(paths: list[Path]) -> tuple[dict[str, dict[str, Any]], int]:
                 raise AssemblyRefused(f"two different official scorecard blocks for card {card}")
             found[card] = payload
     return found, unreadable
+
+
+def _guid(name: str) -> str | None:
+    """The run guid main.py puts in a recording's and in a per-run log's file name (g-376-152), if the name has one."""
+    found = GUID.findall(name)
+    return found[-1].lower() if found else None
+
+
+def read_end_cause(path: Path) -> tuple[str, str | None]:
+    """How the run in one per-run log ended: (cause, detail).
+
+    "aborted": an ERROR record says the client aborted play; the detail is that record's first line with any game
+    id masked, cut to END_CAUSE_DETAIL_MAX characters. "exited": main.py's Exiting line and no abort. "unknown":
+    neither line is there. Only prefixed lines are read: an unprefixed line continues the record before it (a
+    server's HTML body), and what it says is not main.py's.
+    """
+    abort: str | None = None
+    exited = False
+    for line in path.read_text(errors="replace").splitlines():
+        match = LOG_RECORD.match(line)
+        if not match:
+            continue
+        message = line[match.end():]
+        if match["level"] == "ERROR" and ABORT_MARKER in message and abort is None:
+            abort = GAME_ID_SHAPE.sub("<game>", message)[:END_CAUSE_DETAIL_MAX]
+        elif match["level"] == "INFO" and message.startswith(EXIT_PREFIX):
+            exited = True
+    if abort is not None:
+        return "aborted", abort
+    return ("exited", None) if exited else ("unknown", None)
+
+
+def _logs_by_guid(paths: list[Path]) -> dict[str, Path]:
+    """The logs that carry a run guid in their file name, keyed by it. A log without one (logs.log) pairs with no recording."""
+    found: dict[str, Path] = {}
+    for path in paths:
+        guid = _guid(path.name)
+        if guid is None:
+            continue
+        if guid in found and found[guid].resolve() != path.resolve():
+            raise AssemblyRefused(f"two logs carry run guid {guid}: {found[guid].name} and {path.name}")
+        found[guid] = path
+    return found
+
+
+def _end_cause_part(recording: str, run_logs: dict[str, Path]) -> tuple[str, str | None]:
+    guid = _guid(recording)
+    log = run_logs.get(guid) if guid else None
+    return read_end_cause(log) if log else ("unknown", None)
 
 
 def read_ledgers(paths: list[Path]) -> list[dict[str, Any]]:
@@ -307,6 +371,7 @@ def assemble(
     _check_order(visits)
 
     scorecards, unreadable = read_scorecards(logs)
+    run_logs = _logs_by_guid(logs)
     rows_ledger = read_ledgers(ledgers) if ledgers else None
     snapshot: dict[str, Any] | None = None
     if meter_snapshot is not None:
@@ -320,6 +385,7 @@ def assemble(
     out: list[dict[str, Any]] = []
     for v in visits:
         scorecard, levels = _scorecard_part(scorecards.get(v["card_id"]))
+        cause, detail = _end_cause_part(v["recording"], run_logs)
         out.append({
             "run_id": run_dir.resolve().name,
             "arm": v["arm"],
@@ -335,6 +401,8 @@ def assemble(
             "first_level_action": v["first_level_action"],
             "censored": v["first_level_action"] is None,
             "end_state": v["end_state"],
+            "end_cause": cause,
+            "end_cause_detail": detail,
             "spend": {
                 "ledger": _ledger_part(rows_ledger, v, visits),
                 "meter": _meter_part(snapshot, v["card_id"]),
