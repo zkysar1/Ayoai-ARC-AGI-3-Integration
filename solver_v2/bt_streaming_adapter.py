@@ -140,6 +140,17 @@ class BehaviorTreeStreamingAdapter:
         )
 
 
+def _frame_change_reason(before: FrameData | None, after: FrameData | None) -> str:
+    """Whether the screen a move's answer shows differs from the screen the move was played on.
+
+    The screen is a frame's last layer (the one the last move left). "" when either screen is not known: no frame
+    was given, or the frame has no layers.
+    """
+    if before is None or after is None or not before.frame or not after.frame:
+        return ""
+    return "frame changed" if before.frame[-1] != after.frame[-1] else "frame unchanged"
+
+
 class ServedTreeStreamingAdapter:
     """Executes the Task-leaf tree each served decision comes with (g-376-203, step 7 of g-376-173).
 
@@ -151,7 +162,9 @@ class ServedTreeStreamingAdapter:
     as envBTUpdates (solver_v2/bt_reporting.py): Running when the move is dispatched, Success when the game
     answers with the next frame (the game loop says so through ``move_answered``; the next ``choose_action``
     settles it too), Fail when the leaf named a move the game does not offer (the client substituted RESET,
-    provenance.deviation). A move the game never answers stays Running.
+    provenance.deviation). A move the game never answers stays Running. The finishing event says why: a Fail
+    carries failReason ("ACTION3 not in available_actions"), a Success carries successReason ("frame changed" or
+    "frame unchanged") when the answering frame is known. A tree with no server-issued envBTExecKey is not reported.
 
     A decision with no tree behind it (the client's own RESET, a frontier answer whose reasoning is prose)
     passes through unchanged. A tree that cannot be read, or whose leaves do not hold the decision, passes
@@ -166,6 +179,9 @@ class ServedTreeStreamingAdapter:
         client.attach_bt_reporter(self.reporter)
         # (envBTExecKey, nodeId) of the leaf dispatched and not yet answered by a frame.
         self._in_flight: tuple[str, str] | None = None
+        # The frame that leaf was played on: the answer is compared with it for successReason.
+        self._frame_before: FrameData | None = None
+        self._warned_no_key = False
         # The last tree read, by the text it came as: the deterministic baseline serves the same tree every tick.
         self._last_text: str | None = None
         self._last_executor: BTExecutor | None = None
@@ -181,9 +197,12 @@ class ServedTreeStreamingAdapter:
     def __exit__(self, *_exc: object) -> None:
         self.close()
 
-    def move_answered(self) -> None:
-        """The game answered the move in flight with a frame: that leaf ran. run_game_loop calls this per frame."""
-        self._settle(success=True)
+    def move_answered(self, frame: FrameData | None = None) -> None:
+        """The game answered the move in flight with ``frame``: that leaf ran. run_game_loop calls this per frame.
+
+        Without the frame the leaf still ends Success; it just carries no successReason.
+        """
+        self._settle(success=True, answer=frame)
 
     def send_delete(self) -> None:
         """The game is over and the report rides this request.
@@ -195,7 +214,7 @@ class ServedTreeStreamingAdapter:
 
     def choose_action(self, frame: FrameData) -> AyoaiDecision:
         # This frame is the game's answer to the move in flight: that leaf ran.
-        self._settle(success=True)
+        self._settle(success=True, answer=frame)
         decision = self._client.choose_action(frame)
         if decision.provenance.get("decided_by") != DECIDED_BY_AYOAI:
             return decision  # the client's own RESET: no tree behind it
@@ -221,21 +240,30 @@ class ServedTreeStreamingAdapter:
 
         provenance.update({"bt_exec_key": executor.exec_key, "bt_node_id": leaf.node_id, "bt_leaves": len(executor)})
         if not executor.exec_key:
-            provenance["bt_error"] = "the served tree has no envBTExecKey or root nodeId: its leaf is not reported"
+            provenance["bt_error"] = "the served tree has no envBTExecKey: its leaf is not reported"
+            if not self._warned_no_key:
+                self._warned_no_key = True
+                logger.warning("served behavior tree has no envBTExecKey: its leaves are not reported (once per run)")
             return decision
         self.reporter.running(executor.exec_key, leaf.node_id)
         if deviation:
-            self.reporter.fail(executor.exec_key, leaf.node_id)
+            reason = f"{provenance['deviation_original_action']} not in available_actions"
+            self.reporter.fail(executor.exec_key, leaf.node_id, reason)
         else:
             self._in_flight = (executor.exec_key, leaf.node_id)
+            self._frame_before = frame
         return decision
 
-    def _settle(self, *, success: bool) -> None:
+    def _settle(self, *, success: bool, answer: FrameData | None = None) -> None:
         if self._in_flight is None:
             return
         exec_key, node_id = self._in_flight
-        self._in_flight = None
-        (self.reporter.success if success else self.reporter.fail)(exec_key, node_id)
+        before = self._frame_before
+        self._in_flight = self._frame_before = None
+        if success:
+            self.reporter.success(exec_key, node_id, _frame_change_reason(before, answer))
+        else:
+            self.reporter.fail(exec_key, node_id)
 
     @staticmethod
     def _tree_in(reasoning: Any) -> dict[str, Any] | None:

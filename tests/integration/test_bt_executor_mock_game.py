@@ -373,6 +373,7 @@ def _tree(task_field: str) -> dict:
         "nodeType": "Selector",
         "name": "ArcExploration",
         "nodeId": "arc_1",
+        "envBTExecKey": "arc_1",  # a served tree carries the key the server issued for it
         "nodes": [
             {
                 "nodeType": "Task",

@@ -58,6 +58,28 @@ def test_fail_is_reported_as_fail() -> None:
     assert outcomes == ["Running", "Fail"]
 
 
+def test_a_reason_rides_the_finishing_event_and_only_when_given() -> None:
+    reporter = BTUpdateReporter(clock_ms=lambda: 1_000)
+    reporter.running("arc_1", "n1")
+    reporter.success("arc_1", "n1", "frame changed")
+    reporter.fail("arc_1", "n2", "ACTION3 not in available_actions")
+    reporter.success("arc_1", "n3")
+    reporter.fail("arc_1", "n4", "")
+    # Whole-event equality: it pins the field's name and its absence, not merely that some key is present.
+    assert reporter.take()[0]["envBTEvents"] == [
+        {"bTEventEpochMillis": 1_000, "nodeOutcome": "Running", "nodeId": "n1"},
+        {"bTEventEpochMillis": 1_000, "nodeOutcome": "Success", "nodeId": "n1", "successReason": "frame changed"},
+        {
+            "bTEventEpochMillis": 1_000,
+            "nodeOutcome": "Fail",
+            "nodeId": "n2",
+            "failReason": "ACTION3 not in available_actions",
+        },
+        {"bTEventEpochMillis": 1_000, "nodeOutcome": "Success", "nodeId": "n3"},
+        {"bTEventEpochMillis": 1_000, "nodeOutcome": "Fail", "nodeId": "n4"},
+    ]
+
+
 def test_a_node_without_an_id_is_a_root_event_with_no_nodeid_key() -> None:
     reporter = BTUpdateReporter(clock_ms=_Clock())
     reporter.success("arc_1", "")

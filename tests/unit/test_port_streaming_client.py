@@ -856,6 +856,39 @@ def test_the_vessel_asks_on_the_unit_wire_plays_the_served_tree_and_reports_its_
     assert _tree_reports(close) == [("arc__2", [("arc_1_1", "Running"), ("arc_1_1", "Success")])]
 
 
+def test_the_unit_wire_report_says_why_each_leaf_succeeded() -> None:
+    # g-376-241: move_answered(frame) hands the answering frame on to the served tree's adapter, so each Success
+    # carries successReason; the tree's key is the server-issued one, which the report is filed under.
+    session = _UnitVesselSession([served_tree("ACTION6", "arc__1", x=4, y=3), served_tree("ACTION1", "arc__2")])
+    client = _unit_vessel_client(session)
+    opening = _board_frame({})
+    opening.state = GameState.NOT_PLAYED
+    first = _board_frame({(1, 1): 2})
+    second = _board_frame({(1, 1): 2, (3, 4): 5}, ActionInput(id=GameAction.ACTION6, data={"x": 4, "y": 3}))
+
+    client.choose_action(opening)
+    client.move_answered(first)
+    client.send_add(first)
+    client.choose_action(first)
+    client.move_answered(second)  # the board gained a cell: ACTION6 changed the screen
+    client.choose_action(second)
+    client.move_answered(second)  # the same board: ACTION1 changed nothing
+    client.send_delete()
+
+    *units, close = session.bodies
+    ask_two = [b for b in units if b["envUnitUpdates"][-1]["unitProperties"]["attributes"]["pending_decision"]][1]
+
+    def reasons(body: dict[str, Any]) -> list[tuple[str, str, str | None]]:
+        return [
+            (update["envBTExecKey"], e["nodeOutcome"], e.get("successReason"))
+            for update in body.get("envBTUpdates", [])
+            for e in update["envBTEvents"]
+        ]
+
+    assert reasons(ask_two) == [("arc__1", "Running", None), ("arc__1", "Success", "frame changed")]
+    assert reasons(close) == [("arc__2", "Running", None), ("arc__2", "Success", "frame unchanged")]
+
+
 def test_move_answered_settles_nothing_without_a_served_tree() -> None:
     # run_game_loop calls it per answered frame whatever the decider, so it must be a no-op off the unit wire.
     session = _VesselSession([])

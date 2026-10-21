@@ -94,7 +94,8 @@ class BTExecutor:
     Stateless per tick: the caller passes a 0-based tick index (the adapter's
     strategic-tick counter). Holds the flattened action plan, not per-tick state.
     ``exec_key`` is the key a report of this tree is filed under: the root's
-    ``envBTExecKey`` when it has one, else the root's ``nodeId``, else "".
+    server-issued ``envBTExecKey``, else "". A root ``nodeId`` is no substitute:
+    the server never issued it, so a report filed under it joins to nothing.
     """
 
     def __init__(self, tree: dict[str, Any]) -> None:
@@ -134,12 +135,13 @@ class BTExecutor:
 
 
 def _exec_key(tree: dict[str, Any]) -> str:
-    """The key a report of ``tree`` is filed under (the caller has already walked it, so it is an object)."""
-    for field in ("envBTExecKey", "nodeId"):
-        value = tree.get(field)
-        if isinstance(value, str) and value:
-            return value
-    return ""
+    """The key a report of ``tree`` is filed under: its root's server-issued ``envBTExecKey``, else "".
+
+    The caller has already walked the tree, so it is an object. There is no fallback to the root ``nodeId``
+    (g-376-241): the server never issued it, so a report filed under it joins to no unit and no tree.
+    """
+    value = tree.get("envBTExecKey")
+    return value if isinstance(value, str) else ""
 
 
 def _task_key(node: dict[str, Any], name: object) -> str:
