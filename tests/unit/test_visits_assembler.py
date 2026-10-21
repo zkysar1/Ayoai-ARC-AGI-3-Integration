@@ -4,11 +4,14 @@ The recording lines copy the shapes Recorder writes: one ayoai_session_open line
 id as ayo_server_key, then one tick per action with decision_provenance and emitted_action. The
 scorecard log text is produced by main.read_scorecard_then_close through a handler that uses
 main.py's own log format, so the parser is pinned to what main.py really emits and not to a shape
-of the test's own.
+of the test's own. The lines that say how a run ended (the abort error and the Exiting line) are
+copied from the per-run logs main.py wrote on cc-03, and the words the parser reads are pinned to
+main.py's source.
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import sys
@@ -18,6 +21,7 @@ from typing import Any
 
 import pytest
 
+import main as arc_main
 from main import read_scorecard_then_close
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "eval"))
@@ -26,6 +30,9 @@ import visits_assembler as va  # noqa: E402
 
 GAME = "gm01-aaaa1111"
 OTHER = "gm02-bbbb2222"
+THIRD = "gm03-cccc3333"
+GUID_A = "0a1b2c3d-1111-4222-8333-444455556666"  # the run guid in a recording's and its per-run log's file name
+GUID_B = "9f8e7d6c-aaaa-4bbb-8ccc-ddddeeeeffff"
 T0 = datetime(2026, 10, 10, 1, 0, 0, tzinfo=timezone.utc)
 LOG_FORMAT = "%(asctime)s | %(levelname)s | %(message)s"  # main.py _play
 
@@ -146,6 +153,28 @@ def _main_log(path: Path, payloads: list[dict[str, Any]]) -> Path:
     return path
 
 
+def _run_log(path: Path, records: list[tuple[str, str]]) -> Path:
+    """A per-run log in main.py's line format: one (level, message) per record, a message's later lines unprefixed."""
+    path.write_text("".join(f"2026-10-17 12:37:02,753 | {level} | {message}\n" for level, message in records))
+    return path
+
+
+# How the 30 per-run logs on cc-03 end (2026-10-21): 20 finished with the Exiting line alone; 10 carry the abort error,
+# the same HTTP 502 text each time, then the Exiting line with the same tick count.
+ABORT_HEAD = "AyoAI streaming decision FAILED — aborting play: streaming server returned HTTP 502 (tick 2189): <html>"
+ABORTED_RUN = [
+    ("INFO", "Connecting to API at: http://localhost"),
+    ("ERROR", ABORT_HEAD + "\n<head><title>502 Bad Gateway</title></head>\n<body></body>\n</html>"),
+    ("ERROR", "send_delete failed at game end (non-fatal)"),
+    ("INFO", "Exiting: agent reached 2189 actions, took 683.5 seconds (3.20 average fps)"),
+]
+FINISHED_RUN = [
+    ("INFO", "Connecting to API at: http://localhost"),
+    ("INFO", "Exiting: agent reached 3001 actions, took 1024.2 seconds (2.93 average fps)"),
+    ("INFO", "AyoAI server stopped"),
+]
+
+
 def _visit(arm: str, game: str, block: str, index: int, recording: Path) -> dict[str, Any]:
     return {"arm": arm, "game": game, "block": block, "visit_index": index, "recording": recording.name}
 
@@ -203,6 +232,7 @@ def test_a_visit_row_from_real_shaped_inputs(tmp_path: Path, rec_dir: Path) -> N
         "started_at": _stamp(0), "ended_at": _stamp(8),
         "actions": 8, "levels": 1, "levels_recording": 1, "levels_agree": True,
         "first_level_action": 5, "censored": False, "end_state": "NOT_FINISHED",
+        "end_cause": "unknown", "end_cause_detail": None,  # a.recording.jsonl has no run guid, so no log pairs with it
         "spend": {
             "ledger": {"status": "ok", "usd": 0.03, "calls": 2, "estimated_calls": 1},
             "meter": {
@@ -446,3 +476,84 @@ def test_main_writes_rows_in_plan_order_refuses_to_overwrite_and_exits_2_on_refu
     bad = _run(tmp_path, [_visit("E", GAME, "B1", 1, rec_dir / "absent.jsonl")], "lh-bad")
     assert va.main(["--run-dir", str(bad), "--recordings-dir", str(rec_dir), "--log", str(log)]) == 2
     assert not (bad / "visits.jsonl").exists()
+
+
+def test_an_aborted_run_and_a_finished_run_read_as_what_main_logged(tmp_path: Path) -> None:
+    aborted = _run_log(tmp_path / f"{GAME}.{GUID_A}.logs.log", ABORTED_RUN)
+    finished = _run_log(tmp_path / f"{GAME}.{GUID_B}.logs.log", FINISHED_RUN)
+
+    # The aborted run also has an Exiting line and a second ERROR record; the abort still wins.
+    assert va.read_end_cause(aborted) == ("aborted", ABORT_HEAD)
+    assert va.read_end_cause(finished) == ("exited", None)
+
+
+def test_only_a_prefixed_error_record_aborts_a_run_and_only_a_prefixed_info_record_exits_it(tmp_path: Path) -> None:
+    log = _run_log(tmp_path / "decoys.log", [
+        ("INFO", "retrying after a server fault; not aborting play yet"),  # the words, at the wrong level
+        ("ERROR", "send_delete failed at game end (non-fatal)"),  # an ERROR that is not an abort
+        ("WARNING", "Exiting: agent reached 5 actions"),  # the words, at the wrong level
+    ])
+    # An unprefixed line continues the record before it (an HTML body, a traceback), so it is never a record.
+    log.write_text(log.read_text() + "aborting play\nExiting: agent reached 1 actions\n")
+
+    assert va.read_end_cause(log) == ("unknown", None)
+
+
+def test_the_detail_is_cut_to_200_characters_and_never_holds_a_game_id(tmp_path: Path) -> None:
+    lead = "AyoAI session OPEN FAILED — aborting play: "
+    message = lead + "x" * (190 - len(lead)) + f" {GAME} " + "y" * 100  # the id sits across the cut
+    log = _run_log(tmp_path / "long.log", [("ERROR", message)])
+
+    cause, detail = va.read_end_cause(log)
+
+    assert cause == "aborted" and detail is not None and len(detail) == 200
+    assert "<game>" in detail
+    assert not any(part in detail for part in GAME.split("-"))  # masked before the cut, so no half id is left
+
+
+def test_an_aborted_visit_is_told_from_one_that_used_its_budget(tmp_path: Path, rec_dir: Path) -> None:
+    """All three visits stop at NOT_FINISHED and reach no level, so end_state and censored cannot tell them apart."""
+    cut = _recording(rec_dir / f"{GAME}.vessel.0.{GUID_A}.recording.jsonl", "card-a", GAME, start=0, level_up_at=None)
+    full = _recording(rec_dir / f"{OTHER}.vessel.0.{GUID_B}.recording.jsonl", "card-b", OTHER, start=100, level_up_at=None)
+    lone = _recording(rec_dir / "lone.recording.jsonl", "card-c", THIRD, start=200, level_up_at=None)
+    logs = [
+        _run_log(tmp_path / f"{OTHER}.{GUID_B}.logs.log", FINISHED_RUN),  # listed first: the pairing is by guid, not by order
+        _run_log(tmp_path / f"{GAME}.{GUID_A}.logs.log", ABORTED_RUN),
+        _run_log(tmp_path / "logs.log", ABORTED_RUN),  # no guid in its name: it pairs with no recording
+    ]
+    run_dir = _run(tmp_path, [
+        _visit("E", GAME, "B1", 1, cut), _visit("E", OTHER, "B1", 1, full), _visit("E", THIRD, "B1", 1, lone),
+    ])
+
+    rows, _ = va.assemble(run_dir, rec_dir, logs)
+
+    assert [(r["end_state"], r["censored"]) for r in rows] == [("NOT_FINISHED", True)] * 3
+    assert [(r["end_cause"], r["end_cause_detail"]) for r in rows] == [
+        ("aborted", ABORT_HEAD), ("exited", None), ("unknown", None),
+    ]
+
+
+def test_two_different_logs_for_one_run_guid_are_refused_and_one_file_given_twice_is_one_log(
+    tmp_path: Path, rec_dir: Path
+) -> None:
+    rec = _recording(rec_dir / f"{GAME}.vessel.0.{GUID_A}.recording.jsonl", "card-a", GAME, start=0)
+    first = _run_log(tmp_path / f"{GAME}.{GUID_A}.logs.log", ABORTED_RUN)
+    (tmp_path / "elsewhere").mkdir()
+    second = _run_log(tmp_path / "elsewhere" / f"{GAME}.{GUID_A}.logs.log", FINISHED_RUN)
+    run_dir = _run(tmp_path, [_visit("E", GAME, "B1", 1, rec)])
+
+    with pytest.raises(va.AssemblyRefused, match="two logs carry run guid"):
+        va.assemble(run_dir, rec_dir, [first, second])
+    (row,), _ = va.assemble(run_dir, rec_dir, [first, first])
+    assert row["end_cause"] == "aborted"
+
+
+def test_the_words_the_assembler_reads_are_the_words_main_writes() -> None:
+    tree = ast.parse(Path(arc_main.__file__).read_text())
+    strings = [n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+    aborting = [s for s in strings if "aborting" in s]
+
+    assert aborting, "main.py no longer says 'aborting' anywhere: every run would read as exited"
+    assert all(va.ABORT_MARKER in s for s in aborting), aborting  # one reworded abort path would read as exited
+    assert any(s.startswith(va.EXIT_PREFIX) for s in strings), "main.py no longer writes the Exiting line"
+    assert va.GAME_ID_SHAPE.pattern == arc_main.GAME_ID_SHAPE.pattern
