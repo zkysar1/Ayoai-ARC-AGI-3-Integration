@@ -283,6 +283,23 @@ def test_the_frame_before_reset_is_skipped_not_counted_as_a_failed_report(monkey
     assert (client.reports_sent, client.reports_failed, client.reports_skipped) == (1, 0, skips)
 
 
+def test_a_skipped_report_leaves_a_running_failure_streak_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    # g-376-236: a skip is neither a failure nor a success, so it neither extends a streak of failed reports nor clears it.
+    session = _RecordingSession([400, 400])
+    client = _reporting_client(
+        [arcengine.GameAction.ACTION1] * 3, monkeypatch, session, unit_wire_scope="gd2f7ac"
+    )
+    client.choose_action(_board_frame({(1, 1): 2}))
+    assert (client.reports_failed, client._report_failure_streak) == (1, 1)
+    before_reset = _board_frame({})
+    before_reset.frame = []
+    before_reset.state = GameState.NOT_PLAYED
+    client.choose_action(before_reset)
+    assert (client.reports_failed, client.reports_skipped, client._report_failure_streak) == (1, 1, 1)
+    client.choose_action(_board_frame({(1, 1): 2, (2, 2): 3}))
+    assert (client.reports_failed, client._report_failure_streak) == (2, 2)
+
+
 def test_a_failed_report_is_logged_with_its_reason(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
