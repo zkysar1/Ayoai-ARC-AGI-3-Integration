@@ -65,6 +65,10 @@ class UnitWireError(ValueError):
     """A frame the unit wire cannot carry. Raised before any request, so no half-sent frame exists."""
 
 
+class UnitWireNoLayer(UnitWireError):
+    """A frame that holds no layer at all, the one before RESET. There is nothing to carry, which is not a fault of the frame."""
+
+
 def _int_or_none(value: Any) -> int | None:
     """The int a cell holds, or None (the server's ``readInt``: bools and non-numbers read as none)."""
     if isinstance(value, bool):
@@ -308,6 +312,8 @@ class UnitWireState:
         """
         seed = select_seed_layer(list(frame_layers))
         if seed is None:
+            if not frame_layers:
+                raise UnitWireNoLayer("the frame has no layer yet")
             raise UnitWireError("the frame has no 2D layer to build a world from")
         cell_ops, board = cell_update_ops(self.scope, self.board, seed)
         cursor = self.cursor

@@ -25,6 +25,7 @@ import pytest
 arcengine = pytest.importorskip("arcengine")
 
 from port_streaming_client import (  # noqa: E402
+    REPORT_FAILURE_LIMIT,
     VESSEL_WORLD_FLAGS,
     PortStreamingClient,
     vessel_world_flags,
@@ -260,6 +261,26 @@ def test_failed_reports_keep_the_move_and_three_in_a_row_stop_reporting(monkeypa
     assert [d.action for d in decisions] == [GameAction.ACTION1] * 6
     assert (client.reports_sent, client.reports_failed) == (1, 4)
     assert len(session.bodies) == 5  # the success reset the streak; the 3rd failure in a row stopped it
+
+
+def test_the_frame_before_reset_is_skipped_not_counted_as_a_failed_report(monkeypatch: pytest.MonkeyPatch) -> None:
+    # g-376-236 (alpha's PR 12 review, item 3): the frame before RESET holds no layer yet and the unit wire has nothing
+    # to carry, so it is a skip. It never reaches the session and leaves the failure streak alone: more of them in a
+    # row than REPORT_FAILURE_LIMIT cannot stop reporting.
+    session = _RecordingSession()
+    skips = REPORT_FAILURE_LIMIT + 1
+    client = _reporting_client(
+        [arcengine.GameAction.ACTION1] * (skips + 1), monkeypatch, session, unit_wire_scope="gd2f7ac"
+    )
+    before_reset = _board_frame({})
+    before_reset.frame = []
+    before_reset.state = GameState.NOT_PLAYED
+    decisions = [client.choose_action(before_reset) for _ in range(skips)]
+    assert [d.action for d in decisions] == [GameAction.ACTION1] * skips
+    assert (client.reports_sent, client.reports_failed, client.reports_skipped) == (0, 0, skips)
+    assert (client._report_failure_streak, client._reports_stopped, session.bodies) == (0, None, [])
+    client.choose_action(_board_frame({(1, 1): 2}))
+    assert (client.reports_sent, client.reports_failed, client.reports_skipped) == (1, 0, skips)
 
 
 def test_a_failed_report_is_logged_with_its_reason(

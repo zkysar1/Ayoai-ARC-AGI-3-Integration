@@ -59,7 +59,7 @@ from urllib.parse import urlparse
 import requests
 
 from structs import FrameData, GameAction, GameState
-from unit_wire import UnitWireError, UnitWireState
+from unit_wire import UnitWireError, UnitWireNoLayer, UnitWireState
 from vessel_hint import VESSEL_HINT_ATTRIBUTE, encode_vessel_hint
 
 logger = logging.getLogger(__name__)
@@ -122,6 +122,10 @@ class AyoaiStreamingApiError(AyoaiStreamingError):
 
 class AyoaiStreamingProtocolError(AyoaiStreamingError):
     """Response shape invalid (missing fields, unknown action name, x/y out of range)."""
+
+
+class AyoaiStreamingFrameSkipped(AyoaiStreamingProtocolError):
+    """A frame with no layer yet, the one before RESET: nothing is sent and nothing failed (g-376-236)."""
 
 
 class AyoaiStreamingDnsError(AyoaiStreamingError):
@@ -718,7 +722,8 @@ class AyoaiStreamingClient:
         gap between requests, and `isLastBatch` is true only on the last request of the frame. The state the
         server now holds is adopted only after every request was accepted, so a failed frame is re-sent as
         a diff against what the server last confirmed. A frame the wire cannot carry raises
-        AyoaiStreamingProtocolError before any request is made. With `pending_decision` the game-state
+        AyoaiStreamingProtocolError before any request is made (a frame with no layer yet, the one before RESET,
+        raises its subclass AyoaiStreamingFrameSkipped). With `pending_decision` the game-state
         unit asks for a move (g-376-242), and the response of the last request, which holds the answer,
         is returned."""
         assert self._unit_wire is not None
@@ -727,6 +732,8 @@ class AyoaiStreamingClient:
         xy = (int(attributes["last_action_x"]), int(attributes["last_action_y"])) if has_xy else None
         try:
             plan = self._unit_wire.plan_frame(frame.frame, attributes, xy)
+        except UnitWireNoLayer as exc:
+            raise AyoaiStreamingFrameSkipped(f"frame has nothing to send as units: {exc}") from exc
         except UnitWireError as exc:
             raise AyoaiStreamingProtocolError(f"frame cannot be sent as units: {exc}") from exc
         last = len(plan.batches) - 1
