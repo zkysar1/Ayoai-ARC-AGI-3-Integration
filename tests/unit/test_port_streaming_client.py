@@ -333,6 +333,29 @@ def test_add_delete_and_dns_go_to_the_session_and_close_logs_the_count(
     assert "[port-report] 1 of 1 frames reported to the AyoAI session, 0 failed" in caplog.text
 
 
+def test_the_close_log_names_skipped_reports_only_when_there_are_some(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # g-376-236: the close line counts a skip beside the failures, and reads as it did when nothing was skipped.
+    before_reset = _board_frame({})
+    before_reset.frame = []
+    before_reset.state = GameState.NOT_PLAYED
+    lines = []
+    for frame in (before_reset, _board_frame({(1, 1): 2})):
+        client = _reporting_client(
+            [arcengine.GameAction.ACTION1], monkeypatch, _RecordingSession(), unit_wire_scope="gd2f7ac"
+        )
+        client.choose_action(frame)
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger="port_streaming_client"):
+            client.close()
+        lines.append(next(m for m in (r.getMessage() for r in caplog.records) if m.startswith("[port-report]")))
+    assert lines == [
+        "[port-report] 0 of 1 frames reported to the AyoAI session, 0 failed, 1 skipped",
+        "[port-report] 1 of 1 frames reported to the AyoAI session, 0 failed",
+    ]
+
+
 def test_without_a_streaming_url_nothing_is_sent(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _client([arcengine.GameAction.ACTION1], monkeypatch)
     client.send_add(_frame())
