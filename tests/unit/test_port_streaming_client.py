@@ -25,6 +25,7 @@ import pytest
 arcengine = pytest.importorskip("arcengine")
 
 from port_streaming_client import (  # noqa: E402
+    REPORT_FAILURE_LIMIT,
     VESSEL_WORLD_FLAGS,
     PortStreamingClient,
     vessel_world_flags,
@@ -262,6 +263,43 @@ def test_failed_reports_keep_the_move_and_three_in_a_row_stop_reporting(monkeypa
     assert len(session.bodies) == 5  # the success reset the streak; the 3rd failure in a row stopped it
 
 
+def test_the_frame_before_reset_is_skipped_not_counted_as_a_failed_report(monkeypatch: pytest.MonkeyPatch) -> None:
+    # g-376-236 (alpha's PR 12 review, item 3): the frame before RESET holds no layer yet and the unit wire has nothing
+    # to carry, so it is a skip. It never reaches the session and leaves the failure streak alone: more of them in a
+    # row than REPORT_FAILURE_LIMIT cannot stop reporting.
+    session = _RecordingSession()
+    skips = REPORT_FAILURE_LIMIT + 1
+    client = _reporting_client(
+        [arcengine.GameAction.ACTION1] * (skips + 1), monkeypatch, session, unit_wire_scope="gd2f7ac"
+    )
+    before_reset = _board_frame({})
+    before_reset.frame = []
+    before_reset.state = GameState.NOT_PLAYED
+    decisions = [client.choose_action(before_reset) for _ in range(skips)]
+    assert [d.action for d in decisions] == [GameAction.ACTION1] * skips
+    assert (client.reports_sent, client.reports_failed, client.reports_skipped) == (0, 0, skips)
+    assert (client._report_failure_streak, client._reports_stopped, session.bodies) == (0, None, [])
+    client.choose_action(_board_frame({(1, 1): 2}))
+    assert (client.reports_sent, client.reports_failed, client.reports_skipped) == (1, 0, skips)
+
+
+def test_a_skipped_report_leaves_a_running_failure_streak_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    # g-376-236: a skip is neither a failure nor a success, so it neither extends a streak of failed reports nor clears it.
+    session = _RecordingSession([400, 400])
+    client = _reporting_client(
+        [arcengine.GameAction.ACTION1] * 3, monkeypatch, session, unit_wire_scope="gd2f7ac"
+    )
+    client.choose_action(_board_frame({(1, 1): 2}))
+    assert (client.reports_failed, client._report_failure_streak) == (1, 1)
+    before_reset = _board_frame({})
+    before_reset.frame = []
+    before_reset.state = GameState.NOT_PLAYED
+    client.choose_action(before_reset)
+    assert (client.reports_failed, client.reports_skipped, client._report_failure_streak) == (1, 1, 1)
+    client.choose_action(_board_frame({(1, 1): 2, (2, 2): 3}))
+    assert (client.reports_failed, client._report_failure_streak) == (2, 2)
+
+
 def test_a_failed_report_is_logged_with_its_reason(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -293,6 +331,29 @@ def test_add_delete_and_dns_go_to_the_session_and_close_logs_the_count(
     assert dns_calls == [{}]
     assert [body["operations"][0]["op"] for body in session.bodies] == ["ADD", "UPDATE", "DELETE"]
     assert "[port-report] 1 of 1 frames reported to the AyoAI session, 0 failed" in caplog.text
+
+
+def test_the_close_log_names_skipped_reports_only_when_there_are_some(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # g-376-236: the close line counts a skip beside the failures, and reads as it did when nothing was skipped.
+    before_reset = _board_frame({})
+    before_reset.frame = []
+    before_reset.state = GameState.NOT_PLAYED
+    lines = []
+    for frame in (before_reset, _board_frame({(1, 1): 2})):
+        client = _reporting_client(
+            [arcengine.GameAction.ACTION1], monkeypatch, _RecordingSession(), unit_wire_scope="gd2f7ac"
+        )
+        client.choose_action(frame)
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger="port_streaming_client"):
+            client.close()
+        lines.append(next(m for m in (r.getMessage() for r in caplog.records) if m.startswith("[port-report]")))
+    assert lines == [
+        "[port-report] 0 of 1 frames reported to the AyoAI session, 0 failed, 1 skipped",
+        "[port-report] 1 of 1 frames reported to the AyoAI session, 0 failed",
+    ]
 
 
 def test_without_a_streaming_url_nothing_is_sent(monkeypatch: pytest.MonkeyPatch) -> None:

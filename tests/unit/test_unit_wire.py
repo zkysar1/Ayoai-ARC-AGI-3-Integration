@@ -25,6 +25,7 @@ from unit_wire import (
     MAX_OPS_PER_REQUEST,
     UnitBoard,
     UnitWireError,
+    UnitWireNoLayer,
     UnitWireState,
     cell_update_ops,
     cursor_update_ops,
@@ -315,6 +316,15 @@ def test_a_full_board_is_two_requests_and_the_game_state_is_in_the_last() -> Non
 def test_a_frame_with_no_2d_layer_is_refused() -> None:
     with pytest.raises(UnitWireError):
         UnitWireState(scope=SCOPE).plan_frame([], _attrs(), None)
+
+
+def test_only_a_frame_with_no_layer_at_all_is_the_no_layer_refusal() -> None:
+    # g-376-236: the frame before RESET holds no layer; a frame whose first layer is not 2D is a different fault.
+    with pytest.raises(UnitWireNoLayer):
+        UnitWireState(scope=SCOPE).plan_frame([], _attrs(), None)
+    with pytest.raises(UnitWireError) as caught:
+        UnitWireState(scope=SCOPE).plan_frame([[1, 2, 3]], _attrs(), None)
+    assert not isinstance(caught.value, UnitWireNoLayer)
 
 
 def test_a_final_layer_outside_the_hex_range_is_refused() -> None:

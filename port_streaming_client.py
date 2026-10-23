@@ -64,7 +64,11 @@ import arcengine  # noqa: E402
 from my_agent import MyAgent  # type: ignore[import-not-found]  # noqa: E402
 
 from ayoai_client import resolve_lane  # noqa: E402
-from ayoai_streaming_client import AyoaiDecision, AyoaiStreamingClient  # noqa: E402
+from ayoai_streaming_client import (  # noqa: E402
+    AyoaiDecision,
+    AyoaiStreamingClient,
+    AyoaiStreamingFrameSkipped,
+)
 from primitives.theory_arm import TheoryArm  # noqa: E402
 from solver_v2.bt_streaming_adapter import ServedTreeStreamingAdapter  # noqa: E402
 from structs import FrameData, GameAction, GameState  # noqa: E402
@@ -164,6 +168,7 @@ class PortStreamingClient:
         )
         self.reports_sent = 0
         self.reports_failed = 0
+        self.reports_skipped = 0
         self._report_failure_streak = 0
         self._reports_stopped: str | None = None
         self._agent: MyAgent | None = (
@@ -251,11 +256,16 @@ class PortStreamingClient:
         """Send the frame's top layer, the screen the last move left, to the session as
         a report-only UPDATE; one layer keeps each report small. Any error is counted
         and swallowed; REPORT_FAILURE_LIMIT errors in a row stop reporting for the game,
-        so a dead session cannot slow play with retries."""
+        so a dead session cannot slow play with retries. A frame with no layer yet, the one before
+        RESET, is counted as skipped, not failed, and leaves the failure streak alone."""
         if self._reporter is None or self._reports_stopped is not None:
             return
         try:
             self._reporter.send_update(frame.model_copy(update={"frame": frame.frame[-1:]}))
+        except AyoaiStreamingFrameSkipped:
+            # g-376-236: the frame before RESET holds no layer yet; there is nothing to report, so no report failed.
+            self.reports_skipped += 1
+            return
         except Exception as exc:
             self.reports_failed += 1
             self._report_failure_streak += 1
@@ -355,10 +365,11 @@ class PortStreamingClient:
             reporter.close()
         elif reporter is not None:
             logger.info(
-                "[port-report] %d of %d frames reported to the AyoAI session, %d failed%s",
+                "[port-report] %d of %d frames reported to the AyoAI session, %d failed%s%s",
                 self.reports_sent,
                 self._tick,
                 self.reports_failed,
+                f", {self.reports_skipped} skipped" if self.reports_skipped else "",
                 f"; stopped: {self._reports_stopped}" if self._reports_stopped else "",
             )
             reporter.close()
