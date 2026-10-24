@@ -9,6 +9,10 @@ open_ayoai_session over a fake session that answers that way and read the reques
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -24,6 +28,7 @@ from ayoai_client import (
     AyoaiSessionError,
     _initiate_cold_start,
     open_ayoai_session,
+    unit_wire_flags,
 )
 from tests.fixtures.startup_conformance import payload_violations
 
@@ -256,3 +261,94 @@ def test_startup_units_without_what_the_spec_requires_are_refused_before_any_req
     with pytest.raises(AyoaiSessionError, match=message):
         _open(sess, startup_batches=batches, env_config=env_config)
     assert sess.post.call_count == 0
+
+
+# --- the DEV lane's default for the unit wire (g-376-204) ---------------------------------------------------
+# --startup-units and --unit-updates are on by default where the wire can be used (the DEV lane, the port
+# client, a live AyoAI session, a game id) and off everywhere else; the escapes decide on either lane.
+
+_USABLE: dict[str, bool] = {"port_client": True, "live_session": True, "has_scope": True}
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.parametrize(
+    ("lane", "startup_units", "unit_updates", "expected"),
+    [
+        ("dev", None, None, (True, True)),  # the default on the DEV lane is the unit wire
+        ("prod", None, None, (False, False)),  # prod stays on the operations wire
+        ("dev", False, None, (False, False)),  # --no-startup-units also turns the updates off
+        ("dev", None, False, (True, False)),  # --no-unit-updates keeps the startup units only
+        ("dev", False, False, (False, False)),
+        ("dev", True, None, (True, True)),
+        ("prod", True, None, (True, False)),  # an explicit True decides on either lane; main.py refuses it on prod
+        ("prod", None, True, (False, True)),  # ... and refuses --unit-updates without --startup-units
+    ],
+)
+def test_unit_wire_flags_default_by_lane_and_the_escapes_decide(
+    lane: str, startup_units: bool | None, unit_updates: bool | None, expected: tuple[bool, bool]
+) -> None:
+    assert unit_wire_flags(startup_units, unit_updates, lane=lane, **_USABLE) == expected
+
+
+@pytest.mark.parametrize("missing", ["port_client", "live_session", "has_scope"])
+def test_unit_wire_flags_stay_off_on_dev_for_a_run_that_cannot_use_the_wire(missing: str) -> None:
+    kwargs = {**_USABLE, missing: False}
+    assert unit_wire_flags(None, None, lane="dev", **kwargs) == (False, False)
+
+
+def test_unit_wire_flags_read_the_lane_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AYOAI_LANE", "dev")
+    assert unit_wire_flags(None, None, **_USABLE) == (True, True)
+    monkeypatch.setenv("AYOAI_LANE", "prod")
+    assert unit_wire_flags(None, None, **_USABLE) == (False, False)
+    monkeypatch.delenv("AYOAI_LANE")
+    assert unit_wire_flags(None, None, **_USABLE) == (False, False)
+
+
+def test_unit_wire_flags_refuse_an_unknown_lane_rather_than_default_it() -> None:
+    with pytest.raises(AyoaiSessionError, match="AYOAI_LANE"):
+        unit_wire_flags(None, None, lane="staging", **_USABLE)
+
+
+def _run_main_until_the_arc_api_is_unreachable(lane: str, *extra: str) -> str:
+    """Drive the real entry point up to its first network call and return its log.
+
+    127.0.0.1:9 refuses at once, so main() resolves its arguments, builds the startup units and stops at the ARC
+    API without opening a scorecard or an AyoAI session.
+    """
+    env = os.environ.copy()
+    env.update(
+        {
+            "SCHEME": "http",
+            "HOST": "127.0.0.1",
+            "PORT": "9",
+            "ARC_API_KEY": "dummy-key-unused-connection-refused",
+            "AYOAI_LANE": lane,
+        }
+    )
+    proc = subprocess.run(
+        [sys.executable, "main.py", "--game", "ls20-test", "--use-solver-v2", "--use-port-client", *extra],
+        cwd=str(_REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+    )
+    assert "Failed to connect to API server" in proc.stdout + proc.stderr, (
+        "main.py stopped before its first network call, so the arguments were refused: " + (proc.stdout + proc.stderr)[-400:]
+    )
+    return proc.stdout + proc.stderr
+
+
+def test_main_uses_the_unit_wire_by_default_on_the_dev_lane_only() -> None:
+    dev = _run_main_until_the_arc_api_is_unreachable("dev")
+    assert "Startup units:" in dev and "Unit wire:" in dev
+    prod = _run_main_until_the_arc_api_is_unreachable("prod")
+    assert "Startup units:" not in prod and "Unit wire:" not in prod
+
+
+def test_main_escapes_back_to_the_operations_wire_on_the_dev_lane() -> None:
+    no_units = _run_main_until_the_arc_api_is_unreachable("dev", "--no-startup-units")
+    assert "Startup units:" not in no_units and "Unit wire:" not in no_units
+    units_only = _run_main_until_the_arc_api_is_unreachable("dev", "--no-unit-updates")
+    assert "Startup units:" in units_only and "Unit wire:" not in units_only
