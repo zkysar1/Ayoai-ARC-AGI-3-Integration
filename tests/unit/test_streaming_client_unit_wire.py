@@ -30,7 +30,12 @@ from spec_units import (
 )
 from structs import ActionInput, FrameData, GameAction, GameState
 from tests.fixtures.served_tree import ask_answer, served_tree
-from unit_wire import GAME_STATE_UNIT_KEY, GAME_STATE_UNIT_PATH, MAX_OPS_PER_REQUEST, hex_rows
+from unit_wire import (
+    GAME_STATE_UNIT_KEY,
+    GAME_STATE_UNIT_PATH,
+    MAX_OPS_PER_REQUEST,
+    hex_rows,
+)
 
 SCOPE = "gd2f7ac"
 CARD = "card-1234"

@@ -59,7 +59,12 @@ from urllib.parse import urlparse
 import requests
 
 from structs import FrameData, GameAction, GameState
-from unit_wire import UnitWireError, UnitWireNoLayer, UnitWireState, game_state_delete_op
+from unit_wire import (
+    UnitWireError,
+    UnitWireNoLayer,
+    UnitWireState,
+    game_state_delete_op,
+)
 from vessel_hint import VESSEL_HINT_ATTRIBUTE, encode_vessel_hint
 
 logger = logging.getLogger(__name__)
