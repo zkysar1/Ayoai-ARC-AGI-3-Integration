@@ -731,8 +731,8 @@ def _play(server_stop: RunServerStop) -> int:
             "created there) and the port client (--use-port-client). Under the vessel decider, the "
             "default, the move is asked for on this wire too (g-376-242): the game-state unit carries "
             "pending_decision, the move comes back as a tree in ayoBTs[], and the client runs it and "
-            "reports its leaf as envBTUpdates. The closing DELETE stays on the operations wire, which "
-            "is the only wire the server reads it from. Off by default."
+            "reports its leaf as envBTUpdates. The closing DELETE is a DELETE of the game-state unit on "
+            "this wire too (g-376-204): the server ends the card's sessions on it. Off by default."
         ),
     )
     parser.add_argument(

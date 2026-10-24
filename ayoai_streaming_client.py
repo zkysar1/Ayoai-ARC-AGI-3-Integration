@@ -59,7 +59,12 @@ from urllib.parse import urlparse
 import requests
 
 from structs import FrameData, GameAction, GameState
-from unit_wire import UnitWireError, UnitWireNoLayer, UnitWireState
+from unit_wire import (
+    UnitWireError,
+    UnitWireNoLayer,
+    UnitWireState,
+    game_state_delete_op,
+)
 from vessel_hint import VESSEL_HINT_ATTRIBUTE, encode_vessel_hint
 
 logger = logging.getLogger(__name__)
@@ -585,8 +590,14 @@ class AyoaiStreamingClient:
         attributes carry only `arc_card_id` for correlation — the prior
         UPDATEs carried the full grid state.
 
+        On the unit wire (g-376-204) the game is closed by a DELETE of the game-state unit
+        instead: see `_send_unit_delete`.
+
         Raises AyoaiStreamingApiError on transport / non-200 / status=fail.
         """
+        if self._unit_wire is not None:
+            self._send_unit_delete()
+            return
         payload = {
             "ayoServerKey": self.ayo_server_key,
             # Required streaming-envelope fields (see _encode_frame note) — the
@@ -747,6 +758,24 @@ class AyoaiStreamingClient:
             })
         self._unit_wire.commit(plan)
         return body
+
+    def _send_unit_delete(self) -> None:
+        """Close the game on the unit wire (g-376-204): a DELETE of the game-state unit, which the server reads as
+        the end of the card's game and ends the card's slice and frontier sessions on. The spec's DELETE carries
+        the unit's path and key and nothing else, so the server takes the card from the game it has been following.
+        Nothing is sent when the unit was never added (the operations DELETE was likewise sent only after an ADD).
+        Once the server accepted it the unit is gone, so the next frame ADDs it again, as an --episodes N run
+        needs. Pending behavior-tree events ride it, as they rode the operations DELETE."""
+        assert self._unit_wire is not None
+        if not self._unit_wire.game_state_added:
+            return
+        self._post({
+            "ayoServerKey": self.ayo_server_key,
+            "updateEpochMillis": str(int(time.time() * 1000)),
+            "isLastBatch": True,
+            "envUnitUpdates": [game_state_delete_op()],
+        })
+        self._unit_wire.mark_game_state_deleted()
 
     @staticmethod
     def _is_transient_error(payload: str) -> bool:

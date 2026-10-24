@@ -2,8 +2,8 @@
 envUnitUpdates[] -- the cells that changed, the cursor and one game-state unit -- with no operations key.
 
 A decision (choose_action) is asked for on the same wire (g-376-242): the game-state unit carries pending_decision
-and the move comes back as a tree in ayoBTs[]. The closing DELETE is not a report and stays on the operations wire;
-a test pins that, because the server reads the DELETE from that wire only."""
+and the move comes back as a tree in ayoBTs[]. The closing DELETE is a DELETE of the game-state unit on this wire
+too (g-376-204): the server ends the card's sessions on it, and no request of a unit-wire run carries an operations key."""
 
 from __future__ import annotations
 
@@ -30,7 +30,12 @@ from spec_units import (
 )
 from structs import ActionInput, FrameData, GameAction, GameState
 from tests.fixtures.served_tree import ask_answer, served_tree
-from unit_wire import GAME_STATE_UNIT_KEY, MAX_OPS_PER_REQUEST, hex_rows
+from unit_wire import (
+    GAME_STATE_UNIT_KEY,
+    GAME_STATE_UNIT_PATH,
+    MAX_OPS_PER_REQUEST,
+    hex_rows,
+)
 
 SCOPE = "gd2f7ac"
 CARD = "card-1234"
@@ -211,12 +216,61 @@ def test_a_frame_the_wire_cannot_carry_is_refused_before_any_request() -> None:
     assert session.bodies == []
 
 
-def test_the_closing_delete_stays_on_the_operations_wire() -> None:
+def test_the_closing_delete_is_a_delete_of_the_game_state_unit_and_has_no_operations_key() -> None:
+    session = _Session()
+    client = _client(session, unit_wire_scope=SCOPE)
+    client.send_add(_frame({(1, 1): 2}))
+    client.send_delete()
+    assert len(session.bodies) == 2
+    close = session.bodies[-1]
+    assert set(close) == {"ayoServerKey", "updateEpochMillis", "isLastBatch", "envUnitUpdates"}
+    assert close["ayoServerKey"] == CARD and close["isLastBatch"] is True
+    # The spec's DELETE: the unit's path and key and nothing else. The server takes the card from the game it follows.
+    assert close["envUnitUpdates"] == [
+        {"operationType": "DELETE", "unitKey": GAME_STATE_UNIT_KEY, "unitPath": list(GAME_STATE_UNIT_PATH)}
+    ]
+    assert all("operations" not in body for body in session.bodies)
+
+
+def test_a_unit_wire_client_that_never_added_the_game_state_unit_sends_no_closing_delete() -> None:
     session = _Session()
     _client(session, unit_wire_scope=SCOPE).send_delete()
-    (close,) = session.bodies
-    assert close["operations"][0]["op"] == "DELETE"
-    assert "envUnitUpdates" not in close
+    assert session.bodies == []
+
+
+def test_the_frame_after_the_closing_delete_adds_the_game_state_unit_again() -> None:
+    session = _Session()
+    client = _client(session, unit_wire_scope=SCOPE)
+    client.send_add(_frame({(1, 1): 2}))
+    client.send_delete()
+    client.send_update(_frame({(1, 1): 3}))
+    assert [body["envUnitUpdates"][-1]["operationType"] for body in session.bodies] == ["ADD", "DELETE", "ADD"]
+
+
+def test_a_refused_closing_delete_raises_and_is_sent_again_by_the_next_call() -> None:
+    session = _Session(statuses=[200, 400])
+    client = _client(session, unit_wire_scope=SCOPE)
+    client.send_add(_frame({(1, 1): 2}))
+    with pytest.raises(AyoaiStreamingApiError):
+        client.send_delete()
+    client.send_delete()  # the unit is still there as far as the client knows, so it asks again
+    assert [body["envUnitUpdates"][-1]["operationType"] for body in session.bodies] == ["ADD", "DELETE", "DELETE"]
+
+
+def test_the_pending_tree_events_ride_the_closing_delete() -> None:
+    reporter = BTUpdateReporter()
+    session = _Session()
+    client = _client(session, unit_wire_scope=SCOPE)
+    client.attach_bt_reporter(reporter)
+    client.send_add(_frame({(1, 1): 2}))
+    reporter.running("arc__1", "arc_1_1")
+    reporter.success("arc__1", "arc_1_1")
+    client.send_delete()
+    close = session.bodies[-1]
+    assert [(u["envBTExecKey"], [e["nodeOutcome"] for e in u["envBTEvents"]]) for u in close["envBTUpdates"]] == [
+        ("arc__1", ["Running", "Success"])
+    ]
+    assert reporter.pending == 0
 
 
 def test_an_ask_is_a_unit_updates_request_whose_game_state_unit_asks_and_the_move_is_the_served_leaf() -> None:
