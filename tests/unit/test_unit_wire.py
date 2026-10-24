@@ -29,6 +29,7 @@ from unit_wire import (
     UnitWireState,
     cell_update_ops,
     cursor_update_ops,
+    game_state_delete_op,
     game_state_op,
     hex_rows,
     select_seed_layer,
@@ -276,6 +277,23 @@ def test_every_op_carries_the_fields_the_spec_requires() -> None:
             assert isinstance(op["unitKey"], str) and op["unitKey"]
             assert op["unitPath"] and all(isinstance(i, int) for i in op["unitPath"])
             assert "unitProperties" in op
+
+
+def test_the_closing_delete_names_the_game_state_unit_by_path_and_key_and_nothing_else() -> None:
+    op = game_state_delete_op()
+    assert op == {"operationType": "DELETE", "unitKey": GAME_STATE_UNIT_KEY, "unitPath": list(GAME_STATE_UNIT_PATH)}
+    assert "unitProperties" not in op  # the spec's DELETE carries none; the server takes the card from the game it follows
+
+
+def test_the_game_state_unit_is_added_again_after_it_was_deleted() -> None:
+    state = UnitWireState(scope=SCOPE)
+    state.commit(state.plan_frame([_board({(1, 2): 3})], _attrs(), last_action_xy=None))
+    assert state.game_state_added is True
+    state.mark_game_state_deleted()
+    assert state.game_state_added is False
+    plan = state.plan_frame([_board({(1, 2): 4})], _attrs(), last_action_xy=None)
+    assert plan.batches[-1][-1]["operationType"] == "ADD"
+    assert plan.batches[-1][-1]["unitKey"] == GAME_STATE_UNIT_KEY
 
 
 def test_a_plan_adopts_nothing_until_it_is_committed() -> None:

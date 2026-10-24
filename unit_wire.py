@@ -273,6 +273,16 @@ def game_state_op(operations_attributes: Mapping[str, Any], final_layer: Sequenc
     }
 
 
+def game_state_delete_op() -> UnitOp:
+    """The closing DELETE of the game-state unit (g-376-204). The spec's DELETE carries the unit's path and key and
+    nothing else, so the server learns which card it closes from the game it has been following."""
+    return {
+        "operationType": "DELETE",
+        "unitKey": GAME_STATE_UNIT_KEY,
+        "unitPath": list(GAME_STATE_UNIT_PATH),
+    }
+
+
 def split_ops(ops: Sequence[UnitOp], size: int = MAX_OPS_PER_REQUEST) -> list[list[UnitOp]]:
     """``ops`` cut, in order, into requests of at most ``size`` ops; no ops, no requests."""
     if size < 1:
@@ -331,3 +341,7 @@ class UnitWireState:
         self.board = plan.board
         self.cursor = plan.cursor
         self.game_state_added = True
+
+    def mark_game_state_deleted(self) -> None:
+        """The server accepted the closing DELETE: its game-state unit is gone, so the next frame ADDs it again."""
+        self.game_state_added = False

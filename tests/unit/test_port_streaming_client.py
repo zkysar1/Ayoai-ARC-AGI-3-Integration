@@ -850,7 +850,8 @@ class _UnitVesselSession(_RecordingSession):
     def post(self, url: str, json: dict[str, Any], **_: Any) -> _Resp:
         self.bodies.append(json)
         asks = any(
-            op.get("unitKey") == "arc_game_state" and op["unitProperties"]["attributes"].get("pending_decision") is True
+            op.get("unitKey") == "arc_game_state"
+            and op.get("unitProperties", {}).get("attributes", {}).get("pending_decision") is True  # a DELETE has none
             for op in json.get("envUnitUpdates", [])
         )
         return _TreeResp(ask_answer(self._trees.pop(0)) if asks else {"status": "success"})
@@ -878,7 +879,7 @@ def _tree_reports(body: dict[str, Any]) -> list[tuple[str, list[tuple[str, str]]
 
 def test_the_vessel_asks_on_the_unit_wire_plays_the_served_tree_and_reports_its_leaf() -> None:
     # g-376-242 U3: the ask is pending_decision on the game-state unit, the answer is a tree in ayoBTs[], and the
-    # report of the leaf played rides the next ask. Only the closing DELETE is on the operations wire.
+    # report of the leaf played rides the next ask. The closing DELETE is a DELETE of the game-state unit (g-376-204).
     session = _UnitVesselSession([
         served_tree("ACTION6", "arc__1", x=4, y=3, reason="frontier-core"),
         served_tree("ACTION1", "arc__2"),
@@ -906,8 +907,8 @@ def test_the_vessel_asks_on_the_unit_wire_plays_the_served_tree_and_reports_its_
     assert (one.provenance["bt_exec_key"], one.provenance["bt_node_id"]) == ("arc__1", "arc_1_1")
 
     *units, close = session.bodies
-    assert all("operations" not in body and "envUnitUpdates" in body for body in units)
-    assert close["operations"][0]["op"] == "DELETE"
+    assert all("operations" not in body and "envUnitUpdates" in body for body in session.bodies)
+    assert [(op["operationType"], op["unitKey"]) for op in close["envUnitUpdates"]] == [("DELETE", "arc_game_state")]
     asking = [b for b in units if b["envUnitUpdates"][-1]["unitProperties"]["attributes"]["pending_decision"]]
     assert len(units) == 3 and len(asking) == 2  # the ADD report does not ask
     ask_one, ask_two = asking
