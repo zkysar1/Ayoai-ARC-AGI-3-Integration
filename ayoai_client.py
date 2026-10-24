@@ -103,6 +103,34 @@ def resolve_lane(lane: str | None = None) -> AyoaiLane:
         return DEV_LANE
     raise AyoaiSessionError(f"AYOAI_LANE must be prod or dev, not {name!r}")
 
+
+def unit_wire_flags(
+    startup_units: bool | None,
+    unit_updates: bool | None,
+    *,
+    port_client: bool,
+    live_session: bool,
+    has_scope: bool,
+    lane: str | None = None,
+) -> tuple[bool, bool]:
+    """The (startup_units, unit_updates) pair a run uses (g-376-204).
+
+    None means the flag was not passed. Then both are on when the lane is in
+    STARTUP_UNITS_LANES (the DEV lane) and the run can use the unit wire: the port
+    client, a live AyoAI session (not --use-solver-v0, --random or --mock-url) and a
+    game id with a key scope. Anything else, prod included, stays on the operations
+    wire. A True or False decides on either lane; a True the run cannot use is refused
+    by main.py's own checks. --unit-updates needs --startup-units, so
+    --no-startup-units turns the updates off too. lane=None reads AYOAI_LANE.
+    """
+    usable = resolve_lane(lane).name in STARTUP_UNITS_LANES and port_client and live_session and has_scope
+    if startup_units is None:
+        startup_units = usable
+    if unit_updates is None:
+        unit_updates = usable and startup_units
+    return startup_units, unit_updates
+
+
 # Readiness-poll budget (g-376-31). The one-second interval keeps Roblox parity
 # (SendUpdate.server.lua:146, :166); the cap no longer does. Roblox's 90
 # (SendUpdate.server.lua:140) sat only ~1.4x above an ARC cold start. Measured
