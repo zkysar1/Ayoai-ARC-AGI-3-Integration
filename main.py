@@ -30,6 +30,7 @@ from ayoai_client import (
     resolve_api_key,
     resolve_lane,
     stop_ayoai_server,
+    unit_wire_flags,
 )
 from ayoai_streaming_client import (
     AyoaiStreamingClient,
@@ -709,7 +710,8 @@ def _play(server_stop: RunServerStop) -> int:
     )
     parser.add_argument(
         "--startup-units",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help=(
             "Open the session with the board as AyoaiV1 startupUnits[] batches (g-376-199, "
             "spec_units.py): the ArcGrid, the cursor character and one unit per cell of a blank "
@@ -718,12 +720,17 @@ def _play(server_stop: RunServerStop) -> int:
             "exist until the opening RESET, which comes after the session opens. Collect saves "
             "the batches and starts the server on the last; the server's use of the units is "
             "g-376-198. DEV lane only (AYOAI_LANE=dev) until Collect's startupUnits lane is "
-            "promoted to prod (g-376-197); needs a live AyoAI session. Off by default."
+            "promoted to prod (g-376-197); needs a live AyoAI session. On by default on the DEV "
+            "lane for a run with the port client (--use-port-client), a live AyoAI session (not "
+            "--use-solver-v0, --random or --mock-url) and a game id; off on prod and for any other "
+            "run. --no-startup-units is the escape back to the operations wire and also turns "
+            "--unit-updates off; --startup-units on prod is refused."
         ),
     )
     parser.add_argument(
         "--unit-updates",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help=(
             "Report each frame to the AyoAI session as envUnitUpdates[] (g-376-201, unit_wire.py): "
             "UPDATE ops for the cells that changed, the cursor and one game-state unit, at most 3000 "
@@ -732,7 +739,9 @@ def _play(server_stop: RunServerStop) -> int:
             "default, the move is asked for on this wire too (g-376-242): the game-state unit carries "
             "pending_decision, the move comes back as a tree in ayoBTs[], and the client runs it and "
             "reports its leaf as envBTUpdates. The closing DELETE is a DELETE of the game-state unit on "
-            "this wire too (g-376-204): the server ends the card's sessions on it. Off by default."
+            "this wire too (g-376-204): the server ends the card's sessions on it. On by default "
+            "wherever --startup-units is on by default; --no-unit-updates keeps the startup units "
+            "and reports the frames on the operations wire."
         ),
     )
     parser.add_argument(
@@ -1137,6 +1146,15 @@ def _play(server_stop: RunServerStop) -> int:
     startup_env_config: dict[str, Any] | None = None
     startup_required_characters: tuple[str, ...] | None = None
     unit_wire_scope: str | None = None
+    # g-376-204: the unit wire is the DEV lane's default for a run that can use it; the escapes decide
+    # on either lane. main.py's own checks below still refuse a flag the run cannot honor.
+    args.startup_units, args.unit_updates = unit_wire_flags(
+        args.startup_units,
+        args.unit_updates,
+        port_client=args.use_port_client,
+        live_session=not (args.use_solver_v0 or args.random or args.mock_url),
+        has_scope=scope_of(args.game) is not None,
+    )
     if args.unit_updates and not args.startup_units:
         parser.error("--unit-updates needs --startup-units (the cells and the cursor it updates are created there)")
     if args.execute_tree and (args.use_solver_v0 or args.use_solver_v2 or args.random):
@@ -1168,6 +1186,7 @@ def _play(server_stop: RunServerStop) -> int:
                     "that reports on the unit wire"
                 )
             unit_wire_scope = startup_scope
+            logger.info(f"Unit wire: frames reported as envUnitUpdates, key scope {startup_scope}")
 
     # --state-graph only takes effect under --use-solver-v2 (the v2 adapter is
     # the sole StateGraphExplorer build site). Warn rather than error so the

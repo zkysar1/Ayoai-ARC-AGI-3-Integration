@@ -597,9 +597,13 @@ def _main_py(args: list[str], cwd: Path, extra_env: dict[str, str]) -> subproces
          "--startup-units needs a live AyoAI session"),
         # g-376-201: the unit wire rides on the startup units' cells and cursor, and only the port client reports
         # on it. g-376-242: under either of its deciders, the vessel asks for its move there too.
-        (["--use-solver-v2", "--use-port-client", "--oracle", "--unit-updates"], {"AYOAI_LANE": "dev"},
+        # g-376-204: on the DEV lane the startup units default on for a port-client run, so these name the escape
+        # (--no-startup-units) that leaves --unit-updates without its cells; on prod the default is off.
+        (["--use-solver-v2", "--use-port-client", "--oracle", "--no-startup-units", "--unit-updates"],
+         {"AYOAI_LANE": "dev"}, "--unit-updates needs --startup-units"),
+        (["--use-solver-v2", "--use-port-client", "--no-startup-units", "--unit-updates"], {"AYOAI_LANE": "dev"},
          "--unit-updates needs --startup-units"),
-        (["--use-solver-v2", "--use-port-client", "--unit-updates"], {"AYOAI_LANE": "dev"},
+        (["--use-solver-v2", "--use-port-client", "--unit-updates"], {"AYOAI_LANE": "prod"},
          "--unit-updates needs --startup-units"),
         (["--use-solver-v2", "--startup-units", "--unit-updates"], {"AYOAI_LANE": "dev"},
          "--unit-updates needs the port client"),
