@@ -719,12 +719,11 @@ def _play(server_stop: RunServerStop) -> int:
             "and isLastBatch on the last. The board is blank because the first frame does not "
             "exist until the opening RESET, which comes after the session opens. Collect saves "
             "the batches and starts the server on the last; the server's use of the units is "
-            "g-376-198. DEV lane only (AYOAI_LANE=dev) until Collect's startupUnits lane is "
-            "promoted to prod (g-376-197); needs a live AyoAI session. On by default on the DEV "
-            "lane for a run with the port client (--use-port-client), a live AyoAI session (not "
-            "--use-solver-v0, --random or --mock-url) and a game id; off on prod and for any other "
-            "run. --no-startup-units is the escape back to the operations wire and also turns "
-            "--unit-updates off; --startup-units on prod is refused."
+            "g-376-198. Both lanes (dev and prod) carry Collect's startupUnits lane (g-376-197); "
+            "needs a live AyoAI session. On by default on either lane for a run with the port "
+            "client (--use-port-client), a live AyoAI session (not --use-solver-v0, --random or "
+            "--mock-url) and a game id; off for any other run. --no-startup-units is the escape "
+            "back to the operations wire and also turns --unit-updates off."
         ),
     )
     parser.add_argument(
@@ -1164,8 +1163,8 @@ def _play(server_stop: RunServerStop) -> int:
             parser.error("--startup-units needs a live AyoAI session (not --use-solver-v0, --random or --mock-url)")
         if resolve_lane().name not in STARTUP_UNITS_LANES:
             parser.error(
-                "--startup-units needs the DEV lane (AYOAI_LANE=dev): Collect's startupUnits lane "
-                "is not on prod yet (g-376-197)"
+                "--startup-units needs a lane listed in STARTUP_UNITS_LANES (ayoai_client.py): "
+                "Collect's startupUnits lane (g-376-197) is not on this one"
             )
         startup_scope = scope_of(args.game)
         if startup_scope is None:

@@ -82,12 +82,14 @@ class AyoaiLane:
 PROD_LANE = AyoaiLane("prod", COLD_START_URL, RESOLUTION_URL, None)
 DEV_LANE = AyoaiLane("dev", DEV_COLD_START_URL, DEV_RESOLUTION_URL, DEV_SERVER_VERSION)
 
-# The lanes that may send the board as startupUnits[] batches (g-376-199). Collect's startupUnits lane is merged
-# to its dev branch only (CollectAyoEnvironmentInBatchesOnStartUp #82, g-376-197). Until a promotion carries it to
-# prod, the prod Collect has no such lane: its non-roblox path (49ff3b9) starts the server on the FIRST POST and
-# never reads startupUnits, so a batched cold start there would launch a server with the first batch's fields
-# only (no worldFlags, no units) and answer every later batch 409.
-STARTUP_UNITS_LANES = ("dev",)
+# The lanes that may send the board as startupUnits[] batches (g-376-199). Collect's startupUnits lane
+# (CollectAyoEnvironmentInBatchesOnStartUp #82, g-376-197) is on both lanes: dev since 2026-10-17, prod once a
+# promotion carried it (lambda_function.py reads byte-identical on origin/main and origin/dev and main's CI is green:
+# promotion-lane-probe, 2026-10-27, g-376-204). A lane NOT listed here has a Collect whose non-roblox path (49ff3b9)
+# starts the server on the FIRST POST and never reads startupUnits, so a batched cold start would launch a server
+# with the first batch's fields only (no worldFlags, no units) and answer every later batch 409. A new lane joins
+# this tuple only after the same probe.
+STARTUP_UNITS_LANES = ("dev", "prod")
 
 
 def resolve_lane(lane: str | None = None) -> AyoaiLane:
@@ -116,9 +118,9 @@ def unit_wire_flags(
     """The (startup_units, unit_updates) pair a run uses (g-376-204).
 
     None means the flag was not passed. Then both are on when the lane is in
-    STARTUP_UNITS_LANES (the DEV lane) and the run can use the unit wire: the port
+    STARTUP_UNITS_LANES (the dev and prod lanes) and the run can use the unit wire: the port
     client, a live AyoAI session (not --use-solver-v0, --random or --mock-url) and a
-    game id with a key scope. Anything else, prod included, stays on the operations
+    game id with a key scope. Anything else stays on the operations
     wire. A True or False decides on either lane; a True the run cannot use is refused
     by main.py's own checks. --unit-updates needs --startup-units, so
     --no-startup-units turns the updates off too. lane=None reads AYOAI_LANE.
