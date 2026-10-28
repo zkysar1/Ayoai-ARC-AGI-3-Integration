@@ -587,10 +587,7 @@ def _main_py(args: list[str], cwd: Path, extra_env: dict[str, str]) -> subproces
         (["--use-solver-v2", "--oracle"], {}, "--oracle needs --use-port-client"),
         (["--use-solver-v2", "--use-port-client", "--oracle", "--vessel-decides"], {},
          "--oracle and --vessel-decides are mutually exclusive"),
-        # g-376-199: startupUnits go to a Collect that has the batch lane (dev only for now) and only into a live session.
-        (["--use-solver-v2", "--use-port-client", "--startup-units"], {}, "--startup-units needs the DEV lane"),
-        (["--use-solver-v2", "--use-port-client", "--startup-units"], {"AYOAI_LANE": "prod"},
-         "--startup-units needs the DEV lane"),
+        # g-376-199: startupUnits go to a Collect that has the batch lane (dev and prod both do, g-376-204) and only into a live session.
         (["--use-solver-v0", "--startup-units"], {"AYOAI_LANE": "dev"}, "--startup-units needs a live AyoAI session"),
         (["--random", "--startup-units"], {"AYOAI_LANE": "dev"}, "--startup-units needs a live AyoAI session"),
         (["--mock-url", "http://127.0.0.1:9", "--startup-units"], {"AYOAI_LANE": "dev"},
@@ -598,12 +595,12 @@ def _main_py(args: list[str], cwd: Path, extra_env: dict[str, str]) -> subproces
         # g-376-201: the unit wire rides on the startup units' cells and cursor, and only the port client reports
         # on it. g-376-242: under either of its deciders, the vessel asks for its move there too.
         # g-376-204: on the DEV lane the startup units default on for a port-client run, so these name the escape
-        # (--no-startup-units) that leaves --unit-updates without its cells; on prod the default is off.
+        # (--no-startup-units) that leaves --unit-updates without its cells.
         (["--use-solver-v2", "--use-port-client", "--oracle", "--no-startup-units", "--unit-updates"],
          {"AYOAI_LANE": "dev"}, "--unit-updates needs --startup-units"),
         (["--use-solver-v2", "--use-port-client", "--no-startup-units", "--unit-updates"], {"AYOAI_LANE": "dev"},
          "--unit-updates needs --startup-units"),
-        (["--use-solver-v2", "--use-port-client", "--unit-updates"], {"AYOAI_LANE": "prod"},
+        (["--use-solver-v2", "--use-port-client", "--no-startup-units", "--unit-updates"], {"AYOAI_LANE": "prod"},
          "--unit-updates needs --startup-units"),
         (["--use-solver-v2", "--startup-units", "--unit-updates"], {"AYOAI_LANE": "dev"},
          "--unit-updates needs the port client"),

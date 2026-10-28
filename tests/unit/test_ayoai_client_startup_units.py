@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 import requests
 
+import ayoai_client
 import spec_units as su
 from ayoai_client import (
     DEV_COLD_START_URL,
@@ -235,7 +236,12 @@ def test_the_cold_start_returns_the_starting_answer_of_the_last_batch() -> None:
 
 
 @pytest.mark.parametrize("lane", ["prod", None])  # None reads AYOAI_LANE, unset here: prod
-def test_startup_units_are_refused_off_the_dev_lane_before_any_request(lane: str | None) -> None:
+def test_startup_units_are_refused_on_a_lane_outside_the_tuple_before_any_request(
+    lane: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Both real lanes are in STARTUP_UNITS_LANES since g-376-204, so the tuple is narrowed to dev to keep the
+    # guard under test: a lane that is not in it must be refused with no request sent.
+    monkeypatch.setattr(ayoai_client, "STARTUP_UNITS_LANES", ("dev",))
     sess = _session()
     with pytest.raises(AyoaiSessionError, match="dev lane only"):
         open_ayoai_session(
@@ -264,7 +270,7 @@ def test_startup_units_without_what_the_spec_requires_are_refused_before_any_req
 
 
 # --- the DEV lane's default for the unit wire (g-376-204) ---------------------------------------------------
-# --startup-units and --unit-updates are on by default where the wire can be used (the DEV lane, the port
+# --startup-units and --unit-updates are on by default where the wire can be used (the dev or prod lane, the port
 # client, a live AyoAI session, a game id) and off everywhere else; the escapes decide on either lane.
 
 _USABLE: dict[str, bool] = {"port_client": True, "live_session": True, "has_scope": True}
@@ -275,13 +281,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
     ("lane", "startup_units", "unit_updates", "expected"),
     [
         ("dev", None, None, (True, True)),  # the default on the DEV lane is the unit wire
-        ("prod", None, None, (False, False)),  # prod stays on the operations wire
+        ("prod", None, None, (True, True)),  # prod takes the unit wire too (its Collect carries the lane)
         ("dev", False, None, (False, False)),  # --no-startup-units also turns the updates off
         ("dev", None, False, (True, False)),  # --no-unit-updates keeps the startup units only
         ("dev", False, False, (False, False)),
         ("dev", True, None, (True, True)),
-        ("prod", True, None, (True, False)),  # an explicit True decides on either lane; main.py refuses it on prod
-        ("prod", None, True, (False, True)),  # ... and refuses --unit-updates without --startup-units
+        ("prod", True, None, (True, True)),  # an explicit True decides on either lane
+        ("prod", False, True, (False, True)),  # --no-startup-units with --unit-updates: main.py refuses it
     ],
 )
 def test_unit_wire_flags_default_by_lane_and_the_escapes_decide(
@@ -300,9 +306,9 @@ def test_unit_wire_flags_read_the_lane_from_the_environment(monkeypatch: pytest.
     monkeypatch.setenv("AYOAI_LANE", "dev")
     assert unit_wire_flags(None, None, **_USABLE) == (True, True)
     monkeypatch.setenv("AYOAI_LANE", "prod")
-    assert unit_wire_flags(None, None, **_USABLE) == (False, False)
-    monkeypatch.delenv("AYOAI_LANE")
-    assert unit_wire_flags(None, None, **_USABLE) == (False, False)
+    assert unit_wire_flags(None, None, **_USABLE) == (True, True)
+    monkeypatch.delenv("AYOAI_LANE")  # unset reads as prod
+    assert unit_wire_flags(None, None, **_USABLE) == (True, True)
 
 
 def test_unit_wire_flags_refuse_an_unknown_lane_rather_than_default_it() -> None:
@@ -340,11 +346,11 @@ def _run_main_until_the_arc_api_is_unreachable(lane: str, *extra: str) -> str:
     return proc.stdout + proc.stderr
 
 
-def test_main_uses_the_unit_wire_by_default_on_the_dev_lane_only() -> None:
+def test_main_uses_the_unit_wire_by_default_on_both_lanes() -> None:
     dev = _run_main_until_the_arc_api_is_unreachable("dev")
     assert "Startup units:" in dev and "Unit wire:" in dev
     prod = _run_main_until_the_arc_api_is_unreachable("prod")
-    assert "Startup units:" not in prod and "Unit wire:" not in prod
+    assert "Startup units:" in prod and "Unit wire:" in prod
 
 
 def test_main_escapes_back_to_the_operations_wire_on_the_dev_lane() -> None:
