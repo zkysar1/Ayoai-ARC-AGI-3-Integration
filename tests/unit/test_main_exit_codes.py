@@ -192,7 +192,9 @@ def test_play_ends_by_returning_the_exit_code_run_episodes_reported() -> None:
 
     Structural, like the sibling above: _play cannot be driven without a live ARC
     and AyoAI session, and a `return EXIT_OK` as its last line would turn every
-    aborted run back into a success (g-376-254).
+    aborted run back into a success (g-376-254). The returned name must also be
+    bound exactly once, by the run_episodes() unpack: `play_exit_code = EXIT_OK`
+    placed before the return passes every other check and brings the defect back.
     """
     fn = _play_function_node()
     last = fn.body[-1]
@@ -217,4 +219,16 @@ def test_play_ends_by_returning_the_exit_code_run_episodes_reported() -> None:
     }
     assert last.value.id in reported, (
         f"_play returns {last.value.id!r}, which is not unpacked from run_episodes()"
+    )
+    bindings = [
+        node
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Name)
+        and node.id == last.value.id
+        and isinstance(node.ctx, ast.Store)
+    ]
+    assert len(bindings) == 1, (
+        f"_play binds {last.value.id!r} {len(bindings)} times; it must be bound "
+        "once, by the run_episodes() unpack, so nothing between the call and the "
+        "return can overwrite what the episodes reported"
     )
