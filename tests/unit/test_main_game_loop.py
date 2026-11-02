@@ -80,7 +80,7 @@ def test_send_add_called_once_at_first_real_frame(mock_client):
     ]
     sender = MagicMock(side_effect=frames_to_return)
 
-    action_counter, _ = run_game_loop(
+    action_counter, _, _ = run_game_loop(
         mock_client, sender, FrameData(score=0), max_actions=10,
     )
 
@@ -210,7 +210,7 @@ def test_send_delete_non_fatal_on_failure(mock_client):
     mock_client.send_delete.side_effect = AyoaiStreamingError("delete failed")
 
     # Must not raise — the finally-block swallows DELETE failures.
-    action_counter, _ = run_game_loop(
+    action_counter, _, _ = run_game_loop(
         mock_client, sender, FrameData(score=0), max_actions=5,
     )
 
@@ -262,7 +262,7 @@ def test_game_over_is_answered_with_reset_and_play_continues(mock_client):
         _real_frame(state=GameState.WIN, score=1, guid="g-3"),
     ])
 
-    actions, _ = run_game_loop(mock_client, sender, FrameData(score=0), max_actions=10)
+    actions, _, _ = run_game_loop(mock_client, sender, FrameData(score=0), max_actions=10)
 
     sent = [c.args[0] for c in sender.call_args_list]
     assert sent == [GameAction.RESET, GameAction.ACTION1, GameAction.RESET, GameAction.ACTION1]
@@ -278,3 +278,65 @@ def test_the_default_budget_is_the_shared_one():
 
     default = inspect.signature(run_game_loop).parameters["max_actions"].default
     assert default == DEFAULT_ACTION_BUDGET == 2000
+
+
+# ---------- how a loop ends is its exit code (g-376-254) ---------- #
+
+# Literals, not imports: an import would pass for ANY value, including a
+# regression back to 0 (the blindness tests/unit/test_main_exit_codes.py names).
+_EXIT_OK = 0
+_EXIT_PLAY_ABORTED = 6
+
+
+def test_a_failed_streaming_decision_ends_the_loop_with_the_abort_code(mock_client):
+    """The HTTP 502 case: one move answered, then choose_action raises."""
+    sender = MagicMock(side_effect=[_real_frame(state=GameState.NOT_FINISHED, guid="g-0")])
+    mock_client.choose_action.side_effect = [
+        _decision(GameAction.ACTION1),
+        AyoaiStreamingError("streaming server returned HTTP 502"),
+    ]
+
+    actions, _, exit_code = run_game_loop(
+        mock_client, sender, FrameData(score=0), max_actions=5,
+    )
+
+    assert (actions, exit_code) == (1, _EXIT_PLAY_ABORTED)
+    mock_client.send_delete.assert_called_once()  # the unit was ADDed, so it is DELETEd
+
+
+def test_a_failed_send_add_ends_the_loop_with_the_abort_code(mock_client):
+    """send_add is the first streaming call of a run; its failure aborts too."""
+    sender = MagicMock(side_effect=[_real_frame(state=GameState.NOT_FINISHED, guid="g-0")])
+    mock_client.send_add.side_effect = AyoaiStreamingError("streaming server returned HTTP 502")
+
+    actions, _, exit_code = run_game_loop(
+        mock_client, sender, FrameData(score=0), max_actions=5,
+    )
+
+    assert (actions, exit_code) == (1, _EXIT_PLAY_ABORTED)
+    mock_client.send_delete.assert_not_called()  # no ADD went out, so nothing to DELETE
+
+
+def test_a_win_ends_the_loop_with_exit_ok(mock_client):
+    """Control: the abort code must not fire on a clean end."""
+    sender = MagicMock(side_effect=[
+        _real_frame(state=GameState.NOT_FINISHED, guid="g-0"),
+        _real_frame(state=GameState.WIN, score=1, guid="g-1"),
+    ])
+
+    actions, _, exit_code = run_game_loop(
+        mock_client, sender, FrameData(score=0), max_actions=10,
+    )
+
+    assert (actions, exit_code) == (2, _EXIT_OK)
+
+
+def test_an_exhausted_budget_ends_the_loop_with_exit_ok(mock_client):
+    """Control: running out of actions is the budget doing its job, not an abort."""
+    sender = MagicMock(return_value=_real_frame(state=GameState.NOT_FINISHED, guid="g-0"))
+
+    actions, _, exit_code = run_game_loop(
+        mock_client, sender, FrameData(score=0), max_actions=3,
+    )
+
+    assert (actions, exit_code) == (4, _EXIT_OK)  # the cap is checked before each tick, so 4 are sent

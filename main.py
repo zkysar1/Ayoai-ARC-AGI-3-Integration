@@ -96,10 +96,21 @@ HEADERS = {
 # IS the completion signal there, so "check for the OPEN FAILED line instead"
 # was never a sufficient workaround.
 #
-# ALL abort paths are wired, not just the two that motivated the goal. A
-# PARTIALLY truthful exit code is worse than a uniformly untruthful one: a
-# caller that learns to trust it would be silently misled by whichever paths
-# were left behind.
+# ALL abort paths before the first tick are wired, not just the two that
+# motivated the goal. A PARTIALLY truthful exit code is worse than a uniformly
+# untruthful one: a caller that learns to trust it would be silently misled by
+# whichever paths were left behind.
+#
+# Inside the play loop (g-376-254) the two AyoAI streaming aborts, a failed
+# send_add and a failed streaming decision, return EXIT_PLAY_ABORTED. It is its
+# own code and not EXIT_AYOAI_STREAMING, because 4 means the run never reached
+# its first tick (the DNS warm-up in _play) and 6 means it played and then lost
+# the server; a caller reading either number must be able to tell which without
+# opening the log. A run that aborts still closes its scorecard before _play
+# returns the code. Three ends of the loop are NOT wired and still return
+# EXIT_OK: Ctrl-C, a failed frame fetch ("Failed to get frame, stopping") and
+# an unexpected exception ("Game loop failed with error"). Do not read an exit
+# code of 0 as proof that the loop ran to a WIN or to its action budget.
 #
 # 1 is deliberately unused — Python already exits 1 on an uncaught traceback,
 # so leaving it reserved keeps "crashed" distinguishable from "diagnosed a
@@ -109,6 +120,7 @@ EXIT_ARC_UPSTREAM = 2       # ARC-AGI-3 side: connect / game list / scorecard
 EXIT_AYOAI_SESSION_OPEN = 3  # AyoAI Collect cold-start or readiness poll failed
 EXIT_AYOAI_STREAMING = 4     # AyoAI session opened but streaming setup failed
 EXIT_HELDOUT_REFUSED = 5     # sealed held-out exam game without --exam (house rule 4)
+EXIT_PLAY_ABORTED = 6        # play began, then the AyoAI streaming leg failed (send_add / decision)
 
 
 def choose_random_action(frame: FrameData) -> GameAction:
@@ -236,7 +248,7 @@ def run_game_loop(
     max_actions: int = DEFAULT_ACTION_BUDGET,
     game_id: str | None = None,
     log: logging.Logger | None = None,
-) -> tuple[int, float]:
+) -> tuple[int, float, int]:
     """Drive a full game through AyoAI streaming with the §3.4 ADD/UPDATE/DELETE lifecycle.
 
     Extracted from main() in g-315-22 so the lifecycle wire-in is testable.
@@ -266,13 +278,17 @@ def run_game_loop(
         log: optional logger; defaults to the module logger.
 
     Returns:
-        (action_counter, elapsed_seconds) — used by the caller for
-        final-stats logging.
+        (action_counter, elapsed_seconds, exit_code). The first two are used
+        by the caller for final-stats logging. exit_code is EXIT_OK unless
+        the AyoAI streaming leg failed (a failed send_add or a failed
+        streaming decision), when it is EXIT_PLAY_ABORTED; the EXIT_* block
+        at the top of this file lists the ends that still return EXIT_OK.
     """
     log = log or logger
     frames = [initial_frame]
     action_counter = 0
     add_sent = False
+    exit_code = EXIT_OK
     timer = time.time()
     game_label = game_id or "game"
 
@@ -299,6 +315,7 @@ def run_game_loop(
                     log.info("AyoAI send_add completed — grid-env unit registered")
                 except AyoaiStreamingError as e:
                     log.error(f"AyoAI send_add FAILED — aborting play: {e}")
+                    exit_code = EXIT_PLAY_ABORTED
                     break
 
             # UPDATE per tick. RESET is decided client-side (game-control);
@@ -310,6 +327,7 @@ def run_game_loop(
                 log.error(
                     f"AyoAI streaming decision FAILED — aborting play: {e}"
                 )
+                exit_code = EXIT_PLAY_ABORTED
                 break
             action = decision.action
 
@@ -371,7 +389,94 @@ def run_game_loop(
                 log.exception("send_delete failed at game end (non-fatal)")
 
     elapsed = time.time() - timer
-    return action_counter, elapsed
+    return action_counter, elapsed, exit_code
+
+
+def run_episodes(
+    streaming_client: StreamingDecisionClient,
+    action_sender: Callable[
+        [GameAction, str | None, int | None, int | None], FrameData | None
+    ],
+    *,
+    episodes: int,
+    recorder: Recorder | None = None,
+    max_actions: int = DEFAULT_ACTION_BUDGET,
+    game_id: str | None = None,
+    log: logging.Logger | None = None,
+) -> tuple[int, float, int]:
+    """Play ``episodes`` consecutive episodes through the SAME streaming client.
+
+    Multi-episode harness (g-315-266): an adapter-level cross-episode cache
+    (SolverV2StreamingAdapter._click_state_graph_cache) accumulates across the
+    episodes. episodes=1 (default) runs exactly ONE run_game_loop call. Each
+    episode gets a fresh NOT_PLAYED initial frame (the adapter RESETs it to a
+    real ARC frame); run_game_loop owns the per-episode ADD/UPDATE/DELETE
+    lifecycle. The caller's scorecard stays open across all episodes.
+
+    An abort ends the run (g-376-254). The episodes share one streaming client,
+    and an abort means that client's server stopped answering (a failed
+    send_add or a failed streaming decision), so the next episode would open
+    its own ADD against the same server and most likely fail the same way.
+    Playing on would also leave the scorecard counting later episodes beside
+    an aborted one as if the run had held. So the loop stops at the first
+    abort, the episodes after it are not played, and the exit code is that
+    abort's.
+
+    Returns:
+        (actions, elapsed_seconds, exit_code) summed over the episodes played;
+        exit_code is EXIT_OK, or the code of the first episode that aborted.
+        ``episodes`` is taken as given, so a caller passes at least 1.
+    """
+    log = log or logger
+    action_counter = 0
+    elapsed = 0.0
+    exit_code = EXIT_OK
+    # Adapter-level cross-episode inspection: present only on the solver-v2 adapter
+    # (None on AyoaiStreamingClient / solver-v0). getattr keeps the harness
+    # decision-source-agnostic.
+    _csg_stats = getattr(streaming_client, "click_explorer_stats", None)
+    for _ep in range(episodes):
+        ep_actions, ep_elapsed, ep_exit_code = run_game_loop(
+            streaming_client,
+            action_sender,
+            FrameData(levels_completed=0),
+            recorder=recorder,
+            max_actions=max_actions,
+            game_id=game_id,
+            log=log,
+        )
+        action_counter += ep_actions
+        elapsed += ep_elapsed
+        if episodes > 1:
+            # Cross-episode graph-growth + reward-lock observability (g-315-266).
+            # Stats come from the adapter's PERSISTENT click-explorer cache, so
+            # they reflect ACCUMULATION across episodes, not just this episode.
+            stats = _csg_stats() if callable(_csg_stats) else None
+            if stats is not None:
+                log.info(
+                    f"[episode {_ep + 1}/{episodes}] {game_id} - "
+                    f"actions {ep_actions}, cross-episode graph: "
+                    f"nodes {stats['node_count']}, live {stats['live']}, "
+                    f"inert {stats['inert']}, win_lock "
+                    f"{'SET' if stats['learned_win_hash'] else 'none'}, "
+                    f"curtailed {stats['curtailed']}"
+                )
+            else:
+                log.info(
+                    f"[episode {_ep + 1}/{episodes}] {game_id} - "
+                    f"actions {ep_actions} (no click-explorer cache; not a "
+                    f"solver-v2 click-class route)"
+                )
+        if ep_exit_code != EXIT_OK:
+            exit_code = ep_exit_code
+            if _ep + 1 < episodes:
+                log.error(
+                    f"[episode {_ep + 1}/{episodes}] {game_id} - episode ended "
+                    f"on an abort (exit code {ep_exit_code}); the other "
+                    f"{episodes - _ep - 1} episode(s) are not played"
+                )
+            break
+    return action_counter, elapsed, exit_code
 
 
 def build_v2_seed_provider(
@@ -1818,53 +1923,20 @@ def _play(server_stop: RunServerStop) -> int:
             session, args.game, card_id, action, guid, x=x, y=y,
         )
 
-    # Multi-episode harness (g-315-266): play args.episodes consecutive episodes
-    # through the SAME streaming_client so an adapter-level cross-episode cache
-    # (SolverV2StreamingAdapter._click_state_graph_cache) accumulates across
-    # episodes. episodes=1 (default) runs exactly ONE run_game_loop call --
-    # byte-identical to the pre-g-315-266 single-episode path. Each episode gets a
-    # fresh NOT_PLAYED initial frame (the adapter RESETs it to a real ARC frame);
-    # run_game_loop owns the per-episode ADD/UPDATE/DELETE lifecycle. The scorecard
-    # (opened above) stays open across all episodes and closes once below.
-    action_counter = 0
-    elapsed = 0.0
-    # Adapter-level cross-episode inspection: present only on the solver-v2 adapter
-    # (None on AyoaiStreamingClient / solver-v0). getattr keeps the harness
-    # decision-source-agnostic.
-    _csg_stats = getattr(streaming_client, "click_explorer_stats", None)
+    # Multi-episode harness (g-315-266, g-376-254): run_episodes() plays
+    # args.episodes episodes through the SAME streaming_client and stops at the
+    # first abort. The scorecard (opened above) stays open across all episodes and
+    # closes once below, an aborted run included.
     _episodes = max(1, args.episodes)
-    for _ep in range(_episodes):
-        ep_actions, ep_elapsed = run_game_loop(
-            streaming_client,
-            _action_sender,
-            FrameData(levels_completed=0),
-            recorder=recorder,
-            max_actions=MAX_ACTIONS,
-            game_id=args.game,
-            log=logger,
-        )
-        action_counter += ep_actions
-        elapsed += ep_elapsed
-        if _episodes > 1:
-            # Cross-episode graph-growth + reward-lock observability (g-315-266).
-            # Stats come from the adapter's PERSISTENT click-explorer cache, so
-            # they reflect ACCUMULATION across episodes, not just this episode.
-            stats = _csg_stats() if callable(_csg_stats) else None
-            if stats is not None:
-                logger.info(
-                    f"[episode {_ep + 1}/{_episodes}] {args.game} - "
-                    f"actions {ep_actions}, cross-episode graph: "
-                    f"nodes {stats['node_count']}, live {stats['live']}, "
-                    f"inert {stats['inert']}, win_lock "
-                    f"{'SET' if stats['learned_win_hash'] else 'none'}, "
-                    f"curtailed {stats['curtailed']}"
-                )
-            else:
-                logger.info(
-                    f"[episode {_ep + 1}/{_episodes}] {args.game} - "
-                    f"actions {ep_actions} (no click-explorer cache; not a "
-                    f"solver-v2 click-class route)"
-                )
+    action_counter, elapsed, play_exit_code = run_episodes(
+        streaming_client,
+        _action_sender,
+        episodes=_episodes,
+        recorder=recorder,
+        max_actions=MAX_ACTIONS,
+        game_id=args.game,
+        log=logger,
+    )
 
     # Log final stats
     fps = action_counter / elapsed if elapsed > 0 else 0
@@ -1922,7 +1994,7 @@ def _play(server_stop: RunServerStop) -> int:
     except Exception:
         logger.exception("streaming client close failed (non-fatal)")
 
-    return EXIT_OK
+    return play_exit_code
 
 
 def main() -> int:
