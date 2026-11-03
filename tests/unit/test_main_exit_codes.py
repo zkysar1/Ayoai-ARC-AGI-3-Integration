@@ -151,3 +151,84 @@ def test_main_is_annotated_to_return_an_exit_code() -> None:
         "__main__ must call `sys.exit(main())` — a bare `main()` discards the "
         "exit code and always exits 0 (this is exactly the g-315-512 defect)"
     )
+
+
+# ---------- g-376-254: the codes of the play loop's own aborts ---------- #
+
+
+def test_each_exit_code_is_its_own_number_and_one_stays_reserved() -> None:
+    """guard-4563: a code two failures share cannot be told apart by its reader.
+
+    The table is duplicated here as literals (see the top of this file). The last
+    assertion makes a NEW EXIT_* constant fail this test until it is added to the
+    table, so a later abort path cannot quietly reuse a number.
+    """
+    import main
+
+    expected = {
+        "EXIT_OK": 0,
+        "EXIT_ARC_UPSTREAM": 2,
+        "EXIT_AYOAI_SESSION_OPEN": 3,
+        "EXIT_AYOAI_STREAMING": 4,
+        "EXIT_HELDOUT_REFUSED": 5,
+        "EXIT_PLAY_ABORTED": 6,
+    }
+    assert {name: getattr(main, name) for name in expected} == expected
+    assert len(set(expected.values())) == len(expected)
+    assert 1 not in expected.values()  # Python's own exit for an uncaught traceback
+    assert {n for n in vars(main) if n.startswith("EXIT_")} == set(expected)
+
+
+def _play_function_node() -> ast.FunctionDef:
+    tree = ast.parse(_MAIN_PY.read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "_play":
+            return node
+    raise AssertionError("_play() not found in main.py")
+
+
+def test_play_ends_by_returning_the_exit_code_run_episodes_reported() -> None:
+    """_play's last statement hands back what the episodes reported, not EXIT_OK.
+
+    Structural, like the sibling above: _play cannot be driven without a live ARC
+    and AyoAI session, and a `return EXIT_OK` as its last line would turn every
+    aborted run back into a success (g-376-254). The returned name must also be
+    bound exactly once, by the run_episodes() unpack: `play_exit_code = EXIT_OK`
+    placed before the return passes every other check and brings the defect back.
+    """
+    fn = _play_function_node()
+    last = fn.body[-1]
+    assert isinstance(last, ast.Return) and isinstance(last.value, ast.Name), (
+        "_play must end with `return <name>`"
+    )
+    assert not last.value.id.startswith("EXIT_"), (
+        f"_play ends with `return {last.value.id}`, a fixed code: an aborted "
+        "run would exit as that code whatever the episodes reported"
+    )
+    reported = {
+        elt.id
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "run_episodes"
+        for target in node.targets
+        if isinstance(target, ast.Tuple)
+        for elt in target.elts
+        if isinstance(elt, ast.Name)
+    }
+    assert last.value.id in reported, (
+        f"_play returns {last.value.id!r}, which is not unpacked from run_episodes()"
+    )
+    bindings = [
+        node
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Name)
+        and node.id == last.value.id
+        and isinstance(node.ctx, ast.Store)
+    ]
+    assert len(bindings) == 1, (
+        f"_play binds {last.value.id!r} {len(bindings)} times; it must be bound "
+        "once, by the run_episodes() unpack, so nothing between the call and the "
+        "return can overwrite what the episodes reported"
+    )

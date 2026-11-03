@@ -157,7 +157,7 @@ def _run_main(
     def play(server_stop: RunServerStop) -> int:
         if arm:  # _play arms just before open_ayoai_session
             server_stop.arm("card-1", "arc-agi-3")
-        played["actions"], _ = run_game_loop(
+        played["actions"], _, _ = run_game_loop(
             _client(), sender, FrameData(levels_completed=0), max_actions=max_actions,
         )
         return main_mod.EXIT_OK
