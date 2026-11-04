@@ -14,7 +14,8 @@ in the sibling Ayoai-Environment-Server checkout). VESSEL_CORE: the core to run.
 The default is `first-affordance`, the seam's positive control, which must match the
 harness's `first-available` decider move for move. `reflexes` is that core under the
 restart and hazard-quarantine reflexes (g-376-51-b). `frontier` is the port of the
-oracle's policy under the same reflexes (g-376-51-c).
+oracle's policy under the same reflexes (g-376-51-c). `frontier-click` is that core with the opt-in click
+branch (g-376-349): it also probes the objects in a frame and clicks the regions it finds between plain moves.
 VESSEL_HINT: the path of a hint file (vessel_hint.py), handed to the driver as `--hint`
 (g-376-141). Unset, the driver runs as it always did. The driver is the authority on the hint
 and stops at start-up on a bad one, with its message on stderr.
