@@ -63,6 +63,13 @@ def test_the_harness_reads_objects_as_4_connected_runs_off_the_most_frequent_val
         cbr.opening_sizes(np.zeros((3, 3), dtype=np.int16))
 
 
+def test_a_tie_for_the_most_frequent_value_goes_to_the_value_met_first_as_in_the_branch() -> None:
+    # 3, 1 and 2 each fill two cells. The branch takes 3 (met first) as the background, so 1 and 2 are one object of four
+    # cells; np.unique alone would take 1, which leaves two objects of two.
+    layer = np.array([[3, 1, 2], [3, 1, 2]], dtype=np.int16)
+    assert sorted(len(run) for run in cbr.components(layer)) == [4]
+
+
 def test_the_driver_frame_carries_the_grid_the_dump_leaves_out() -> None:
     frame = SimpleNamespace(
         frame=[np.zeros((2, 3), dtype=np.int16), np.ones((2, 3), dtype=np.int16)],

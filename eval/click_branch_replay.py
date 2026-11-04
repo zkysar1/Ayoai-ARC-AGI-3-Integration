@@ -87,9 +87,11 @@ def components(layer: np.ndarray) -> list[set[tuple[int, int]]]:
     """The 4-connected runs of cells that are not the most frequent value, as sets of (row, col).
 
     This harness's own reading of the objects, used only to name what a click landed on; the branch reads them in Java.
+    A tie for the most frequent value goes to the value met first in row-major order, as in the branch
+    (CursorPerception.byFrequency); np.unique alone would pick the smallest.
     """
-    values, counts = np.unique(layer, return_counts=True)
-    background = values[int(np.argmax(counts))]
+    values, first, counts = np.unique(layer, return_index=True, return_counts=True)
+    background = values[min(range(len(values)), key=lambda i: (-counts[i], first[i]))]
     seen = np.zeros(layer.shape, dtype=bool)
     rows, cols = layer.shape
     found: list[set[tuple[int, int]]] = []
@@ -120,7 +122,11 @@ def opening_sizes(layer: np.ndarray) -> dict[str, int]:
 
 
 def click_class(layer: np.ndarray, x: int, y: int, sizes: dict[str, int]) -> str:
-    """What a click at (x, y) landed on in this frame: A, B, another object, or nothing."""
+    """What a click at (x, y) landed on in this frame: A, B, another object, or nothing.
+
+    An object is named by the cell count it had in the opening frame, so a click on the two touching (one run of both)
+    reads "other": the clicks counted for A and B are a floor, never more than landed.
+    """
     for run in components(layer):
         if (y, x) in run:
             return "A" if len(run) == sizes["A"] else "B" if len(run) == sizes["B"] else "other"
