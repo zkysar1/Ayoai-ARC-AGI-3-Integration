@@ -446,38 +446,20 @@ def test_the_vessel_mode_needs_a_session_and_refuses_the_theory_arm() -> None:
     client.set_theory_arm(None)  # switching it off stays allowed
 
 
-def test_the_vessel_hint_reaches_the_session_and_the_port_refuses_it() -> None:
-    # g-376-141: the hint rides on the session's ADD and UPDATE ops, and a vessel client built
-    # without one sends none. The port decides without the vessel, so a hint there is refused.
+def test_the_vessel_client_sends_no_vessel_hint_and_refuses_the_retired_keyword() -> None:
+    # The vessel_hint option is retired: no session op carries a hint, and the old keyword is refused, not dropped.
     url = "http://session.test/AyoStreamingUpdates"
-    hint = {"avoid": ["ACTION3"]}
     session = _VesselSession([{"action": "ACTION1"}])
-    client = PortStreamingClient(
-        streaming_url=url,
-        ayo_server_key="card",
-        arc_game_id="test",
-        api_key="",
-        decider="vessel",
-        vessel_hint=hint,
-        session=session,
-        retry_sleep=lambda _s: None,
-    )
+    client = _vessel_client(session)
     client.send_add(_frame())
     client.choose_action(_frame())
     ops = [body["operations"][0] for body in session.bodies]
-    assert [(op["op"], op["attributes"].get("vessel_hint")) for op in ops] == [
-        ("ADD", '{"avoid":["ACTION3"]}'),
-        ("UPDATE", '{"avoid":["ACTION3"]}'),
-    ]
-    plain_session = _VesselSession([{"action": "ACTION1"}])
-    plain = _vessel_client(plain_session)
-    plain.send_add(_frame())
-    plain.choose_action(_frame())
-    assert [op["op"] for op in (b["operations"][0] for b in plain_session.bodies)] == ["ADD", "UPDATE"]
-    assert all("vessel_hint" not in b["operations"][0]["attributes"] for b in plain_session.bodies)
-    with pytest.raises(ValueError, match="vessel_hint needs decider='vessel'"):
-        PortStreamingClient(streaming_url=url, ayo_server_key="card", arc_game_id="test", vessel_hint=hint)
-    PortStreamingClient(ayo_server_key="card", arc_game_id="test", vessel_hint={})  # an empty hint is no hint
+    assert [op["op"] for op in ops] == ["ADD", "UPDATE"]
+    assert all("vessel_hint" not in op["attributes"] for op in ops)
+    with pytest.raises(TypeError, match="vessel_hint"):
+        PortStreamingClient(
+            streaming_url=url, ayo_server_key="card", arc_game_id="test", decider="vessel", vessel_hint={"avoid": ["ACTION3"]}
+        )
 
 
 def test_the_vessel_close_logs_how_many_moves_came_from_the_session(caplog: pytest.LogCaptureFixture) -> None:
@@ -580,10 +562,6 @@ def _main_py(args: list[str], cwd: Path, extra_env: dict[str, str]) -> subproces
          "SOLVER_V2_THEORY_ARM falls back to the port's move"),
         (["--use-solver-v2", "--use-port-client", "--oracle", "--ingest-world"], {},
          "--ingest-world needs the vessel decider"),
-        # g-376-141: a hint is for the vessel, so the port decider and a run with no port client refuse it.
-        (["--use-solver-v2", "--use-port-client", "--oracle", "--vessel-hint", "hint.json"], {},
-         "--vessel-hint needs the vessel decider"),
-        (["--use-solver-v2", "--vessel-hint", "hint.json"], {}, "--vessel-hint needs the vessel decider"),
         (["--use-solver-v2", "--oracle"], {}, "--oracle needs --use-port-client"),
         (["--use-solver-v2", "--use-port-client", "--oracle", "--vessel-decides"], {},
          "--oracle and --vessel-decides are mutually exclusive"),
@@ -657,59 +635,16 @@ def test_main_accepts_ingest_world_under_vessel_decides(tmp_path: Path, flag: st
     assert "usage:" not in out and "Connection refused" in out, out[-400:]
 
 
-@pytest.mark.parametrize(
-    ("text", "message"),
-    [
-        (None, "--vessel-hint: cannot read a hint from"),
-        ("not json", "--vessel-hint: cannot read a hint from"),
-        ('{"avoid": ["RESET"]}', "--vessel-hint: avoid[0] cannot be RESET"),
-        ('{"force_first": [{"action": "ACTION6", "x": 99, "y": 0}]}', "force_first[0].x must be an integer from 0 to 63"),
-    ],
-)
-def test_main_refuses_a_vessel_hint_file_the_server_would_refuse(
-    tmp_path: Path, text: str | None, message: str
-) -> None:
-    # g-376-141: refused during the argument checks, so a bad hint opens no scorecard.
+def test_main_refuses_the_retired_vessel_hint_flag(tmp_path: Path) -> None:
+    # --vessel-hint is gone. A launcher that still passes it stops at argparse's usage error before any scorecard
+    # opens, instead of running with the hint silently dropped.
     hint = tmp_path / "hint.json"
-    if text is not None:
-        hint.write_text(text)
-    proc = _main_py(["--use-solver-v2", "--use-port-client", "--vessel-hint", str(hint)], tmp_path, {})
-    assert proc.returncode == 2, proc.stdout[-400:] + proc.stderr[-400:]
-    assert message in proc.stderr
-    assert "Connection refused" not in proc.stdout + proc.stderr
-
-
-@pytest.mark.parametrize(
-    ("text", "loaded"),
-    [('{"force_first": [{"action": "ACTION6", "x": 5, "y": 5}], "avoid": ["ACTION3"]}', True), ("{}", False)],
-)
-def test_main_accepts_a_vessel_hint_file_under_the_vessel_decider(tmp_path: Path, text: str, loaded: bool) -> None:
-    # Positive control for the refusals above: a good hint, or an empty one, passes the checks and
-    # the run stops at the closed local ARC port, before any AyoAI call. The log line is the proof
-    # that main KEPT the hint (g-376-141): a good one is announced, an empty one is no hint and is not.
-    hint = tmp_path / "hint.json"
-    hint.write_text(text)
+    hint.write_text('{"avoid": ["ACTION3"]}')
     proc = _main_py(["--use-solver-v2", "--use-port-client", "--vessel-hint", str(hint)], tmp_path, {})
     out = proc.stdout + proc.stderr
-    assert "usage:" not in out and "--vessel-hint" not in out and "Connection refused" in out, out[-400:]
-    assert ("Vessel hint loaded from" in out) is loaded, out[-400:]
-
-
-def test_main_hands_the_loaded_hint_to_every_port_client_it_builds() -> None:
-    # The run above stops at the closed ARC port, before main builds the port client, so no
-    # subprocess test reaches that call. Pin it over the DERIVED set of call sites instead
-    # (g-376-141): a call that stopped passing the hint would leave --vessel-hint a silent no-op.
-    tree = ast.parse((REPO / "main.py").read_text(encoding="utf-8"))
-    calls = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and (getattr(node.func, "attr", None) or getattr(node.func, "id", None)) == "PortStreamingClient"
-    ]
-    assert calls, "main.py builds no PortStreamingClient: the call site moved, so update this test"
-    for call in calls:
-        value = {kw.arg: kw.value for kw in call.keywords}.get("vessel_hint")
-        assert isinstance(value, ast.Name) and value.id == "vessel_hint", ast.unparse(call)
+    assert proc.returncode == 2, out[-400:]
+    assert "unrecognized arguments: --vessel-hint" in out, out[-400:]
+    assert "Connection refused" not in out
 
 
 @pytest.mark.parametrize("lane", [{}, {"AYOAI_LANE": "prod"}, {"AYOAI_LANE": "dev"}])

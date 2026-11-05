@@ -28,9 +28,9 @@ def test_driver_reply_becomes_the_action_the_harness_compares() -> None:
     }
 
 
-def test_the_hint_file_reaches_the_driver_as_an_argument(monkeypatch: pytest.MonkeyPatch) -> None:
-    # g-376-141: VESSEL_HINT is handed to the driver as --hint, and without it the command is
-    # the one it always was.
+def test_the_retired_hint_variable_no_longer_reaches_the_driver(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The vessel_hint option is retired, so VESSEL_HINT is not read and the driver's command is the same with it
+    # set or unset.
     commands: list[list[str]] = []
 
     class FakeProc:
@@ -45,7 +45,7 @@ def test_the_hint_file_reaches_the_driver_as_an_argument(monkeypatch: pytest.Mon
     monkeypatch.setenv("VESSEL_HINT", "hint.json")
     vd.factory("game")
     base = ["java", "-cp", "fat.jar", vd.DRIVER, "frontier"]
-    assert commands == [base, [*base, "--hint", "hint.json"]]
+    assert commands == [base, base]
 
 
 # The class each core needs, so a jar built before a core landed skips that core, not fails.
