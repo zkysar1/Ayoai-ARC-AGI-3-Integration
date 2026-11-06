@@ -34,8 +34,6 @@ which comes before send_add, when the session has no unit to ask. Open the
 session with VESSEL_WORLD_FLAGS, or the env server answers with its baseline
 instead of the frontier stack; vessel_world_flags adds the flag that also puts
 each decided frame into the session world, by default on the DEV lane (g-376-52).
-An optional plain-data vessel_hint (g-376-141, vessel_hint.py) rides on the session's ADD
-and UPDATE ops for the vessel to read; the port decides without the vessel, so it refuses one.
 With a unit_wire_scope the vessel's ask and answer ride the unit wire too (g-376-242): the frame goes as
 envUnitUpdates with pending_decision on the game-state unit, the move arrives as a tree in ayoBTs[], and a
 ServedTreeStreamingAdapter around the session client runs it and reports the leaf it played as envBTUpdates
@@ -49,7 +47,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -133,14 +131,11 @@ class PortStreamingClient:
         api_key: str | None = None,
         *,
         decider: str = DECIDER_PORT,
-        vessel_hint: Mapping[str, Any] | None = None,
         unit_wire_scope: str | None = None,
         **network_kwargs: Any,
     ) -> None:
         if decider not in (DECIDER_PORT, DECIDER_VESSEL):
             raise ValueError(f"decider must be {DECIDER_PORT!r} or {DECIDER_VESSEL!r}, not {decider!r}")
-        if vessel_hint and decider != DECIDER_VESSEL:
-            raise ValueError(f"vessel_hint needs decider={DECIDER_VESSEL!r}: the port decides without the vessel")
         if decider == DECIDER_VESSEL and not streaming_url:
             raise ValueError("decider='vessel' needs the session's streaming_url")
         self.decider = decider
@@ -153,7 +148,6 @@ class PortStreamingClient:
                 arc_game_id,
                 api_key,
                 local_game_control=decider == DECIDER_PORT,
-                vessel_hint=vessel_hint,
                 unit_wire_scope=unit_wire_scope,
                 **network_kwargs,
             )
