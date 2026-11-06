@@ -1,0 +1,18 @@
+Ayoai ARC-AGI-3 Integration
+Copyright 2025-2026 Zachary Kysar
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This repository also contains third-party files. They are NOT covered by the
+Apache License above; each keeps its original license and notices:
+
+- vendor/ARC-AGI-3-Agents/
+  ARC-AGI-3-Agents, Copyright (c) 2025 ARC Prize. MIT License, full text in
+  vendor/ARC-AGI-3-Agents/LICENSE. Code elsewhere in this repository that was
+  derived from ARC-AGI-3-Agents keeps that MIT notice.
+
+- environment_files/
+  ARC-AGI-3 game files, Copyright (c) 2026 ARC Prize Foundation. Each .py file
+  carries its MIT License in its header. The metadata.json file beside each
+  game comes from the same source and is not covered by this repository's
+  Apache License.
