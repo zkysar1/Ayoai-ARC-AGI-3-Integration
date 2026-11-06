@@ -14,7 +14,8 @@ in the sibling Ayoai-Environment-Server checkout). VESSEL_CORE: the core to run.
 The default is `first-affordance`, the seam's positive control, which must match the
 harness's `first-available` decider move for move. `reflexes` is that core under the
 restart and hazard-quarantine reflexes (g-376-51-b). `frontier` is the port of the
-oracle's policy under the same reflexes (g-376-51-c).
+oracle's policy under the same reflexes (g-376-51-c). `frontier-click` is that core with the opt-in click
+branch (g-376-349): it also probes the objects in a frame and clicks the regions it finds between plain moves.
 """
 
 from __future__ import annotations
