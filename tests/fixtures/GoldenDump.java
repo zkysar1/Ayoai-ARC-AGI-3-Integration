@@ -7,9 +7,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * Golden-output harness (g-376-199): runs the env server's own ArcWorldBuilder, ArcGridGeometry and
- * ArcGridStats (compiled from the sources named in the fixture's meta) over the cases in args[0] and
- * writes what they return to args[1]. It adds nothing to the builder's output.
+ * Golden-output harness (g-376-199): runs the env server's own ArcWorldFixture (the world builder, a test
+ * fixture since g-376-204), ArcGridGeometry and ArcGridStats (compiled from the sources named in the
+ * fixture's meta) over the cases in args[0] and writes what they return to args[1]. It adds nothing to the
+ * builder's output.
  */
 public final class GoldenDump {
     private GoldenDump() {}
@@ -20,7 +21,7 @@ public final class GoldenDump {
 
         JsonObject scopes = new JsonObject();
         for (Object id : in.getJsonArray("scope_ids")) {
-            scopes.put((String) id, ArcWorldBuilder.scopeOf((String) id));
+            scopes.put((String) id, ArcWorldFixture.scopeOf((String) id));
         }
         out.put("scopes", scopes);
 
@@ -28,9 +29,9 @@ public final class GoldenDump {
         for (Object o : in.getJsonArray("cases")) {
             JsonObject c = (JsonObject) o;
             String gameId = c.getString("game_id");
-            String scope = ArcWorldBuilder.scopeOf(gameId);
+            String scope = ArcWorldFixture.scopeOf(gameId);
             JsonArray cursor = c.getJsonArray("cursor");
-            JsonArray units = ArcWorldBuilder.buildRootUnits(
+            JsonArray units = ArcWorldFixture.buildRootUnits(
                 c.getJsonArray("grid"), cursor.getInteger(0), cursor.getInteger(1), scope);
             cases.add(new JsonObject()
                 .put("name", c.getString("name"))
