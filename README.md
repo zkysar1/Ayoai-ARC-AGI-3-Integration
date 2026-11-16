@@ -2,6 +2,10 @@
 
 Minimal agent framework for ARC-AGI-3 abstract reasoning games, stripped down to essentials for integration with ayoai.com.
 
+## Who Maintains This
+
+This repository is maintained by **Odd Passengers**, a game studio. The studio uses ARC-AGI-3 as a benchmark for agents that run on AyoAI. AyoAI is a separate service, and the rule for this code is that it reaches AyoAI only through AyoAI's public API, as any customer would. That is the rule for new work; existing code is not rewritten because of it.
+
 ## What's Inside
 
 This is a simplified version of the ARC-AGI-3 agent framework containing only:

@@ -2,6 +2,16 @@
 
 Game loop driver for the ARC-AGI-3 abstract reasoning challenge. Connects to the ARC-AGI-3 API, plays games by sending actions and receiving frame state, tracks scores via scorecards, and records gameplay to JSONL. Currently uses a random action picker as a placeholder for ayoai.com integration.
 
+## Who Maintains This Repo
+
+Odd Passengers, a game studio, maintains this repo and uses ARC-AGI-3 as a benchmark for agents that run on AyoAI. AyoAI is a separate service, and the studio is one of its customers. Three rules follow for any work here:
+
+- **Public API only.** This code reaches AyoAI through AyoAI's public API and nothing else.
+- **Ask, never patch.** When the benchmark needs something AyoAI does not offer, the studio asks AyoAI for a feature any customer could use. Do not change AyoAI to suit this repo, and add nothing to AyoAI that depends on code here.
+- **No rename, no move.** The repo keeps its name and stays where it is until the owner decides otherwise, because other tooling fetches it by name.
+
+These are rules for new work. Nothing that already exists is rewritten because of them.
+
 ## Verification
 
 **Safety Tier 4 — Non-Lambda** | Test circuit: `syntax-only`
