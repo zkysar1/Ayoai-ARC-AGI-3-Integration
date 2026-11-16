@@ -13,7 +13,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "eval"))
+
+# arcengine comes from the optional [offline] extra (pyproject.toml), and decision_parity
+# imports it at module level, so skip the whole module on a box without the extra instead
+# of failing collection (g-376-83).
+pytest.importorskip("arcengine")
 
 import decision_parity as dp  # noqa: E402
 from arcengine import FrameData, GameAction  # noqa: E402

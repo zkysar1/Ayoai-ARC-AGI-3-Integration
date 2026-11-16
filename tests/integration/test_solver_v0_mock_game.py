@@ -129,7 +129,7 @@ def test_run_game_loop_with_solver_v0_completes_full_game() -> None:
     ]
     sender = _ScriptedActionSender(scripted)
 
-    action_count, elapsed = run_game_loop(
+    action_count, elapsed, _ = run_game_loop(
         streaming_client=adapter,
         action_sender=sender,
         initial_frame=_initial_not_played(),

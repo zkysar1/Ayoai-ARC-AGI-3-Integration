@@ -8,6 +8,7 @@ eval/adapter_run.py --player port (eval/port-client-2026-09-25.json)."""
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import os
@@ -24,11 +25,13 @@ import pytest
 arcengine = pytest.importorskip("arcengine")
 
 from port_streaming_client import (  # noqa: E402
+    REPORT_FAILURE_LIMIT,
     VESSEL_WORLD_FLAGS,
     PortStreamingClient,
     vessel_world_flags,
 )
 from structs import ActionInput, FrameData, GameAction, GameState  # noqa: E402
+from tests.fixtures.served_tree import ask_answer, served_tree  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -211,7 +214,7 @@ class _RecordingSession:
 
 
 def _reporting_client(
-    port_moves: list[Any], monkeypatch: pytest.MonkeyPatch, session: _RecordingSession
+    port_moves: list[Any], monkeypatch: pytest.MonkeyPatch, session: _RecordingSession, **extra: Any
 ) -> PortStreamingClient:
     client = PortStreamingClient(
         streaming_url="http://session.test/AyoStreamingUpdates",
@@ -220,6 +223,7 @@ def _reporting_client(
         api_key="",
         session=session,
         retry_sleep=lambda _s: None,
+        **extra,
     )
     moves = iter(port_moves)
     monkeypatch.setattr(client._agent, "choose_action", lambda frames, latest: next(moves))
@@ -259,6 +263,57 @@ def test_failed_reports_keep_the_move_and_three_in_a_row_stop_reporting(monkeypa
     assert len(session.bodies) == 5  # the success reset the streak; the 3rd failure in a row stopped it
 
 
+def test_the_frame_before_reset_is_skipped_not_counted_as_a_failed_report(monkeypatch: pytest.MonkeyPatch) -> None:
+    # g-376-236 (alpha's PR 12 review, item 3): the frame before RESET holds no layer yet and the unit wire has nothing
+    # to carry, so it is a skip. It never reaches the session and leaves the failure streak alone: more of them in a
+    # row than REPORT_FAILURE_LIMIT cannot stop reporting.
+    session = _RecordingSession()
+    skips = REPORT_FAILURE_LIMIT + 1
+    client = _reporting_client(
+        [arcengine.GameAction.ACTION1] * (skips + 1), monkeypatch, session, unit_wire_scope="gd2f7ac"
+    )
+    before_reset = _board_frame({})
+    before_reset.frame = []
+    before_reset.state = GameState.NOT_PLAYED
+    decisions = [client.choose_action(before_reset) for _ in range(skips)]
+    assert [d.action for d in decisions] == [GameAction.ACTION1] * skips
+    assert (client.reports_sent, client.reports_failed, client.reports_skipped) == (0, 0, skips)
+    assert (client._report_failure_streak, client._reports_stopped, session.bodies) == (0, None, [])
+    client.choose_action(_board_frame({(1, 1): 2}))
+    assert (client.reports_sent, client.reports_failed, client.reports_skipped) == (1, 0, skips)
+
+
+def test_a_skipped_report_leaves_a_running_failure_streak_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    # g-376-236: a skip is neither a failure nor a success, so it neither extends a streak of failed reports nor clears it.
+    session = _RecordingSession([400, 400])
+    client = _reporting_client(
+        [arcengine.GameAction.ACTION1] * 3, monkeypatch, session, unit_wire_scope="gd2f7ac"
+    )
+    client.choose_action(_board_frame({(1, 1): 2}))
+    assert (client.reports_failed, client._report_failure_streak) == (1, 1)
+    before_reset = _board_frame({})
+    before_reset.frame = []
+    before_reset.state = GameState.NOT_PLAYED
+    client.choose_action(before_reset)
+    assert (client.reports_failed, client.reports_skipped, client._report_failure_streak) == (1, 1, 1)
+    client.choose_action(_board_frame({(1, 1): 2, (2, 2): 3}))
+    assert (client.reports_failed, client._report_failure_streak) == (2, 2)
+
+
+def test_a_failed_report_is_logged_with_its_reason(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # g-376-201: one failed report used to leave no line, so a live run could not say why it failed.
+    session = _RecordingSession([400, 200])
+    client = _reporting_client([arcengine.GameAction.ACTION1] * 2, monkeypatch, session)
+    with caplog.at_level(logging.WARNING):
+        client.choose_action(_frame())
+        client.choose_action(_frame())
+    assert (client.reports_sent, client.reports_failed) == (1, 1)
+    lines = [r.getMessage() for r in caplog.records if "[port-report]" in r.getMessage()]
+    assert len(lines) == 1 and "a report failed (1 in a row)" in lines[0] and "AyoaiStreamingApiError" in lines[0], lines
+
+
 def test_add_delete_and_dns_go_to_the_session_and_close_logs_the_count(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -276,6 +331,29 @@ def test_add_delete_and_dns_go_to_the_session_and_close_logs_the_count(
     assert dns_calls == [{}]
     assert [body["operations"][0]["op"] for body in session.bodies] == ["ADD", "UPDATE", "DELETE"]
     assert "[port-report] 1 of 1 frames reported to the AyoAI session, 0 failed" in caplog.text
+
+
+def test_the_close_log_names_skipped_reports_only_when_there_are_some(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # g-376-236: the close line counts a skip beside the failures, and reads as it did when nothing was skipped.
+    before_reset = _board_frame({})
+    before_reset.frame = []
+    before_reset.state = GameState.NOT_PLAYED
+    lines = []
+    for frame in (before_reset, _board_frame({(1, 1): 2})):
+        client = _reporting_client(
+            [arcengine.GameAction.ACTION1], monkeypatch, _RecordingSession(), unit_wire_scope="gd2f7ac"
+        )
+        client.choose_action(frame)
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger="port_streaming_client"):
+            client.close()
+        lines.append(next(m for m in (r.getMessage() for r in caplog.records) if m.startswith("[port-report]")))
+    assert lines == [
+        "[port-report] 0 of 1 frames reported to the AyoAI session, 0 failed, 1 skipped",
+        "[port-report] 1 of 1 frames reported to the AyoAI session, 0 failed",
+    ]
 
 
 def test_without_a_streaming_url_nothing_is_sent(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -368,6 +446,22 @@ def test_the_vessel_mode_needs_a_session_and_refuses_the_theory_arm() -> None:
     client.set_theory_arm(None)  # switching it off stays allowed
 
 
+def test_the_vessel_client_sends_no_vessel_hint_and_refuses_the_retired_keyword() -> None:
+    # The vessel_hint option is retired: no session op carries a hint, and the old keyword is refused, not dropped.
+    url = "http://session.test/AyoStreamingUpdates"
+    session = _VesselSession([{"action": "ACTION1"}])
+    client = _vessel_client(session)
+    client.send_add(_frame())
+    client.choose_action(_frame())
+    ops = [body["operations"][0] for body in session.bodies]
+    assert [op["op"] for op in ops] == ["ADD", "UPDATE"]
+    assert all("vessel_hint" not in op["attributes"] for op in ops)
+    with pytest.raises(TypeError, match="vessel_hint"):
+        PortStreamingClient(
+            streaming_url=url, ayo_server_key="card", arc_game_id="test", decider="vessel", vessel_hint={"avoid": ["ACTION3"]}
+        )
+
+
 def test_the_vessel_close_logs_how_many_moves_came_from_the_session(caplog: pytest.LogCaptureFixture) -> None:
     client = _vessel_client(_VesselSession([{"action": "ACTION1"}]))
     client.choose_action(_frame(GameState.NOT_PLAYED))
@@ -440,8 +534,7 @@ def _main_py(args: list[str], cwd: Path, extra_env: dict[str, str]) -> subproces
     pattern): a broken refusal still opens no scorecard and plays nothing."""
     env = os.environ.copy()
     env.update({"SCHEME": "http", "HOST": "127.0.0.1", "PORT": "9", "ARC_API_KEY": ""})
-    for name in ("SOLVER_V2_V4_ARM", "ARC_THEORY_WIN_TEST_SHARE", "SOLVER_V2_THEORY_ARM", "ARC_THEORY_MEMORY",
-                 "AYOAI_LANE"):
+    for name in ("SOLVER_V2_V4_ARM", "ARC_THEORY_WIN_TEST_SHARE", "SOLVER_V2_THEORY_ARM", "AYOAI_LANE"):
         env.pop(name, None)
     env.update(extra_env)
     return subprocess.run(
@@ -472,10 +565,23 @@ def _main_py(args: list[str], cwd: Path, extra_env: dict[str, str]) -> subproces
         (["--use-solver-v2", "--oracle"], {}, "--oracle needs --use-port-client"),
         (["--use-solver-v2", "--use-port-client", "--oracle", "--vessel-decides"], {},
          "--oracle and --vessel-decides are mutually exclusive"),
-        # The vessel route is on the DEV lane only; prod is the default lane.
-        (["--use-solver-v2", "--use-port-client"], {}, "the vessel decider runs on the DEV lane only"),
-        (["--use-solver-v2", "--use-port-client", "--vessel-decides"], {"AYOAI_LANE": "prod"},
-         "the vessel decider runs on the DEV lane only"),
+        # g-376-199: startupUnits go to a Collect that has the batch lane (dev and prod both do, g-376-204) and only into a live session.
+        (["--use-solver-v0", "--startup-units"], {"AYOAI_LANE": "dev"}, "--startup-units needs a live AyoAI session"),
+        (["--random", "--startup-units"], {"AYOAI_LANE": "dev"}, "--startup-units needs a live AyoAI session"),
+        (["--mock-url", "http://127.0.0.1:9", "--startup-units"], {"AYOAI_LANE": "dev"},
+         "--startup-units needs a live AyoAI session"),
+        # g-376-201: the unit wire rides on the startup units' cells and cursor, and only the port client reports
+        # on it. g-376-242: under either of its deciders, the vessel asks for its move there too.
+        # g-376-204: on the DEV lane the startup units default on for a port-client run, so these name the escape
+        # (--no-startup-units) that leaves --unit-updates without its cells.
+        (["--use-solver-v2", "--use-port-client", "--oracle", "--no-startup-units", "--unit-updates"],
+         {"AYOAI_LANE": "dev"}, "--unit-updates needs --startup-units"),
+        (["--use-solver-v2", "--use-port-client", "--no-startup-units", "--unit-updates"], {"AYOAI_LANE": "dev"},
+         "--unit-updates needs --startup-units"),
+        (["--use-solver-v2", "--use-port-client", "--no-startup-units", "--unit-updates"], {"AYOAI_LANE": "prod"},
+         "--unit-updates needs --startup-units"),
+        (["--use-solver-v2", "--startup-units", "--unit-updates"], {"AYOAI_LANE": "dev"},
+         "--unit-updates needs the port client"),
     ],
 )
 def test_main_refuses_port_client_combinations_that_would_do_nothing(
@@ -484,6 +590,36 @@ def test_main_refuses_port_client_combinations_that_would_do_nothing(
     proc = _main_py(args, tmp_path, extra_env)
     assert proc.returncode == 2, proc.stdout[-400:] + proc.stderr[-400:]
     assert message in proc.stderr
+
+
+@pytest.mark.parametrize("route", [["--use-solver-v2", "--use-port-client"], []])
+def test_main_builds_the_startup_units_on_the_dev_lane_before_any_request(tmp_path: Path, route: list[str]) -> None:
+    # Positive control for the --startup-units refusals above (g-376-199): on the DEV lane the checks pass, the
+    # blank board's 4,101 units are built in 3 batches, and the run stops at the closed local ARC port.
+    proc = _main_py([*route, "--startup-units"], tmp_path, {"AYOAI_LANE": "dev"})
+    out = proc.stdout + proc.stderr
+    assert "--startup-units needs" not in out and "usage:" not in out, out[-400:]
+    assert "Startup units: 4101 unit(s) in 3 batch(es) of a blank board" in out, out[-600:]
+    assert "Connection refused" in out, out[-400:]
+
+
+def test_main_hands_the_startup_units_to_every_session_it_opens() -> None:
+    # The run above stops at the closed ARC port, before main opens a session, so no subprocess test reaches these
+    # calls. Pin them over the DERIVED set of call sites (g-376-199): a call that stopped passing the units would
+    # leave --startup-units a silent no-op, and the run would look verified.
+    tree = ast.parse((REPO / "main.py").read_text(encoding="utf-8"))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (getattr(node.func, "attr", None) or getattr(node.func, "id", None)) == "open_ayoai_session"
+    ]
+    assert len(calls) == 2, "main.py opens a session at a new number of sites: update this test"
+    for call in calls:
+        keywords = {kw.arg: kw.value for kw in call.keywords}
+        for name, variable in (("startup_batches", "startup_batches"), ("env_config", "startup_env_config")):
+            value = keywords.get(name)
+            assert isinstance(value, ast.Name) and value.id == variable, ast.unparse(call)
 
 
 @pytest.mark.parametrize("explicit", [[], ["--vessel-decides"]])
@@ -499,12 +635,35 @@ def test_main_accepts_ingest_world_under_vessel_decides(tmp_path: Path, flag: st
     assert "usage:" not in out and "Connection refused" in out, out[-400:]
 
 
+def test_main_refuses_the_retired_vessel_hint_flag(tmp_path: Path) -> None:
+    # --vessel-hint is gone. A launcher that still passes it stops at argparse's usage error before any scorecard
+    # opens, instead of running with the hint silently dropped.
+    hint = tmp_path / "hint.json"
+    hint.write_text('{"avoid": ["ACTION3"]}')
+    proc = _main_py(["--use-solver-v2", "--use-port-client", "--vessel-hint", str(hint)], tmp_path, {})
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 2, out[-400:]
+    assert "unrecognized arguments: --vessel-hint" in out, out[-400:]
+    assert "Connection refused" not in out
+
+
 @pytest.mark.parametrize("lane", [{}, {"AYOAI_LANE": "prod"}, {"AYOAI_LANE": "dev"}])
 def test_main_plays_the_port_on_any_lane_under_oracle(tmp_path: Path, lane: dict[str, str]) -> None:
     # g-376-57: the port plays only when asked, and then on either lane (the same
     # inputs without --oracle are refused on prod, above). The run stops at the
     # closed local ARC port.
     proc = _main_py(["--use-solver-v2", "--use-port-client", "--oracle"], tmp_path, lane)
+    out = proc.stdout + proc.stderr
+    assert "usage:" not in out and "Connection refused" in out, out[-400:]
+
+
+@pytest.mark.parametrize("explicit", [[], ["--vessel-decides"]])
+@pytest.mark.parametrize("lane", [{}, {"AYOAI_LANE": "prod"}, {"AYOAI_LANE": "dev"}])
+def test_main_plays_the_vessel_on_any_lane(tmp_path: Path, lane: dict[str, str], explicit: list[str]) -> None:
+    # g-376-73: the frontier core is on prod, so the DEV-lane refusal g-376-57 added is
+    # gone and the vessel decides on either lane, by default or with the explicit flag.
+    # The run stops at the closed local ARC port, before any AyoAI call.
+    proc = _main_py(["--use-solver-v2", "--use-port-client", *explicit], tmp_path, lane)
     out = proc.stdout + proc.stderr
     assert "usage:" not in out and "Connection refused" in out, out[-400:]
 
@@ -543,37 +702,223 @@ def test_main_accepts_a_win_test_share_from_0_to_1(tmp_path: Path) -> None:
     assert "ARC_THEORY_WIN_TEST_SHARE" not in proc.stderr, proc.stderr[-400:]
 
 
-@pytest.mark.parametrize(
-    ("args", "extra_env", "message"),
-    [
-        (["--use-solver-v2"], {"SOLVER_V2_THEORY_ARM": "1", "ARC_THEORY_MEMORY": "hot"},
-         "ARC_THEORY_MEMORY must be cold or warm"),
-        (["--use-solver-v2"], {"ARC_THEORY_MEMORY": "warm"},
-         "ARC_THEORY_MEMORY=warm needs --use-solver-v2 and SOLVER_V2_THEORY_ARM"),
-        ([], {"SOLVER_V2_THEORY_ARM": "1", "ARC_THEORY_MEMORY": "warm"},
-         "ARC_THEORY_MEMORY=warm needs --use-solver-v2 and SOLVER_V2_THEORY_ARM"),
-        (["--use-solver-v2"], {"AYOAI_LANE": "staging"}, "AYOAI_LANE must be prod or dev"),
-    ],
-)
-def test_main_refuses_a_memory_regime_or_lane_it_cannot_apply(
-    tmp_path: Path, args: list[str], extra_env: dict[str, str], message: str
-) -> None:
+def test_main_refuses_a_lane_it_cannot_apply(tmp_path: Path) -> None:
     # g-376-10-b: refused before any scorecard or session is opened.
-    proc = _main_py(args, tmp_path, extra_env)
+    proc = _main_py(["--use-solver-v2"], tmp_path, {"AYOAI_LANE": "staging"})
     assert proc.returncode == 2, proc.stdout[-400:] + proc.stderr[-400:]
-    assert message in proc.stderr
+    assert "AYOAI_LANE must be prod or dev" in proc.stderr
 
 
-def test_main_accepts_warm_memory_on_the_dev_lane(tmp_path: Path) -> None:
-    # Positive control: both checks pass, and the run stops at the closed local ARC
+def test_main_accepts_the_dev_lane(tmp_path: Path) -> None:
+    # Positive control: the lane check passes, and the run stops at the closed local ARC
     # port, before any AyoAI call.
     proc = _main_py(
         ["--use-solver-v2", "--use-port-client", "--oracle"],
         tmp_path,
-        {"SOLVER_V2_THEORY_ARM": "1", "ARC_THEORY_MEMORY": "warm", "AYOAI_LANE": "dev"},
+        {"SOLVER_V2_THEORY_ARM": "1", "AYOAI_LANE": "dev"},
     )
     out = proc.stdout + proc.stderr
-    assert "ARC_THEORY_MEMORY" not in out and "AYOAI_LANE" not in out, out[-400:]
+    assert "AYOAI_LANE" not in out, out[-400:]
     # rc 2 is also EXIT_ARC_UPSTREAM, so read where the run stopped instead.
     assert "usage:" not in out and "Connection refused" in out, out[-400:]
 
+
+def _board_frame(cells: dict[tuple[int, int], int], action: ActionInput | None = None) -> FrameData:
+    board = [[0] * 64 for _ in range(64)]
+    for (row, col), value in cells.items():
+        board[row][col] = value
+    frame = FrameData(
+        game_id="test",
+        frame=[board],
+        state=GameState.NOT_FINISHED,
+        levels_completed=0,
+        win_levels=3,
+        available_actions=[GameAction.RESET, GameAction.ACTION1, GameAction.ACTION6],
+    )
+    if action is not None:
+        frame.action_input = action
+    return frame
+
+
+def test_unit_updates_report_each_frame_as_units_and_the_moves_do_not_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    # g-376-201 outcome 3: the report wire changes and the port's moves do not. The same frames with no session, over
+    # the operations wire and over the unit wire give the same decisions.
+    moves = [arcengine.GameAction.ACTION1, arcengine.GameAction.ACTION3, arcengine.GameAction.ACTION1]
+    frames = [
+        _board_frame({(1, 1): 2}),
+        _board_frame({(1, 1): 2, (3, 4): 5}, ActionInput(id=GameAction.ACTION6, data={"x": 4, "y": 3})),
+        _board_frame({(3, 4): 5}, ActionInput(id=GameAction.ACTION1)),
+    ]
+
+    def decided(client: PortStreamingClient) -> list[Any]:
+        return [(d.action, d.x, d.y, d.provenance) for d in (client.choose_action(f) for f in frames)]
+
+    plain = decided(_client(list(moves), monkeypatch))
+    legacy_session, unit_session = _RecordingSession(), _RecordingSession()
+    assert decided(_reporting_client(list(moves), monkeypatch, legacy_session)) == plain
+    unit_client = _reporting_client(list(moves), monkeypatch, unit_session, unit_wire_scope="gd2f7ac")
+    assert decided(unit_client) == plain
+    assert all("operations" in body and "envUnitUpdates" not in body for body in legacy_session.bodies)
+    assert all(
+        set(body) == {"ayoServerKey", "updateEpochMillis", "isLastBatch", "envUnitUpdates"}
+        for body in unit_session.bodies
+    )
+    assert [body["envUnitUpdates"][-1]["operationType"] for body in unit_session.bodies] == ["ADD", "UPDATE", "UPDATE"]
+    assert (unit_client.reports_sent, unit_client.reports_failed) == (3, 0)
+
+
+class _TreeResp(_Resp):
+    def __init__(self, body: dict[str, Any]) -> None:
+        super().__init__(200)
+        self._body = body
+
+    def json(self) -> dict[str, Any]:
+        return self._body
+
+
+class _UnitVesselSession(_RecordingSession):
+    """Answers a unit-wire request whose game-state unit asks (pending_decision) with the next scripted served tree."""
+
+    def __init__(self, trees: list[dict[str, Any]]) -> None:
+        super().__init__()
+        self._trees = list(trees)
+
+    def post(self, url: str, json: dict[str, Any], **_: Any) -> _Resp:
+        self.bodies.append(json)
+        asks = any(
+            op.get("unitKey") == "arc_game_state"
+            and op.get("unitProperties", {}).get("attributes", {}).get("pending_decision") is True  # a DELETE has none
+            for op in json.get("envUnitUpdates", [])
+        )
+        return _TreeResp(ask_answer(self._trees.pop(0)) if asks else {"status": "success"})
+
+
+def _unit_vessel_client(session: _UnitVesselSession) -> PortStreamingClient:
+    return PortStreamingClient(
+        streaming_url="http://session.test/AyoStreamingUpdates",
+        ayo_server_key="card",
+        arc_game_id="test",
+        api_key="",
+        decider="vessel",
+        unit_wire_scope="gd2f7ac",
+        session=session,
+        retry_sleep=lambda _s: None,
+    )
+
+
+def _tree_reports(body: dict[str, Any]) -> list[tuple[str, list[tuple[str, str]]]]:
+    return [
+        (update["envBTExecKey"], [(e["nodeId"], e["nodeOutcome"]) for e in update["envBTEvents"]])
+        for update in body.get("envBTUpdates", [])
+    ]
+
+
+def test_the_vessel_asks_on_the_unit_wire_plays_the_served_tree_and_reports_its_leaf() -> None:
+    # g-376-242 U3: the ask is pending_decision on the game-state unit, the answer is a tree in ayoBTs[], and the
+    # report of the leaf played rides the next ask. The closing DELETE is a DELETE of the game-state unit (g-376-204).
+    session = _UnitVesselSession([
+        served_tree("ACTION6", "arc__1", x=4, y=3, reason="frontier-core"),
+        served_tree("ACTION1", "arc__2"),
+    ])
+    client = _unit_vessel_client(session)
+    opening = _board_frame({})
+    opening.state = GameState.NOT_PLAYED
+    first = _board_frame({(1, 1): 2})
+    second = _board_frame({(1, 1): 2, (3, 4): 5}, ActionInput(id=GameAction.ACTION6, data={"x": 4, "y": 3}))
+
+    # What run_game_loop does: the opening RESET is the client's, then ADD and an ask for the same frame, and
+    # move_answered once the game replied to a move.
+    assert client.choose_action(opening).action == GameAction.RESET
+    client.move_answered()
+    client.send_add(first)
+    one = client.choose_action(first)
+    client.move_answered()
+    two = client.choose_action(second)
+    client.move_answered()
+    client.send_delete()
+
+    assert [(d.action, d.x, d.y) for d in (one, two)] == [(GameAction.ACTION6, 4, 3), (GameAction.ACTION1, None, None)]
+    assert [d.provenance["served_tree_key"] for d in (one, two)] == ["arc__1", "arc__2"]
+    assert {d.provenance["mode"] for d in (one, two)} == {"vessel"}
+    assert (one.provenance["bt_exec_key"], one.provenance["bt_node_id"]) == ("arc__1", "arc_1_1")
+
+    *units, close = session.bodies
+    assert all("operations" not in body and "envUnitUpdates" in body for body in session.bodies)
+    assert [(op["operationType"], op["unitKey"]) for op in close["envUnitUpdates"]] == [("DELETE", "arc_game_state")]
+    asking = [b for b in units if b["envUnitUpdates"][-1]["unitProperties"]["attributes"]["pending_decision"]]
+    assert len(units) == 3 and len(asking) == 2  # the ADD report does not ask
+    ask_one, ask_two = asking
+    # The leaf is Running when played and Success once the game replied; the report rides the next request.
+    assert _tree_reports(ask_one) == []
+    assert _tree_reports(ask_two) == [("arc__1", [("arc_1_1", "Running"), ("arc_1_1", "Success")])]
+    assert _tree_reports(close) == [("arc__2", [("arc_1_1", "Running"), ("arc_1_1", "Success")])]
+
+
+def test_the_unit_wire_report_says_why_each_leaf_succeeded() -> None:
+    # g-376-241: move_answered(frame) hands the answering frame on to the served tree's adapter, so each Success
+    # carries successReason; the tree's key is the server-issued one, which the report is filed under.
+    session = _UnitVesselSession([served_tree("ACTION6", "arc__1", x=4, y=3), served_tree("ACTION1", "arc__2")])
+    client = _unit_vessel_client(session)
+    opening = _board_frame({})
+    opening.state = GameState.NOT_PLAYED
+    first = _board_frame({(1, 1): 2})
+    second = _board_frame({(1, 1): 2, (3, 4): 5}, ActionInput(id=GameAction.ACTION6, data={"x": 4, "y": 3}))
+
+    client.choose_action(opening)
+    client.move_answered(first)
+    client.send_add(first)
+    client.choose_action(first)
+    client.move_answered(second)  # the board gained a cell: ACTION6 changed the screen
+    client.choose_action(second)
+    client.move_answered(second)  # the same board: ACTION1 changed nothing
+    client.send_delete()
+
+    *units, close = session.bodies
+    ask_two = [b for b in units if b["envUnitUpdates"][-1]["unitProperties"]["attributes"]["pending_decision"]][1]
+
+    def reasons(body: dict[str, Any]) -> list[tuple[str, str, str | None]]:
+        return [
+            (update["envBTExecKey"], e["nodeOutcome"], e.get("successReason"))
+            for update in body.get("envBTUpdates", [])
+            for e in update["envBTEvents"]
+        ]
+
+    assert reasons(ask_two) == [("arc__1", "Running", None), ("arc__1", "Success", "frame changed")]
+    assert reasons(close) == [("arc__2", "Running", None), ("arc__2", "Success", "frame unchanged")]
+
+
+def test_move_answered_settles_nothing_without_a_served_tree() -> None:
+    # run_game_loop calls it per answered frame whatever the decider, so it must be a no-op off the unit wire.
+    session = _VesselSession([])
+    _vessel_client(session).move_answered()
+    assert session.bodies == []
+
+
+@pytest.mark.parametrize("decider", [["--oracle"], []], ids=["port", "vessel"])
+def test_main_accepts_the_unit_wire_on_the_dev_lane_under_either_decider(tmp_path: Path, decider: list[str]) -> None:
+    # Positive control for the --unit-updates refusals above (g-376-201, g-376-242): the checks pass, the startup
+    # units are built, and the run stops at the closed local ARC port.
+    proc = _main_py(
+        ["--use-solver-v2", "--use-port-client", *decider, "--startup-units", "--unit-updates"],
+        tmp_path,
+        {"AYOAI_LANE": "dev"},
+    )
+    out = proc.stdout + proc.stderr
+    assert "--unit-updates needs" not in out and "usage:" not in out, out[-400:]
+    assert "Startup units: 4101 unit(s) in 3 batch(es) of a blank board" in out, out[-600:]
+    assert "Connection refused" in out, out[-400:]
+
+
+def test_main_hands_the_unit_wire_scope_to_the_port_client() -> None:
+    # The run above stops at the closed ARC port, before the client is built. Pin the call over the DERIVED set of
+    # call sites (g-376-201): a call that stopped passing the scope would leave --unit-updates a silent no-op on the
+    # operations wire, and the run would look verified.
+    tree = ast.parse((REPO / "main.py").read_text(encoding="utf-8"))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "PortStreamingClient"
+    ]
+    assert len(calls) == 1, "main.py builds the port client at a new number of sites: update this test"
+    value = {kw.arg: kw.value for kw in calls[0].keywords}.get("unit_wire_scope")
+    assert isinstance(value, ast.Name) and value.id == "unit_wire_scope", ast.unparse(calls[0])

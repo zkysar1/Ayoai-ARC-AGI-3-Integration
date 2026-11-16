@@ -33,7 +33,7 @@ from analysis.predicate_spec import CountConstraint, PriorThresholdConstraint
 from analysis.win_condition_llm import SMALLEST_MODEL, LLMHypothesizer
 from spend_meter import CAP_USD, MeteredClient
 
-# Inside the meter's spend window, and fixed: the real window closes 2026-10-09.
+# A fixed instant: the meter's cap is monthly with no end date, and this test never reads the real clock.
 IN_WINDOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone.utc)
 REPLY = '{"type": "count", "op": "<=", "value": 3}'
 REPLY_SPEC = CountConstraint(op="<=", value=3)

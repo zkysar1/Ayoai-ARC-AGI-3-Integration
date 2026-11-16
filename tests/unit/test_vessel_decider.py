@@ -9,6 +9,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "eval"))
 
+# arcengine comes from the optional [offline] extra (pyproject.toml), and decision_parity
+# imports it at module level, so skip the whole module on a box without the extra instead
+# of failing collection (g-376-83).
+pytest.importorskip("arcengine")
+
 import decision_parity as dp  # noqa: E402
 import vessel_decider as vd  # noqa: E402
 
@@ -21,6 +26,26 @@ def test_driver_reply_becomes_the_action_the_harness_compares() -> None:
         "x": 5,
         "y": 7,
     }
+
+
+def test_the_retired_hint_variable_no_longer_reaches_the_driver(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The vessel_hint option is retired, so VESSEL_HINT is not read and the driver's command is the same with it
+    # set or unset.
+    commands: list[list[str]] = []
+
+    class FakeProc:
+        def kill(self) -> None:
+            pass
+
+    monkeypatch.setattr(vd, "vessel_jar", lambda: Path("fat.jar"))
+    monkeypatch.setattr(vd.subprocess, "Popen", lambda command, **_: commands.append(command) or FakeProc())
+    monkeypatch.setenv("VESSEL_CORE", "frontier")
+    monkeypatch.delenv("VESSEL_HINT", raising=False)
+    vd.factory("game")
+    monkeypatch.setenv("VESSEL_HINT", "hint.json")
+    vd.factory("game")
+    base = ["java", "-cp", "fat.jar", vd.DRIVER, "frontier"]
+    assert commands == [base, base]
 
 
 # The class each core needs, so a jar built before a core landed skips that core, not fails.

@@ -1,5 +1,7 @@
 # Integration test: 3 dev games through an AyoAI session, 2026-09-25 (g-376-11)
 
+> **Retired 2026-10-04 (g-376-84):** the warm theory-memory regime this record measures, its client (`primitives/theory_memory.py`) and the env-server routes `POST /ArcTheory` and `GET /ArcTheories` were removed. This file stays as the record of what was measured; it can no longer be re-run.
+
 Three dev games ran end to end live. Each ran through its own DEV-lane AyoAI session, with
 the theory step on and warm AyoAI memory. Every model call happened between moves, and
 spend was metered under the $250 cap. The two admitted theories were stored in AyoAI memory

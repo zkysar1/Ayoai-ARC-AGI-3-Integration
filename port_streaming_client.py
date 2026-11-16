@@ -34,6 +34,10 @@ which comes before send_add, when the session has no unit to ask. Open the
 session with VESSEL_WORLD_FLAGS, or the env server answers with its baseline
 instead of the frontier stack; vessel_world_flags adds the flag that also puts
 each decided frame into the session world, by default on the DEV lane (g-376-52).
+With a unit_wire_scope the vessel's ask and answer ride the unit wire too (g-376-242): the frame goes as
+envUnitUpdates with pending_decision on the game-state unit, the move arrives as a tree in ayoBTs[], and a
+ServedTreeStreamingAdapter around the session client runs it and reports the leaf it played as envBTUpdates
+(Running when dispatched, Success when move_answered says the game replied).
 decider="port" (this class's default, which the offline harnesses use) is oracle
 mode, the behaviour described above. main.py plays with the vessel and asks the port
 only under --oracle (g-376-57, OB-31): the port is the parity oracle.
@@ -58,8 +62,13 @@ import arcengine  # noqa: E402
 from my_agent import MyAgent  # type: ignore[import-not-found]  # noqa: E402
 
 from ayoai_client import resolve_lane  # noqa: E402
-from ayoai_streaming_client import AyoaiDecision, AyoaiStreamingClient  # noqa: E402
+from ayoai_streaming_client import (  # noqa: E402
+    AyoaiDecision,
+    AyoaiStreamingClient,
+    AyoaiStreamingFrameSkipped,
+)
 from primitives.theory_arm import TheoryArm  # noqa: E402
+from solver_v2.bt_streaming_adapter import ServedTreeStreamingAdapter  # noqa: E402
 from structs import FrameData, GameAction, GameState  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -122,6 +131,7 @@ class PortStreamingClient:
         api_key: str | None = None,
         *,
         decider: str = DECIDER_PORT,
+        unit_wire_scope: str | None = None,
         **network_kwargs: Any,
     ) -> None:
         if decider not in (DECIDER_PORT, DECIDER_VESSEL):
@@ -138,13 +148,21 @@ class PortStreamingClient:
                 arc_game_id,
                 api_key,
                 local_game_control=decider == DECIDER_PORT,
+                unit_wire_scope=unit_wire_scope,
                 **network_kwargs,
             )
             if streaming_url
             else None
         )
+        # g-376-242: on the unit wire the vessel's move is a served tree; the adapter runs it and reports its leaf.
+        self._served: ServedTreeStreamingAdapter | None = (
+            ServedTreeStreamingAdapter(self._reporter)
+            if self._reporter is not None and decider == DECIDER_VESSEL and unit_wire_scope
+            else None
+        )
         self.reports_sent = 0
         self.reports_failed = 0
+        self.reports_skipped = 0
         self._report_failure_streak = 0
         self._reports_stopped: str | None = None
         self._agent: MyAgent | None = (
@@ -213,7 +231,7 @@ class PortStreamingClient:
         protocol or transport error propagates: the game loop aborts the play
         rather than let the client pick a move."""
         assert self._reporter is not None
-        decision = self._reporter.choose_action(frame)
+        decision = (self._reporter if self._served is None else self._served).choose_action(frame)
         self._tick += 1
         return AyoaiDecision(
             action=decision.action,
@@ -222,15 +240,26 @@ class PortStreamingClient:
             provenance={**decision.provenance, "mode": DECIDER_VESSEL, "port_tick": self._tick},
         )
 
+    def move_answered(self, frame: FrameData | None = None) -> None:
+        """The game answered the move in flight with ``frame``: the served tree's leaf ran (g-376-242).
+        run_game_loop calls this per frame; without a served tree there is nothing to settle."""
+        if self._served is not None:
+            self._served.move_answered(frame)
+
     def _report(self, frame: FrameData) -> None:
         """Send the frame's top layer, the screen the last move left, to the session as
         a report-only UPDATE; one layer keeps each report small. Any error is counted
         and swallowed; REPORT_FAILURE_LIMIT errors in a row stop reporting for the game,
-        so a dead session cannot slow play with retries."""
+        so a dead session cannot slow play with retries. A frame with no layer yet, the one before
+        RESET, is counted as skipped, not failed, and leaves the failure streak alone."""
         if self._reporter is None or self._reports_stopped is not None:
             return
         try:
             self._reporter.send_update(frame.model_copy(update={"frame": frame.frame[-1:]}))
+        except AyoaiStreamingFrameSkipped:
+            # g-376-236: the frame before RESET holds no layer yet; there is nothing to report, so no report failed.
+            self.reports_skipped += 1
+            return
         except Exception as exc:
             self.reports_failed += 1
             self._report_failure_streak += 1
@@ -240,6 +269,11 @@ class PortStreamingClient:
                     "[port-report] stopped after %d failures in a row: %s",
                     self._report_failure_streak,
                     self._reports_stopped,
+                )
+            else:
+                # g-376-201: a single failure left no line anywhere, so a live run could not say why one of its reports failed.
+                logger.warning(
+                    "[port-report] a report failed (%d in a row): %s", self._report_failure_streak, f"{type(exc).__name__}: {exc}"[:300]
                 )
             return
         self.reports_sent += 1
@@ -325,10 +359,11 @@ class PortStreamingClient:
             reporter.close()
         elif reporter is not None:
             logger.info(
-                "[port-report] %d of %d frames reported to the AyoAI session, %d failed%s",
+                "[port-report] %d of %d frames reported to the AyoAI session, %d failed%s%s",
                 self.reports_sent,
                 self._tick,
                 self.reports_failed,
+                f", {self.reports_skipped} skipped" if self.reports_skipped else "",
                 f"; stopped: {self._reports_stopped}" if self._reports_stopped else "",
             )
             reporter.close()

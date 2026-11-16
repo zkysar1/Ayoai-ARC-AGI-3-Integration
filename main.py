@@ -5,12 +5,16 @@ load_dotenv(dotenv_path=".env.example")
 load_dotenv(dotenv_path=".env", override=True)
 
 import argparse
+import importlib.util
 import json
 import logging
 import os
 import random
+import re
+import shutil
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -19,24 +23,26 @@ from pydantic import ValidationError
 
 from action_budget import DEFAULT_ACTION_BUDGET
 from ayoai_client import (
+    STARTUP_UNITS_LANES,
     AyoaiSessionError,
     AyoaiSessionInfo,
     open_ayoai_session,
     resolve_api_key,
     resolve_lane,
     stop_ayoai_server,
+    unit_wire_flags,
 )
 from ayoai_streaming_client import (
     AyoaiStreamingClient,
     AyoaiStreamingDnsError,
     AyoaiStreamingError,
     StreamingDecisionClient,
-    resolve_streaming_host_with_retry,
 )
-from house_rules import heldout_refusal
+from house_rules import heldout_ids, heldout_refusal
 from random_streaming_adapter import RandomStreamingAdapter
-from recorder import Recorder
+from recorder import Recorder, get_recordings_dir
 from solver_v0.streaming_adapter import SolverV0StreamingAdapter
+from solver_v2.bt_streaming_adapter import ServedTreeStreamingAdapter
 from solver_v2.refiner import (
     RefinerSeedProvider,
     SkillLibrary,
@@ -48,6 +54,14 @@ from solver_v2.seed_provider import (
     SeedProvider,
 )
 from solver_v2.streaming_adapter import SolverV2StreamingAdapter
+from spec_units import (
+    CURSOR_AYO_KEY,
+    ENV_GRAVITY,
+    blank_board,
+    build_startup_units,
+    scope_of,
+    split_batches,
+)
 from structs import FrameData, GameAction, GameState
 
 if TYPE_CHECKING:
@@ -81,10 +95,21 @@ HEADERS = {
 # IS the completion signal there, so "check for the OPEN FAILED line instead"
 # was never a sufficient workaround.
 #
-# ALL abort paths are wired, not just the two that motivated the goal. A
-# PARTIALLY truthful exit code is worse than a uniformly untruthful one: a
-# caller that learns to trust it would be silently misled by whichever paths
-# were left behind.
+# ALL abort paths before the first tick are wired, not just the two that
+# motivated the goal. A PARTIALLY truthful exit code is worse than a uniformly
+# untruthful one: a caller that learns to trust it would be silently misled by
+# whichever paths were left behind.
+#
+# Inside the play loop (g-376-254) the two AyoAI streaming aborts, a failed
+# send_add and a failed streaming decision, return EXIT_PLAY_ABORTED. It is its
+# own code and not EXIT_AYOAI_STREAMING, because 4 means the run never reached
+# its first tick (the DNS warm-up in _play) and 6 means it played and then lost
+# the server; a caller reading either number must be able to tell which without
+# opening the log. A run that aborts still closes its scorecard before _play
+# returns the code. Three ends of the loop are NOT wired and still return
+# EXIT_OK: Ctrl-C, a failed frame fetch ("Failed to get frame, stopping") and
+# an unexpected exception ("Game loop failed with error"). Do not read an exit
+# code of 0 as proof that the loop ran to a WIN or to its action budget.
 #
 # 1 is deliberately unused — Python already exits 1 on an uncaught traceback,
 # so leaving it reserved keeps "crashed" distinguishable from "diagnosed a
@@ -94,6 +119,7 @@ EXIT_ARC_UPSTREAM = 2       # ARC-AGI-3 side: connect / game list / scorecard
 EXIT_AYOAI_SESSION_OPEN = 3  # AyoAI Collect cold-start or readiness poll failed
 EXIT_AYOAI_STREAMING = 4     # AyoAI session opened but streaming setup failed
 EXIT_HELDOUT_REFUSED = 5     # sealed held-out exam game without --exam (house rule 4)
+EXIT_PLAY_ABORTED = 6        # play began, then the AyoAI streaming leg failed (send_add / decision)
 
 
 def choose_random_action(frame: FrameData) -> GameAction:
@@ -221,7 +247,7 @@ def run_game_loop(
     max_actions: int = DEFAULT_ACTION_BUDGET,
     game_id: str | None = None,
     log: logging.Logger | None = None,
-) -> tuple[int, float]:
+) -> tuple[int, float, int]:
     """Drive a full game through AyoAI streaming with the §3.4 ADD/UPDATE/DELETE lifecycle.
 
     Extracted from main() in g-315-22 so the lifecycle wire-in is testable.
@@ -251,13 +277,17 @@ def run_game_loop(
         log: optional logger; defaults to the module logger.
 
     Returns:
-        (action_counter, elapsed_seconds) — used by the caller for
-        final-stats logging.
+        (action_counter, elapsed_seconds, exit_code). The first two are used
+        by the caller for final-stats logging. exit_code is EXIT_OK unless
+        the AyoAI streaming leg failed (a failed send_add or a failed
+        streaming decision), when it is EXIT_PLAY_ABORTED; the EXIT_* block
+        at the top of this file lists the ends that still return EXIT_OK.
     """
     log = log or logger
     frames = [initial_frame]
     action_counter = 0
     add_sent = False
+    exit_code = EXIT_OK
     timer = time.time()
     game_label = game_id or "game"
 
@@ -284,6 +314,7 @@ def run_game_loop(
                     log.info("AyoAI send_add completed — grid-env unit registered")
                 except AyoaiStreamingError as e:
                     log.error(f"AyoAI send_add FAILED — aborting play: {e}")
+                    exit_code = EXIT_PLAY_ABORTED
                     break
 
             # UPDATE per tick. RESET is decided client-side (game-control);
@@ -295,6 +326,7 @@ def run_game_loop(
                 log.error(
                     f"AyoAI streaming decision FAILED — aborting play: {e}"
                 )
+                exit_code = EXIT_PLAY_ABORTED
                 break
             action = decision.action
 
@@ -305,6 +337,11 @@ def run_game_loop(
             )
 
             if new_frame:
+                # The game answered the move. A client that reports each move's outcome settles it as run
+                # only now: a move no frame comes back for must not read as Success at game end.
+                move_answered = getattr(streaming_client, "move_answered", None)
+                if move_answered is not None:
+                    move_answered(new_frame)
                 frames.append(new_frame)
                 action_counter += 1
                 elapsed = time.time() - timer
@@ -351,7 +388,94 @@ def run_game_loop(
                 log.exception("send_delete failed at game end (non-fatal)")
 
     elapsed = time.time() - timer
-    return action_counter, elapsed
+    return action_counter, elapsed, exit_code
+
+
+def run_episodes(
+    streaming_client: StreamingDecisionClient,
+    action_sender: Callable[
+        [GameAction, str | None, int | None, int | None], FrameData | None
+    ],
+    *,
+    episodes: int,
+    recorder: Recorder | None = None,
+    max_actions: int = DEFAULT_ACTION_BUDGET,
+    game_id: str | None = None,
+    log: logging.Logger | None = None,
+) -> tuple[int, float, int]:
+    """Play ``episodes`` consecutive episodes through the SAME streaming client.
+
+    Multi-episode harness (g-315-266): an adapter-level cross-episode cache
+    (SolverV2StreamingAdapter._click_state_graph_cache) accumulates across the
+    episodes. episodes=1 (default) runs exactly ONE run_game_loop call. Each
+    episode gets a fresh NOT_PLAYED initial frame (the adapter RESETs it to a
+    real ARC frame); run_game_loop owns the per-episode ADD/UPDATE/DELETE
+    lifecycle. The caller's scorecard stays open across all episodes.
+
+    An abort ends the run (g-376-254). The episodes share one streaming client,
+    and an abort means that client's server stopped answering (a failed
+    send_add or a failed streaming decision), so the next episode would open
+    its own ADD against the same server and most likely fail the same way.
+    Playing on would also leave the scorecard counting later episodes beside
+    an aborted one as if the run had held. So the loop stops at the first
+    abort, the episodes after it are not played, and the exit code is that
+    abort's.
+
+    Returns:
+        (actions, elapsed_seconds, exit_code) summed over the episodes played;
+        exit_code is EXIT_OK, or the code of the first episode that aborted.
+        ``episodes`` is taken as given, so a caller passes at least 1.
+    """
+    log = log or logger
+    action_counter = 0
+    elapsed = 0.0
+    exit_code = EXIT_OK
+    # Adapter-level cross-episode inspection: present only on the solver-v2 adapter
+    # (None on AyoaiStreamingClient / solver-v0). getattr keeps the harness
+    # decision-source-agnostic.
+    _csg_stats = getattr(streaming_client, "click_explorer_stats", None)
+    for _ep in range(episodes):
+        ep_actions, ep_elapsed, ep_exit_code = run_game_loop(
+            streaming_client,
+            action_sender,
+            FrameData(levels_completed=0),
+            recorder=recorder,
+            max_actions=max_actions,
+            game_id=game_id,
+            log=log,
+        )
+        action_counter += ep_actions
+        elapsed += ep_elapsed
+        if episodes > 1:
+            # Cross-episode graph-growth + reward-lock observability (g-315-266).
+            # Stats come from the adapter's PERSISTENT click-explorer cache, so
+            # they reflect ACCUMULATION across episodes, not just this episode.
+            stats = _csg_stats() if callable(_csg_stats) else None
+            if stats is not None:
+                log.info(
+                    f"[episode {_ep + 1}/{episodes}] {game_id} - "
+                    f"actions {ep_actions}, cross-episode graph: "
+                    f"nodes {stats['node_count']}, live {stats['live']}, "
+                    f"inert {stats['inert']}, win_lock "
+                    f"{'SET' if stats['learned_win_hash'] else 'none'}, "
+                    f"curtailed {stats['curtailed']}"
+                )
+            else:
+                log.info(
+                    f"[episode {_ep + 1}/{episodes}] {game_id} - "
+                    f"actions {ep_actions} (no click-explorer cache; not a "
+                    f"solver-v2 click-class route)"
+                )
+        if ep_exit_code != EXIT_OK:
+            exit_code = ep_exit_code
+            if _ep + 1 < episodes:
+                log.error(
+                    f"[episode {_ep + 1}/{episodes}] {game_id} - episode ended "
+                    f"on an abort (exit code {ep_exit_code}); the other "
+                    f"{episodes - _ep - 1} episode(s) are not played"
+                )
+            break
+    return action_counter, elapsed, exit_code
 
 
 def build_v2_seed_provider(
@@ -452,6 +576,41 @@ class RunServerStop:
         stop_ayoai_server(server_key, env_key)
 
 
+# A full game id: 4 lowercase alphanumerics, a dash, 8 hex digits.
+GAME_ID_SHAPE = re.compile(r"\b[a-z0-9]{4}-[0-9a-f]{8}\b")
+
+
+def _artifact_label(game: str) -> str:
+    """The game's name in the files a run leaves behind (g-376-152).
+
+    A held-out game's id stays out of file names, so a directory listing never
+    shows it. The guid still pairs a run's recording with its log."""
+    return "heldout" if game.split("-")[0] in heldout_ids() else game
+
+
+def _attach_run_log(label: str, guid: str, like: logging.Handler) -> str:
+    """Give this run its own log file beside its recording (g-376-152).
+
+    The harness opens logs.log with mode "w" (rb-13037), so the next run in the same
+    directory would erase it. The file starts as a copy of logs.log so far and then
+    takes every line the run logs, so a run that is killed keeps its log. Returns
+    the path; `like` supplies the level and format."""
+    directory = get_recordings_dir()
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, f"{label}.{guid}.logs.log")
+    shutil.copyfile("logs.log", path)
+    handler = logging.FileHandler(path, mode="a")
+    handler.setLevel(like.level)
+    handler.setFormatter(like.formatter)
+    # A bad --game makes the harness list every game id, held-out ones included, and
+    # its wording is not ours to rely on. logs.log keeps that line (the exam wrapper
+    # scrubs it there); the copy drops any line that carries five or more game ids.
+    handler.addFilter(lambda record: len(GAME_ID_SHAPE.findall(record.getMessage())) < 5)
+    logger.addHandler(handler)
+    return path
+
+
 def _play(server_stop: RunServerStop) -> int:
     """The body of main(), which owns the server stop (see main)."""
     log_level = logging.INFO
@@ -489,8 +648,12 @@ def _play(server_stop: RunServerStop) -> int:
     parser.add_argument(
         "-r",
         "--record",
-        action="store_true",
-        help="Record gameplay to JSONL file",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Record gameplay to a JSONL file and keep a per-run copy of logs.log "
+            "beside it (g-376-152). On by default; --no-record turns it off"
+        ),
     )
     parser.add_argument(
         "--exam",
@@ -603,8 +766,8 @@ def _play(server_stop: RunServerStop) -> int:
             "stays the parity oracle (eval/decision_parity.py). The only client "
             "move is the opening RESET. SOLVER_V2_THEORY_ARM is refused. The "
             "default under --use-port-client since g-376-57 (OB-31), so this flag "
-            "changes nothing; it is kept so existing commands still parse. The "
-            "frontier core is on the DEV lane only, so it needs AYOAI_LANE=dev."
+            "changes nothing; it is kept so existing commands still parse. Runs "
+            "on either lane (the frontier core is on prod, g-376-73)."
         ),
     )
     parser.add_argument(
@@ -631,6 +794,55 @@ def _play(server_stop: RunServerStop) -> int:
             "perception step on the frame (env server #626). The replies do not "
             "change. On by default on the DEV lane (AYOAI_LANE=dev), off on prod; "
             "--ingest-world or --no-ingest-world decides on either lane."
+        ),
+    )
+    parser.add_argument(
+        "--startup-units",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Open the session with the board as AyoaiV1 startupUnits[] batches (g-376-199, "
+            "spec_units.py): the ArcGrid, the cursor character and one unit per cell of a blank "
+            "64 x 64 board, about 2000 units a batch, parents first, with envConfig gravity "
+            "and isLastBatch on the last. The board is blank because the first frame does not "
+            "exist until the opening RESET, which comes after the session opens. Collect saves "
+            "the batches and starts the server on the last; the server's use of the units is "
+            "g-376-198. Both lanes (dev and prod) carry Collect's startupUnits lane (g-376-197); "
+            "needs a live AyoAI session. On by default on either lane for a run with the port "
+            "client (--use-port-client), a live AyoAI session (not --use-solver-v0, --random or "
+            "--mock-url) and a game id; off for any other run. --no-startup-units is the escape "
+            "back to the operations wire and also turns --unit-updates off."
+        ),
+    )
+    parser.add_argument(
+        "--unit-updates",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Report each frame to the AyoAI session as envUnitUpdates[] (g-376-201, unit_wire.py): "
+            "UPDATE ops for the cells that changed, the cursor and one game-state unit, at most 3000 "
+            "ops a request and no operations key. Needs --startup-units (the cells and the cursor are "
+            "created there) and the port client (--use-port-client). Under the vessel decider, the "
+            "default, the move is asked for on this wire too (g-376-242): the game-state unit carries "
+            "pending_decision, the move comes back as a tree in ayoBTs[], and the client runs it and "
+            "reports its leaf as envBTUpdates. The closing DELETE is a DELETE of the game-state unit on "
+            "this wire too (g-376-204): the server ends the card's sessions on it. On by default "
+            "wherever --startup-units is on by default; --no-unit-updates keeps the startup units "
+            "and reports the frames on the operations wire."
+        ),
+    )
+    parser.add_argument(
+        "--execute-tree",
+        action="store_true",
+        help=(
+            "Execute the Task-leaf behavior tree each AyoAI decision comes with (g-376-203, "
+            "solver_v2/bt_streaming_adapter.py): the leaf the server chose is found in its tree "
+            "(ayoTaskKey + nodeParams), played, and reported to the session as envBTUpdates "
+            "(Running when dispatched, Success when the next frame answers, Fail when the move was "
+            "not offered). The reports ride the next request that is not a decision request (the "
+            "server reads none from a decision frame) and the closing DELETE. The moves are the "
+            "server's, so a run with the flag and a run without it play the same ones. Only with "
+            "the plain AyoAI decider: not --use-solver-v0, --use-solver-v2 or --random. Off by default."
         ),
     )
     parser.add_argument(
@@ -926,13 +1138,21 @@ def _play(server_stop: RunServerStop) -> int:
     args.vessel_decides = args.use_port_client and not args.oracle
     if args.ingest_world and not args.vessel_decides:
         parser.error("--ingest-world needs the vessel decider (--use-port-client without --oracle)")
-
     # --use-port-client swaps the player inside the --use-solver-v2 session
     # (g-376-30). Options that only the adapter reads would do nothing, so they
     # are refused rather than silently dropped.
     if args.use_port_client:
         if not args.use_solver_v2:
             parser.error("--use-port-client needs --use-solver-v2")
+        # arcengine ships only in the optional [offline] extra (pyproject.toml), and the port
+        # client imports it at module level from two sites that both come after the scorecard
+        # opens. Refused here, a box without the extra stops before any ARC request instead of
+        # dying in a bare ModuleNotFoundError with the scorecard left open (g-376-83).
+        if importlib.util.find_spec("arcengine") is None:
+            parser.error(
+                "--use-port-client needs arcengine, which only the optional [offline] extra "
+                'installs (pyproject.toml): .venv/bin/pip install "arc-agi==0.9.9" "arcengine==0.9.3"'
+            )
         adapter_only = [
             flag
             for flag, on in (
@@ -985,29 +1205,62 @@ def _play(server_stop: RunServerStop) -> int:
     )
     if args.vessel_decides and theory_arm_on:
         parser.error("SOLVER_V2_THEORY_ARM falls back to the port's move; under --use-port-client it needs --oracle")
-    theory_memory_regime = os.environ.get("ARC_THEORY_MEMORY", "").strip().lower() or "cold"
-    if theory_memory_regime not in ("cold", "warm"):
-        parser.error("ARC_THEORY_MEMORY must be cold or warm")
-    if theory_memory_regime == "warm" and not (args.use_solver_v2 and theory_arm_on):
-        parser.error("ARC_THEORY_MEMORY=warm needs --use-solver-v2 and SOLVER_V2_THEORY_ARM")
 
     # g-376-10-b: AYOAI_LANE picks the launch chain the session opens through (unset or
     # prod, or dev for the DEV lane of grant-015). A value it cannot use is refused here,
     # before a scorecard is opened.
     try:
-        lane = resolve_lane()
+        resolve_lane()
     except AyoaiSessionError as exc:
         parser.error(str(exc))
-    # g-376-57: the vessel route is on the DEV lane only. The frontier core and the
-    # ARC_FRONTIER_CORE_ENABLED world-flag allowlists are on dev, not main, in the env
-    # server and both launch Lambdas (Collect #74, Start #95), and without the flag the
-    # env server answers with its baseline instead of the frontier stack. A prod run
-    # would be played by the wrong decider, so it is refused before a scorecard opens.
-    if args.vessel_decides and lane.name != "dev":
-        parser.error(
-            "the vessel decider runs on the DEV lane only (AYOAI_LANE=dev) until the "
-            "frontier core is promoted to prod; on prod, --oracle plays with the port"
+
+    # g-376-199: the startup units are built here, before any network call, so a world that cannot be
+    # built opens no scorecard. open_ayoai_session refuses them on a lane without Collect's batch lane too.
+    startup_batches: list[list[dict[str, Any]]] | None = None
+    startup_env_config: dict[str, Any] | None = None
+    startup_required_characters: tuple[str, ...] | None = None
+    unit_wire_scope: str | None = None
+    # g-376-204: the unit wire is the DEV lane's default for a run that can use it; the escapes decide
+    # on either lane. main.py's own checks below still refuse a flag the run cannot honor.
+    args.startup_units, args.unit_updates = unit_wire_flags(
+        args.startup_units,
+        args.unit_updates,
+        port_client=args.use_port_client,
+        live_session=not (args.use_solver_v0 or args.random or args.mock_url),
+        has_scope=scope_of(args.game) is not None,
+    )
+    if args.unit_updates and not args.startup_units:
+        parser.error("--unit-updates needs --startup-units (the cells and the cursor it updates are created there)")
+    if args.execute_tree and (args.use_solver_v0 or args.use_solver_v2 or args.random):
+        parser.error("--execute-tree wraps the plain AyoAI decider (not --use-solver-v0, --use-solver-v2 or --random)")
+    if args.startup_units:
+        if args.use_solver_v0 or args.random or args.mock_url:
+            parser.error("--startup-units needs a live AyoAI session (not --use-solver-v0, --random or --mock-url)")
+        if resolve_lane().name not in STARTUP_UNITS_LANES:
+            parser.error(
+                "--startup-units needs a lane listed in STARTUP_UNITS_LANES (ayoai_client.py): "
+                "Collect's startupUnits lane (g-376-197) is not on this one"
+            )
+        startup_scope = scope_of(args.game)
+        if startup_scope is None:
+            parser.error("--startup-units needs a game id")
+        startup_batches = split_batches(build_startup_units(blank_board(), startup_scope))
+        startup_env_config = {"gravity": ENV_GRAVITY}
+        # g-376-203: the cursor unit names this character; the session reads it through the Characters API
+        # before the cold start and stops if it is absent (it would get no behavior streams, silently).
+        startup_required_characters = (CURSOR_AYO_KEY,)
+        logger.info(
+            f"Startup units: {sum(len(b) for b in startup_batches)} unit(s) in {len(startup_batches)} "
+            f"batch(es) of a blank board, key scope {startup_scope}, envConfig {startup_env_config}"
         )
+        if args.unit_updates:
+            if not args.use_port_client:
+                parser.error(
+                    "--unit-updates needs the port client (--use-port-client): it is the only player "
+                    "that reports on the unit wire"
+                )
+            unit_wire_scope = startup_scope
+            logger.info(f"Unit wire: frames reported as envUnitUpdates, key scope {startup_scope}")
 
     # --state-graph only takes effect under --use-solver-v2 (the v2 adapter is
     # the sole StateGraphExplorer build site). Warn rather than error so the
@@ -1028,6 +1281,15 @@ def _play(server_stop: RunServerStop) -> int:
         return EXIT_HELDOUT_REFUSED
 
     logger.info(f"Connecting to API at: {ROOT_URL}")
+
+    # One guid names this run's recording and its log, so the two pair up (g-376-152)
+    run_guid = str(uuid.uuid4())
+    artifact_label = _artifact_label(args.game)
+    if args.record:
+        try:
+            logger.info(f"Run log: {_attach_run_log(artifact_label, run_guid, file_handler)}")
+        except OSError as e:
+            logger.warning(f"Could not keep a per-run log: {e}")
 
     # Create session that will be used throughout
     session = requests.Session()
@@ -1155,7 +1417,14 @@ def _play(server_stop: RunServerStop) -> int:
 
                 session_world_flags = vessel_world_flags(ingest_world=args.ingest_world)
                 logger.info(f"Session worldFlags for the vessel decider: {session_world_flags}")
-            ayoai_session = open_ayoai_session(card_id, env_key=env_key, world_flags=session_world_flags)
+            ayoai_session = open_ayoai_session(
+                card_id,
+                env_key=env_key,
+                world_flags=session_world_flags,
+                startup_batches=startup_batches,
+                env_config=startup_env_config,
+                required_characters=startup_required_characters,
+            )
             logger.info(
                 f"AyoAI session OPEN (solver-v2): "
                 f"hostname={ayoai_session.ayoai_hostname} "
@@ -1194,7 +1463,13 @@ def _play(server_stop: RunServerStop) -> int:
                 f"ayoEnvironmentKey={env_key})..."
             )
             server_stop.arm(card_id, env_key)
-            ayoai_session = open_ayoai_session(card_id, env_key=env_key)
+            ayoai_session = open_ayoai_session(
+                card_id,
+                env_key=env_key,
+                startup_batches=startup_batches,
+                env_config=startup_env_config,
+                required_characters=startup_required_characters,
+            )
             logger.info(
                 f"AyoAI session OPEN: hostname={ayoai_session.ayoai_hostname} "
                 f"streaming_url={ayoai_session.streaming_url} "
@@ -1236,6 +1511,7 @@ def _play(server_stop: RunServerStop) -> int:
         | PortStreamingClient
         | RandomStreamingAdapter
         | AyoaiStreamingClient
+        | ServedTreeStreamingAdapter
     )
     if args.use_solver_v0:
         streaming_client = SolverV0StreamingAdapter(
@@ -1315,6 +1591,7 @@ def _play(server_stop: RunServerStop) -> int:
                     if args.vessel_decides
                     else port_streaming_client.DECIDER_PORT
                 ),
+                unit_wire_scope=unit_wire_scope,
             )
         else:
             streaming_client = SolverV2StreamingAdapter(
@@ -1462,7 +1739,6 @@ def _play(server_stop: RunServerStop) -> int:
             import spend_meter
             from adapters.arc_theory import THEORY_MODEL, make_theory_arm
             from primitives.theory_arm import ArmConfig
-            from primitives.theory_memory import TheoryMemory
 
             arm_config = (
                 None
@@ -1483,28 +1759,11 @@ def _play(server_stop: RunServerStop) -> int:
             theory_client = spend_meter.metered_anthropic(
                 game_id=args.game, run_id=theory_run_id
             )
-            # g-376-10-b: warm memory lives in the game's AyoAI session. The solver-v2
-            # branch above opened one or aborted the play, so it is there.
-            theory_memory: TheoryMemory | None = None
-            if theory_memory_regime == "warm" and ayoai_session is not None:
-                memory_url = ayoai_session.streaming_url
-                theory_memory = TheoryMemory.for_session(
-                    memory_url,
-                    api_key=resolve_api_key(),
-                    game_id=args.game,
-                    run_id=theory_run_id,
-                    warm_dns=lambda: resolve_streaming_host_with_retry(memory_url),
-                )
-            elif theory_memory_regime == "warm":
-                logger.warning("[theory-arm] ARC_THEORY_MEMORY=warm but no AyoAI session is open; memory=cold")
             logger.info(
-                "[theory-arm] enabled: model=%s run_dir=%s win_test_share=%s memory=%s",
+                "[theory-arm] enabled: model=%s run_dir=%s win_test_share=%s",
                 THEORY_MODEL,
                 theory_dir,
                 "default" if arm_config is None else arm_config.win_test_share,
-                "cold"
-                if theory_memory is None
-                else f"warm via {theory_memory.base_url}/ArcTheory",
             )
             streaming_client.set_theory_arm(
                 lambda grid: make_theory_arm(
@@ -1514,7 +1773,6 @@ def _play(server_stop: RunServerStop) -> int:
                     run_id=theory_run_id,
                     run_dir=theory_dir,
                     config=arm_config,
-                    memory=theory_memory,
                 )
             )
     else:
@@ -1529,6 +1787,8 @@ def _play(server_stop: RunServerStop) -> int:
             arc_game_id=args.game,
             api_key=resolve_api_key() if not args.mock_url else "",
         )
+        if args.execute_tree:
+            streaming_client = ServedTreeStreamingAdapter(streaming_client)
 
     # g-315-96: warm DNS for live mode only. Closes the CNAME-propagation
     # window between Lambda READY and first send_add (alpha's g-315-95
@@ -1565,8 +1825,8 @@ def _play(server_stop: RunServerStop) -> int:
             else "mock" if args.mock_url
             else "ayoai"
         )
-        prefix = f"{args.game}.{solver_name}.{args.level}"
-        recorder = Recorder(prefix=prefix)
+        prefix = f"{artifact_label}.{solver_name}.{args.level}"
+        recorder = Recorder(prefix=prefix, guid=run_guid)
         logger.info(f"Recording to: {recorder.filename}")
         # Record the session-open evidence (or mock-URL bind) as the first
         # entry — preserves g-315-03 outcome 3 for live mode, documents
@@ -1632,53 +1892,20 @@ def _play(server_stop: RunServerStop) -> int:
             session, args.game, card_id, action, guid, x=x, y=y,
         )
 
-    # Multi-episode harness (g-315-266): play args.episodes consecutive episodes
-    # through the SAME streaming_client so an adapter-level cross-episode cache
-    # (SolverV2StreamingAdapter._click_state_graph_cache) accumulates across
-    # episodes. episodes=1 (default) runs exactly ONE run_game_loop call --
-    # byte-identical to the pre-g-315-266 single-episode path. Each episode gets a
-    # fresh NOT_PLAYED initial frame (the adapter RESETs it to a real ARC frame);
-    # run_game_loop owns the per-episode ADD/UPDATE/DELETE lifecycle. The scorecard
-    # (opened above) stays open across all episodes and closes once below.
-    action_counter = 0
-    elapsed = 0.0
-    # Adapter-level cross-episode inspection: present only on the solver-v2 adapter
-    # (None on AyoaiStreamingClient / solver-v0). getattr keeps the harness
-    # decision-source-agnostic.
-    _csg_stats = getattr(streaming_client, "click_explorer_stats", None)
+    # Multi-episode harness (g-315-266, g-376-254): run_episodes() plays
+    # args.episodes episodes through the SAME streaming_client and stops at the
+    # first abort. The scorecard (opened above) stays open across all episodes and
+    # closes once below, an aborted run included.
     _episodes = max(1, args.episodes)
-    for _ep in range(_episodes):
-        ep_actions, ep_elapsed = run_game_loop(
-            streaming_client,
-            _action_sender,
-            FrameData(levels_completed=0),
-            recorder=recorder,
-            max_actions=MAX_ACTIONS,
-            game_id=args.game,
-            log=logger,
-        )
-        action_counter += ep_actions
-        elapsed += ep_elapsed
-        if _episodes > 1:
-            # Cross-episode graph-growth + reward-lock observability (g-315-266).
-            # Stats come from the adapter's PERSISTENT click-explorer cache, so
-            # they reflect ACCUMULATION across episodes, not just this episode.
-            stats = _csg_stats() if callable(_csg_stats) else None
-            if stats is not None:
-                logger.info(
-                    f"[episode {_ep + 1}/{_episodes}] {args.game} - "
-                    f"actions {ep_actions}, cross-episode graph: "
-                    f"nodes {stats['node_count']}, live {stats['live']}, "
-                    f"inert {stats['inert']}, win_lock "
-                    f"{'SET' if stats['learned_win_hash'] else 'none'}, "
-                    f"curtailed {stats['curtailed']}"
-                )
-            else:
-                logger.info(
-                    f"[episode {_ep + 1}/{_episodes}] {args.game} - "
-                    f"actions {ep_actions} (no click-explorer cache; not a "
-                    f"solver-v2 click-class route)"
-                )
+    action_counter, elapsed, play_exit_code = run_episodes(
+        streaming_client,
+        _action_sender,
+        episodes=_episodes,
+        recorder=recorder,
+        max_actions=MAX_ACTIONS,
+        game_id=args.game,
+        log=logger,
+    )
 
     # Log final stats
     fps = action_counter / elapsed if elapsed > 0 else 0
@@ -1736,7 +1963,7 @@ def _play(server_stop: RunServerStop) -> int:
     except Exception:
         logger.exception("streaming client close failed (non-fatal)")
 
-    return EXIT_OK
+    return play_exit_code
 
 
 def main() -> int:

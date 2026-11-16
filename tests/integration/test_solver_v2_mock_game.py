@@ -105,7 +105,7 @@ def test_run_game_loop_with_solver_v2_completes_full_game() -> None:
     ]
     sender = _ScriptedActionSender(scripted)
 
-    action_count, elapsed = run_game_loop(
+    action_count, elapsed, _ = run_game_loop(
         streaming_client=adapter,
         action_sender=sender,
         initial_frame=_initial_not_played(),
@@ -257,7 +257,7 @@ def test_run_game_loop_with_solver_v2_failing_seed_still_drives_episode() -> Non
     ]
     sender = _ScriptedActionSender(scripted)
 
-    action_count, _ = run_game_loop(
+    action_count, _, _ = run_game_loop(
         streaming_client=adapter,
         action_sender=sender,
         initial_frame=_initial_not_played(),

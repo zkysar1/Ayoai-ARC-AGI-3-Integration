@@ -2,6 +2,10 @@
 
 Minimal agent framework for ARC-AGI-3 abstract reasoning games, stripped down to essentials for integration with ayoai.com.
 
+## Who Maintains This
+
+This repository is maintained by **Odd Passengers**, a game studio. The studio uses ARC-AGI-3 as a benchmark for agents that run on AyoAI. AyoAI is a separate service, and the rule for this code is that it reaches AyoAI only through AyoAI's public API, as any customer would. That is the rule for new work; existing code is not rewritten because of it.
+
 ## What's Inside
 
 This is a simplified version of the ARC-AGI-3 agent framework containing only:
@@ -118,7 +122,8 @@ uv run main.py --game ls20-fa137e247ce6 --tags "experiment,v1.0"
 
 ```
 -g, --game      Game ID to play (required). Example: "ls20-fa137e247ce6"
--r, --record    Record gameplay to JSONL file (optional)
+-r, --record    Record gameplay to a JSONL file and keep a per-run copy of logs.log
+                (on by default; --no-record turns it off)
 -t, --tags      Comma-separated tags for scorecard (optional)
 ```
 

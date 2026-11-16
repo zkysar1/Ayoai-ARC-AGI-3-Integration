@@ -1124,3 +1124,29 @@ def test_warm_dns_propagates_dns_error():
             )
     finally:
         client.close()
+
+
+# ---------- The vessel hint is retired ---------- #
+
+
+def _wire_frame() -> FrameData:
+    return FrameData(
+        game_id="ls20",
+        state=GameState.NOT_FINISHED,
+        score=0,
+        frame=[[[0, 0], [0, 0]]],
+        guid="g",
+        available_actions=[GameAction.ACTION1, GameAction.ACTION6],
+    )
+
+
+def test_the_client_has_no_vessel_hint_channel():
+    # A hint steered the vessel's moves from outside its own decision path, so the client takes none and no ADD or
+    # UPDATE it encodes carries one.
+    url = "http://stream.test/AyoStreamingUpdates"
+    with pytest.raises(TypeError, match="vessel_hint"):
+        AyoaiStreamingClient(url, CARD_ID, api_key="", vessel_hint={"avoid": ["ACTION3"]})
+    with AyoaiStreamingClient(url, CARD_ID, api_key="") as client:
+        for op, pending in (("ADD", False), ("UPDATE", True)):
+            attributes = _single_op(client._encode_frame(_wire_frame(), op=op, pending_decision=pending))["attributes"]
+            assert "vessel_hint" not in attributes

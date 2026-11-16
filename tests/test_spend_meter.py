@@ -72,12 +72,85 @@ def test_refuses_model_without_rate(tmp_path: Path) -> None:
     assert inner.calls == 0
 
 
-def test_refuses_outside_window(tmp_path: Path) -> None:
+def _spent(ledger: Path, ts: str, cost: float) -> None:
+    with ledger.open("a") as fh:
+        fh.write(json.dumps({"ts": ts, "model": HAIKU, "cost_usd": cost}) + "\n")
+
+
+def test_admits_calls_after_the_old_window_end(tmp_path: Path) -> None:
+    # The fixed window closed at 2026-10-09T00:00Z; the cap is monthly with no end date.
     inner = FakeInner()
-    late = datetime(2026, 10, 9, 0, 0, tzinfo=timezone.utc)
-    with pytest.raises(SpendRefused, match="window"):
-        _call(_client(tmp_path / "l.jsonl", inner, now=late))
+    for day in (datetime(2026, 10, 9, 0, 0, tzinfo=timezone.utc), datetime(2027, 3, 1, tzinfo=timezone.utc)):
+        _call(_client(tmp_path / "l.jsonl", inner, now=day))
+    assert inner.calls == 2
+
+
+def test_cap_counts_only_the_calls_month(tmp_path: Path) -> None:
+    ledger = tmp_path / "ledger.jsonl"
+    _spent(ledger, "2026-09-25T00:00:00+00:00", 250.0)  # September is at the cap
+    inner = FakeInner()
+    _call(_client(ledger, inner, now=datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)))
+    assert inner.calls == 1  # a prior month's rows do not count
+    _spent(ledger, "2026-10-09T13:00:00+00:00", 250.0)  # October reaches the cap
+    with pytest.raises(SpendRefused, match="cap .* for 2026-10"):
+        _call(_client(ledger, inner, now=datetime(2026, 10, 20, tzinfo=timezone.utc)))
+    assert inner.calls == 1
+    _call(_client(ledger, inner, now=datetime(2026, 11, 1, tzinfo=timezone.utc)))  # the cap resets on the 1st
+    assert inner.calls == 2
+
+
+def test_month_is_read_in_utc(tmp_path: Path) -> None:
+    ledger = tmp_path / "ledger.jsonl"
+    _spent(ledger, "2026-11-01T00:30:00+02:00", 250.0)  # 2026-10-31 22:30 UTC: an October row
+    inner = FakeInner()
+    with pytest.raises(SpendRefused, match="cap"):
+        _call(_client(ledger, inner, now=datetime(2026, 10, 31, 23, 0, tzinfo=timezone.utc)))
+    _call(_client(ledger, inner, now=datetime(2026, 11, 1, 0, 0, tzinfo=timezone.utc)))
+    assert inner.calls == 1
+
+
+def test_rows_stamped_after_now_still_count(tmp_path: Path) -> None:
+    # A clock set back must not reset the month: rows from a later month stay counted.
+    ledger = tmp_path / "ledger.jsonl"
+    _spent(ledger, "2026-11-03T00:00:00+00:00", 250.0)
+    inner = FakeInner()
+    with pytest.raises(SpendRefused, match="cap"):
+        _call(_client(ledger, inner, now=datetime(2026, 10, 20, tzinfo=timezone.utc)))
     assert inner.calls == 0
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        '{"model": "m", "cost_usd": 0.1}',  # no ts
+        '{"ts": "yesterday", "cost_usd": 0.1}',  # unparseable
+        '{"ts": "2026-10-09T00:00:00", "cost_usd": 0.1}',  # no timezone
+    ],
+)
+def test_refuses_row_without_a_placeable_timestamp(tmp_path: Path, row: str) -> None:
+    ledger = tmp_path / "ledger.jsonl"
+    ledger.write_text(row + "\n")
+    inner = FakeInner()
+    with pytest.raises(SpendRefused, match="unreadable"):
+        _call(_client(ledger, inner))
+    assert inner.calls == 0
+
+
+def test_refuses_a_clock_with_no_timezone(tmp_path: Path) -> None:
+    inner = FakeInner()
+    with pytest.raises(SpendRefused, match="timezone"):
+        _call(_client(tmp_path / "l.jsonl", inner, now=datetime(2026, 10, 9, 12, 0)))
+    assert inner.calls == 0
+
+
+def test_summary_prints_the_months_spend_against_the_cap() -> None:
+    rows = [
+        {"ts": "2026-09-30T23:59:59+00:00", "cost_usd": 10.0, "model": HAIKU, "game_id": "a"},
+        {"ts": "2026-10-02T00:00:00+00:00", "cost_usd": 4.5, "model": HAIKU, "game_id": "b"},
+    ]
+    out = spend_meter.summary(rows, now=datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc))
+    assert out.splitlines()[0].startswith("spent $4.5000 of $250.00 cap in 2026-10")
+    assert "$14.5000 over 2 call(s) in the ledger" in out
 
 
 def test_refuses_nan_ledger(tmp_path: Path) -> None:

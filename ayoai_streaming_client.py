@@ -58,6 +58,12 @@ from urllib.parse import urlparse
 import requests
 
 from structs import FrameData, GameAction, GameState
+from unit_wire import (
+    UnitWireError,
+    UnitWireNoLayer,
+    UnitWireState,
+    game_state_delete_op,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +94,10 @@ TRANSIENT_RETRY_BASE_DELAY_S = 2.0
 # RATE_LIMIT_BURST ("minimum: 200ms"). The MockAyoaiServer never modeled this,
 # so the client fired ADD->UPDATE->DELETE at ~40ms gaps and tripped the live
 # limit (g-315-301 live thin-border run). 0.25s sits safely above the 200ms
-# floor with margin for clock jitter.
+# floor with margin for clock jitter. The gap runs from the previous request's
+# RESPONSE, not from its send (g-376-201): the server stamps a request when it
+# handles it, after the body arrived, so a gap counted from the send read 114 to
+# 176 ms there when the body was hundreds of KB (3 of 62 requests of a live DEV run).
 MIN_REQUEST_GAP_S = 0.25
 
 # §3.6 line 308: transient-network patterns the spec says to retry. Matched
@@ -116,6 +125,10 @@ class AyoaiStreamingApiError(AyoaiStreamingError):
 
 class AyoaiStreamingProtocolError(AyoaiStreamingError):
     """Response shape invalid (missing fields, unknown action name, x/y out of range)."""
+
+
+class AyoaiStreamingFrameSkipped(AyoaiStreamingProtocolError):
+    """A frame with no layer yet, the one before RESET: nothing is sent and nothing failed (g-376-236)."""
 
 
 class AyoaiStreamingDnsError(AyoaiStreamingError):
@@ -234,6 +247,18 @@ class AyoaiDecision:
     provenance: dict[str, Any] = field(default_factory=dict)
 
 
+class BTReportSource(Protocol):
+    """Where the client takes behavior-tree events from (g-376-203): solver_v2.bt_reporting.BTUpdateReporter.
+
+    ``take`` hands out the envBTUpdates to send and forgets them; ``restore`` puts back what a failed
+    request was carrying.
+    """
+
+    def take(self) -> list[dict[str, Any]]: ...
+
+    def restore(self, updates: list[dict[str, Any]]) -> None: ...
+
+
 class StreamingDecisionClient(Protocol):
     """Structural interface ``run_game_loop`` drives per tick.
 
@@ -250,6 +275,20 @@ class StreamingDecisionClient(Protocol):
     def send_add(self, frame: FrameData) -> None: ...
 
     def send_delete(self) -> None: ...
+
+
+def _first_task_leaf(node: Any) -> dict[str, Any] | None:
+    """The first Task leaf, pre-order, of a served behavior tree; None when it has none."""
+    if not isinstance(node, dict):
+        return None
+    if node.get("nodeType") == "Task":
+        return node
+    children = node.get("nodes")
+    for child in children if isinstance(children, list) else []:
+        leaf = _first_task_leaf(child)
+        if leaf is not None:
+            return leaf
+    return None
 
 
 class AyoaiStreamingClient:
@@ -347,6 +386,7 @@ class AyoaiStreamingClient:
         session: requests.Session | None = None,
         retry_sleep: Any = None,
         local_game_control: bool = True,
+        unit_wire_scope: str | None = None,
     ) -> None:
         if not streaming_url:
             raise AyoaiStreamingError("streaming_url is required")
@@ -373,6 +413,15 @@ class AyoaiStreamingClient:
         # opening frame, before send_add, so the server has no unit to ask.
         self.local_game_control = local_game_control
 
+        # g-376-201: the unit wire. None keeps every report on the operations wire; a scope
+        # (spec_units.scope_of(game id)) sends send_add and send_update as envUnitUpdates.
+        # g-376-242: choose_action asks on it too, and the move comes back as a tree in ayoBTs[].
+        self._unit_wire: UnitWireState | None = None
+        if unit_wire_scope is not None:
+            if not arc_game_id:
+                raise AyoaiStreamingError("the unit wire needs arc_game_id: it scopes every cell key")
+            self._unit_wire = UnitWireState(scope=unit_wire_scope)
+
         # Tick counter for stream correlation. Increments on every server
         # call; resets are NOT counted (they don't reach the server).
         # Internal to the client — not on the wire (the spec carries
@@ -385,9 +434,24 @@ class AyoaiStreamingClient:
         # under the live server's 200ms-gap limit.
         self._last_post_monotonic: float | None = None
 
+        # g-376-203: where behavior-tree reports come from (attach_bt_reporter). None sends none.
+        self._bt_reporter: BTReportSource | None = None
+
     @property
     def tick(self) -> int:
         return self._tick
+
+    def attach_bt_reporter(self, source: BTReportSource | None) -> None:
+        """Send the events ``source`` holds as ``envBTUpdates`` on the requests that may carry them.
+
+        Those are every request EXCEPT a decision request on the operations wire: the server answers a
+        ``pending_decision`` UPDATE before it reads the batch, and with the world ingest on it refuses to
+        run the perception step on a decision frame that carries envBTUpdates ([ARC-REPORT] ... it carries
+        envBTUpdates). So the events ride the next report (ADD, a report-only UPDATE, the last unit batch of
+        a frame, an ask on the unit wire among them: the server reads that batch whole) or the DELETE that
+        ends the game. None detaches.
+        """
+        self._bt_reporter = source
 
     def close(self) -> None:
         if self._owned_session:
@@ -436,6 +500,10 @@ class AyoaiStreamingClient:
         game-control RESET (`decided_by: "client"`). No random fallback
         path — protocol errors raise exceptions that the game loop must
         surface, not paper over.
+
+        On the unit wire (g-376-242) the frame goes as envUnitUpdates with
+        `pending_decision=true` on the game-state unit, and the decision is
+        read from the tree the response serves in `ayoBTs[]`.
         """
         # Game-control: RESET is decided client-side. Mirrors the prior
         # choose_random_action behavior and skips an empty server call.
@@ -456,6 +524,10 @@ class AyoaiStreamingClient:
             )
 
         self._tick += 1
+        if self._unit_wire is not None:
+            return self._decode_served_decision(
+                self._send_unit_frame(frame, pending_decision=True), frame.available_actions or []
+            )
         payload = self._encode_frame(frame, op="UPDATE", pending_decision=True)
         body = self._post(payload)
         # Pass frame.available_actions through so _decode_decision can
@@ -472,6 +544,9 @@ class AyoaiStreamingClient:
 
         Raises AyoaiStreamingApiError on transport / non-200 / status=fail.
         """
+        if self._unit_wire is not None:
+            self._send_unit_frame(frame)
+            return
         payload = self._encode_frame(frame, op="ADD", pending_decision=False)
         self._post(payload)
 
@@ -483,6 +558,9 @@ class AyoaiStreamingClient:
 
         Raises AyoaiStreamingApiError on transport / non-200 / status=fail.
         """
+        if self._unit_wire is not None:
+            self._send_unit_frame(frame)
+            return
         payload = self._encode_frame(frame, op="UPDATE", pending_decision=False)
         self._post(payload)
 
@@ -497,8 +575,14 @@ class AyoaiStreamingClient:
         attributes carry only `arc_card_id` for correlation — the prior
         UPDATEs carried the full grid state.
 
+        On the unit wire (g-376-204) the game is closed by a DELETE of the game-state unit
+        instead: see `_send_unit_delete`.
+
         Raises AyoaiStreamingApiError on transport / non-200 / status=fail.
         """
+        if self._unit_wire is not None:
+            self._send_unit_delete()
+            return
         payload = {
             "ayoServerKey": self.ayo_server_key,
             # Required streaming-envelope fields (see _encode_frame note) — the
@@ -530,22 +614,9 @@ class AyoaiStreamingClient:
             headers["AYOAI-API-KEY"] = self.api_key
         return headers
 
-    def _encode_frame(
-        self,
-        frame: FrameData,
-        op: str = "UPDATE",
-        pending_decision: bool = True,
-    ) -> dict[str, Any]:
-        """Serialize FrameData into the canonical AyoaiV1 wire shape.
-
-        Mirrors integration-design.md §3.2 (full attribute enumeration) +
-        §3.4 (tick-by-tick flow) exactly — no abbreviations, no missing
-        fields. The `frame` 3D int list is JSON-string-encoded under
-        attributes; its shape is materialized as three int attributes
-        (frame_layers/rows/cols) so the AyoAI solver can index without
-        re-parsing. available_actions is a CSV per §3.2 — the AyoAI side
-        splits on comma.
-        """
+    def _frame_attributes(self, frame: FrameData, pending_decision: bool) -> dict[str, Any]:
+        """The attributes of one frame (integration-design.md §3.2): the operations wire sends them as
+        they are and the unit wire sends them on the game-state unit with `frame` replaced by `grid`."""
         state_name = (
             frame.state.value
             if isinstance(frame.state, GameState)
@@ -599,6 +670,25 @@ class AyoaiStreamingClient:
         if "x" in last_action_data and "y" in last_action_data:
             attributes["last_action_x"] = last_action_data["x"]
             attributes["last_action_y"] = last_action_data["y"]
+        return attributes
+
+    def _encode_frame(
+        self,
+        frame: FrameData,
+        op: str = "UPDATE",
+        pending_decision: bool = True,
+    ) -> dict[str, Any]:
+        """Serialize FrameData into the canonical AyoaiV1 wire shape.
+
+        Mirrors integration-design.md §3.2 (full attribute enumeration) +
+        §3.4 (tick-by-tick flow) exactly — no abbreviations, no missing
+        fields. The `frame` 3D int list is JSON-string-encoded under
+        attributes; its shape is materialized as three int attributes
+        (frame_layers/rows/cols) so the AyoAI solver can index without
+        re-parsing. available_actions is a CSV per §3.2 — the AyoAI side
+        splits on comma.
+        """
+        attributes = self._frame_attributes(frame, pending_decision)
 
         return {
             "ayoServerKey": self.ayo_server_key,
@@ -620,6 +710,56 @@ class AyoaiStreamingClient:
             }],
         }
 
+    def _send_unit_frame(self, frame: FrameData, pending_decision: bool = False) -> dict[str, Any]:
+        """Report `frame` as envUnitUpdates (g-376-201): the cells and cursor that changed, then the game-state
+        unit, and no `operations` key. Each request holds at most MAX_OPS_PER_REQUEST ops, `_post` keeps the
+        gap between requests, and `isLastBatch` is true only on the last request of the frame. The state the
+        server now holds is adopted only after every request was accepted, so a failed frame is re-sent as
+        a diff against what the server last confirmed. A frame the wire cannot carry raises
+        AyoaiStreamingProtocolError before any request is made (a frame with no layer yet, the one before RESET,
+        raises its subclass AyoaiStreamingFrameSkipped). With `pending_decision` the game-state
+        unit asks for a move (g-376-242), and the response of the last request, which holds the answer,
+        is returned."""
+        assert self._unit_wire is not None
+        attributes = self._frame_attributes(frame, pending_decision=pending_decision)
+        has_xy = "last_action_x" in attributes and "last_action_y" in attributes
+        xy = (int(attributes["last_action_x"]), int(attributes["last_action_y"])) if has_xy else None
+        try:
+            plan = self._unit_wire.plan_frame(frame.frame, attributes, xy)
+        except UnitWireNoLayer as exc:
+            raise AyoaiStreamingFrameSkipped(f"frame has nothing to send as units: {exc}") from exc
+        except UnitWireError as exc:
+            raise AyoaiStreamingProtocolError(f"frame cannot be sent as units: {exc}") from exc
+        last = len(plan.batches) - 1
+        body: dict[str, Any] = {}
+        for index, ops in enumerate(plan.batches):
+            body = self._post({
+                "ayoServerKey": self.ayo_server_key,
+                "updateEpochMillis": str(int(time.time() * 1000)),
+                "isLastBatch": index == last,
+                "envUnitUpdates": ops,
+            })
+        self._unit_wire.commit(plan)
+        return body
+
+    def _send_unit_delete(self) -> None:
+        """Close the game on the unit wire (g-376-204): a DELETE of the game-state unit, which the server reads as
+        the end of the card's game and ends the card's slice and frontier sessions on. The spec's DELETE carries
+        the unit's path and key and nothing else, so the server takes the card from the game it has been following.
+        Nothing is sent when the unit was never added (the operations DELETE was likewise sent only after an ADD).
+        Once the server accepted it the unit is gone, so the next frame ADDs it again, as an --episodes N run
+        needs. Pending behavior-tree events ride it, as they rode the operations DELETE."""
+        assert self._unit_wire is not None
+        if not self._unit_wire.game_state_added:
+            return
+        self._post({
+            "ayoServerKey": self.ayo_server_key,
+            "updateEpochMillis": str(int(time.time() * 1000)),
+            "isLastBatch": True,
+            "envUnitUpdates": [game_state_delete_op()],
+        })
+        self._unit_wire.mark_game_state_deleted()
+
     @staticmethod
     def _is_transient_error(payload: str) -> bool:
         """Return True if `payload` mentions any §3.6 transient pattern.
@@ -631,7 +771,35 @@ class AyoaiStreamingClient:
         lower = payload.lower()
         return any(p.lower() in lower for p in _TRANSIENT_PATTERNS)
 
+    def _bt_updates_for(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        """The envBTUpdates ``payload`` may carry (g-376-203), taken from the attached reporter.
+
+        Never a decision request (see attach_bt_reporter), and never a unit batch that is not the last
+        of its frame.
+        """
+        if self._bt_reporter is None or not payload.get("isLastBatch"):
+            return []
+        operations = payload.get("operations")
+        if operations and operations[0].get("attributes", {}).get("pending_decision"):
+            return []
+        return self._bt_reporter.take()
+
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """_post_raw, with the pending behavior-tree events added to the body when it may carry them.
+
+        A request that fails gives its events back to the reporter, so the next one carries them.
+        """
+        updates = self._bt_updates_for(payload)
+        if not updates:
+            return self._post_raw(payload)
+        try:
+            return self._post_raw({**payload, "envBTUpdates": updates})
+        except BaseException:
+            assert self._bt_reporter is not None
+            self._bt_reporter.restore(updates)
+            raise
+
+    def _post_raw(self, payload: dict[str, Any]) -> dict[str, Any]:
         """POST + parse + status-success gate with §3.6 retry-with-backoff.
 
         Centralizes transport/HTTP/JSON/status checks so choose_action,
@@ -663,7 +831,7 @@ class AyoaiStreamingClient:
             elif self._last_post_monotonic is not None:
                 # Inter-call rate-limit throttle (FIRST attempt only — within-call
                 # retries are already spaced by the backoff above). Enforces
-                # >=MIN_REQUEST_GAP_S since the previous _post call's request so
+                # >=MIN_REQUEST_GAP_S since the previous _post call's response so
                 # the per-tick ADD->UPDATE->DELETE burst stays under the live
                 # server's 200ms-gap limit (HTTP 429 RATE_LIMIT_BURST) that the
                 # MockAyoaiServer never modeled. Uses self._retry_sleep so the
@@ -679,7 +847,9 @@ class AyoaiStreamingClient:
                     json=payload,
                     timeout=self.http_timeout_s,
                 )
+                self._last_post_monotonic = time.monotonic()
             except requests.exceptions.RequestException as e:
+                self._last_post_monotonic = time.monotonic()
                 # Transport-level failure. Check if it's transient.
                 err_str = repr(e)
                 if self._is_transient_error(err_str) and attempt < MAX_TRANSIENT_RETRIES:
@@ -758,6 +928,56 @@ class AyoaiStreamingClient:
             )
 
         return body
+
+    def _decode_served_decision(
+        self,
+        body: dict[str, Any],
+        available_actions: list[GameAction],
+    ) -> AyoaiDecision:
+        """The decision a unit-wire ask was answered with (g-376-242): the move of the last tree in ``ayoBTs[]``
+        (the server adds its answer after any tree already queued for the response), a Sequence holding the one
+        Task leaf for the vessel's move, under the key the server issued.
+
+        The tree is the whole answer. A response that serves none, or one this client cannot read, is a
+        protocol error that ends the play, as a response with no ``data.decision`` is on the operations wire.
+        The move goes through ``_decode_decision``, so the §3.6 checks are the operations wire's: a move the
+        game does not offer is RESET with the deviation recorded, and ACTION6 needs integer x,y in [0, 63].
+        ``reasoning`` is the tree with the served key on its root, which is where ServedTreeStreamingAdapter
+        reads the tree and the key a report of it is filed under; ``provenance.served_tree_key`` names the key
+        for the recorder, and ``reasoning_preview`` is the reason the server gave (``treeParams.description``).
+        """
+        trees = body.get("ayoBTs")
+        if not isinstance(trees, list) or not trees:
+            raise AyoaiStreamingProtocolError(
+                f"the ask was answered with no tree in ayoBTs (tick {self._tick}): {str(body)[:300]}"
+            )
+        served = trees[-1]
+        key = served.get("envBTExecKey") if isinstance(served, dict) else None
+        seed = served.get("envSeed") if isinstance(served, dict) else None
+        if not isinstance(key, str) or not key or not isinstance(seed, dict):
+            raise AyoaiStreamingProtocolError(
+                f"the served tree has no envBTExecKey or envSeed (tick {self._tick}): {str(served)[:300]}"
+            )
+        leaf = _first_task_leaf(seed)
+        task_key = leaf.get("ayoTaskKey") if leaf is not None else None
+        if leaf is None or not isinstance(task_key, str) or not task_key:
+            raise AyoaiStreamingProtocolError(
+                f"the served tree {key!r} has no Task leaf with an ayoTaskKey (tick {self._tick})"
+            )
+        params = leaf.get("nodeParams")
+        cell = params if isinstance(params, dict) else {}
+        tree_params = served.get("treeParams")
+        reason = tree_params.get("description") if isinstance(tree_params, dict) else None
+        decision = self._decode_decision(
+            {
+                "status": body.get("status"),
+                "data": {"decision": {"action": task_key, "x": cell.get("x"), "y": cell.get("y"), "reasoning": reason}},
+            },
+            available_actions,
+        )
+        decision.reasoning = {**seed, "envBTExecKey": key}
+        decision.provenance["served_tree_key"] = key
+        return decision
 
     def _decode_decision(
         self,
