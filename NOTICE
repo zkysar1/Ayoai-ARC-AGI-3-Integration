@@ -16,3 +16,10 @@ Apache License above; each keeps its original license and notices:
   carries its MIT License in its header. The metadata.json file beside each
   game comes from the same source and is not covered by this repository's
   Apache License.
+
+One directory of this repository's own code carries its own, more permissive
+license and keeps it:
+
+- kaggle_salvage/
+  my_agent.py, Copyright 2026 AyoAI. MIT No Attribution (MIT-0), full text in
+  kaggle_salvage/LICENSE.

@@ -248,7 +248,7 @@ pre-commit install
 
 ## License
 
-Apache License 2.0; see [LICENSE](LICENSE). Third-party files keep their own licenses. `vendor/ARC-AGI-3-Agents/` and the games in `environment_files/` come from the ARC Prize Foundation under the MIT License, and code derived from ARC-AGI-3-Agents keeps its MIT notice. See [NOTICE](NOTICE) for details.
+Apache License 2.0; see [LICENSE](LICENSE). Third-party files keep their own licenses. `vendor/ARC-AGI-3-Agents/` and the games in `environment_files/` come from the ARC Prize Foundation under the MIT License, and code derived from ARC-AGI-3-Agents keeps its MIT notice. `kaggle_salvage/my_agent.py` keeps its own MIT No Attribution license. See [NOTICE](NOTICE) for details.
 
 Issues and pull requests are welcome; support is best-effort.
 
