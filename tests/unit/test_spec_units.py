@@ -1,10 +1,10 @@
-"""spec_units.py against the env server's Java ArcWorldBuilder and the AyoaiV1 spec (g-376-199).
+"""spec_units.py against the env server's Java ArcWorldFixture and the AyoaiV1 spec (g-376-199).
 
 tests/fixtures/arc_startup_units_golden.json.gz is what the Java builder (Ayoai-Environment-Server dev,
-ArcWorldBuilder + ArcGridGeometry + ArcGridStats) returned for a recorded ARC frame and for a blank
-board, unmodified; tests/fixtures/generate_startup_units_golden.py makes it and names its sources. The
-Python builder must equal it field for field, and its output must pass the spec's rules
-(tests/fixtures/startup_conformance.py) - with a positive control for every rule.
+ArcWorldFixture + ArcGridGeometry + ArcGridStats, with the unit keys of ArcWorldBuilder) returned for a
+recorded ARC frame and for a blank board, unmodified; tests/fixtures/generate_startup_units_golden.py
+makes it and names its sources. The Python builder must equal it field for field, and its output must
+pass the spec's rules (tests/fixtures/startup_conformance.py) - with a positive control for every rule.
 """
 
 from __future__ import annotations
@@ -58,7 +58,9 @@ def _same(a: Any, b: Any) -> bool:
 def test_the_fixture_names_the_java_sources_it_came_from(golden: dict[str, Any]) -> None:
     source = golden["meta"]["env_server"]
     assert re.fullmatch(r"[0-9a-f]{40}", source["commit"]), source
-    assert set(source["builder_files"]) == {"ArcWorldBuilder.java", "ArcGridGeometry.java", "ArcGridStats.java"}
+    assert set(source["builder_files"]) == {
+        "ArcWorldBuilder.java", "ArcGridGeometry.java", "ArcGridStats.java", "ArcWorldFixture.java",
+    }
     assert all(re.fullmatch(r"[0-9a-f]{40}", blob) for blob in source["builder_files"].values())
     assert golden["meta"]["recorded_frame"]["game"] == GAME_ID
 

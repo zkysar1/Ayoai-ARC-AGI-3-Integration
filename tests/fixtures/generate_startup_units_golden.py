@@ -1,10 +1,14 @@
 """Regenerates tests/fixtures/arc_startup_units_golden.json.gz (g-376-199).
 
-The fixture is what the env server's own Java ArcWorldBuilder returns, so spec_units.py is tested
+The fixture is what the env server's own Java world builder returns, so spec_units.py is tested
 against the builder it must equal and not against a second copy of its logic. This script extracts the
 builder's sources from a ref of the Ayoai-Environment-Server repo, compiles them with GoldenDump.java
 (which only calls them), runs that over a recorded frame, and writes the trimmed output with its
 provenance. It needs a JDK 21 on PATH (the env server's own, JavaLanguageVersion 21).
+
+The world builder is ArcWorldFixture under src/test since g-376-204 (Ayoai-Environment-Server PR 778,
+merge 293237b6, dev 2026-10-28); src/main keeps only the unit keys in ArcWorldBuilder. --ref must hold
+that file: a ref before PR 778 has the builder in ArcWorldBuilder, which this script does not read.
 
     uv run python tests/fixtures/generate_startup_units_golden.py \\
         --env-server-repo /path/to/Ayoai-Environment-Server --ref origin/dev \\
@@ -27,8 +31,12 @@ from pathlib import Path
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
-BUILDER_DIR = "src/main/java/AyoServer/Arc"
-BUILDER_FILES = ("ArcWorldBuilder.java", "ArcGridGeometry.java", "ArcGridStats.java")
+BUILDER_SOURCES = (
+    "src/main/java/AyoServer/Arc/ArcWorldBuilder.java",  # the unit keys ArcWorldFixture imports
+    "src/main/java/AyoServer/Arc/ArcGridGeometry.java",
+    "src/main/java/AyoServer/Arc/ArcGridStats.java",
+    "src/test/java/AyoServer/Arc/ArcWorldFixture.java",  # the world builder, a test fixture since g-376-204
+)
 GAME_ID = "ls20-9607627b"
 SCOPE_IDS = [GAME_ID, "ft09-0d8bbf25", "lp85-305b61c3", "x", "a-b_c.d", "café"]
 MOVED_CURSOR = [31, 17]
@@ -57,7 +65,7 @@ def main() -> int:
 
     repo = Path(args.env_server_repo)
     commit = run(["git", "rev-parse", args.ref], cwd=repo)
-    blobs = {name: run(["git", "rev-parse", f"{args.ref}:{BUILDER_DIR}/{name}"], cwd=repo) for name in BUILDER_FILES}
+    blobs = {Path(src).name: run(["git", "rev-parse", f"{args.ref}:{src}"], cwd=repo) for src in BUILDER_SOURCES}
     lines = Path(args.recording).read_text(encoding="utf-8").splitlines()
     frame = json.loads(lines[1])["data"]["frame"]
     grid = frame[0]
@@ -66,8 +74,8 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as tmp_name:
         tmp = Path(tmp_name)
-        for name in BUILDER_FILES:
-            (tmp / name).write_text(run(["git", "show", f"{args.ref}:{BUILDER_DIR}/{name}"], cwd=repo) + "\n", encoding="utf-8")
+        for src in BUILDER_SOURCES:
+            (tmp / Path(src).name).write_text(run(["git", "show", f"{args.ref}:{src}"], cwd=repo) + "\n", encoding="utf-8")
         cases = [
             {"name": "first-frame", "game_id": GAME_ID, "cursor": [0, 0], "grid": grid},
             {"name": "first-frame-cursor-moved", "game_id": GAME_ID, "cursor": MOVED_CURSOR, "grid": grid},
@@ -76,7 +84,7 @@ def main() -> int:
         (tmp / "in.json").write_text(json.dumps({"scope_ids": SCOPE_IDS, "cases": cases}), encoding="utf-8")
         classes = tmp / "classes"
         classes.mkdir()
-        sources = [str(tmp / n) for n in BUILDER_FILES] + [str(HERE / "GoldenDump.java")]
+        sources = [str(tmp / Path(src).name) for src in BUILDER_SOURCES] + [str(HERE / "GoldenDump.java")]
         run(["javac", "-cp", args.classpath, "-d", str(classes), *sources])
         run(["java", "-cp", f"{classes}:{args.classpath}", "AyoServer.Arc.GoldenDump", str(tmp / "in.json"), str(tmp / "out.json")])
         java = json.loads((tmp / "out.json").read_text(encoding="utf-8"))
@@ -94,7 +102,7 @@ def main() -> int:
 
     fixture = {
         "meta": {
-            "about": "What the env server's Java ArcWorldBuilder.buildRootUnits returns (nested, unmodified) "
+            "about": "What the env server's Java ArcWorldFixture.buildRootUnits returns (nested, unmodified) "
                      "for a recorded ARC frame and for a blank board; tests/unit/test_spec_units.py flattens it "
                      "and asserts spec_units.build_startup_units equals it. g-376-199.",
             "generated_by": "tests/fixtures/generate_startup_units_golden.py",
