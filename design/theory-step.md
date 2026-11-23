@@ -31,7 +31,7 @@ From the asp-376 plan and `HOUSE_RULES.md`:
 |---|---|
 | D1: smallest model by default, no silent step-up (guard-894) | Model `claude-haiku-4-5-20251001`. `spend_meter.RATES` has rows for Haiku only, so any other model is refused before the call. A step-up means adding a rate row in a visible diff and reporting that game separately. |
 | D2: the model runs only between moves; plain code picks every move | The model returns code, never an action. Moves come from the planner (§8.3) or the plain-code explorer (§8.4). ARC-AGI-3 waits for each action, so a model call costs wall-clock time and dollars, never moves. |
-| D3: $250 cap per UTC calendar month, cost per game (ruled monthly 2026-10-08; it read "to 2026-10-08" before) | Every call goes through `spend_meter.MeteredClient` (monthly cap, no end date, fail closed) and a per-game budget (§10). |
+| D3: $2,500 cap per UTC calendar month, cost per game (ruled monthly 2026-10-08, when it read $250 and "to 2026-10-08" before; the owner's 2026-11-23 directive raised it to $2,500, g-376-395) | Every call goes through `spend_meter.MeteredClient` (monthly cap, no end date, fail closed) and a per-game budget (§10). |
 | D4: games run through an AyoAI session, learning kept in AyoAI memory | The theory step lives inside the solver the AyoAI session routes (the v4 `V4Arm` in `solver_v2/streaming_adapter.py`). At each level-up it writes a theory record for AyoAI memory (§12, built by g-376-10). |
 | Rule 1: screen and allowed moves only, never game source | The model sees the frame, the allowed actions and the level counter. Theory code runs in a sandbox with no files, no imports and no network (§6.3), so it cannot read `environment_files/`. |
 | Rule 2: general purpose only, no game named in code or prompt | One prompt template for every game. The prompt builder takes no game id argument, so it cannot put one in the prompt. |
@@ -409,7 +409,7 @@ Three layers, all in code, all fail closed:
 
 | Layer | Enforced by | Limit | On refusal |
 |---|---|---|---|
-| Global | `spend_meter.MeteredClient` (g-376-08) | this UTC month's spend + pre-call worst case ≤ $250 (no end date; earlier months do not count); model must have a rate row | raises `SpendRefused`; the theory step stops calling for the rest of the run |
+| Global | `spend_meter.MeteredClient` (g-376-08) | this UTC month's spend + pre-call worst case ≤ $2,500 per ledger file (one per box by default; $250 until 2026-11-23, g-376-395; no end date; earlier months do not count); model must have a rate row | raises `SpendRefused`; the theory step stops calling for the rest of the run |
 | Per game | `GameBudget` (new, g-376-09), checked before each call | 60 calls per game; 15 calls per level; game cost (summed from the ledger rows with this `run_id` and `game_id`) + the meter's pre-call estimate ≤ $2.00 | no call; the solver keeps the last admitted theory and the explorer (strict superset: never worse than the plain-code solver) |
 | Per call | request parameters | `max_tokens` 4,000; theory ≤ 12,000 characters | the call is capped; an oversized theory is refused at check 1 |
 
@@ -435,8 +435,9 @@ opening call, plus about 5 rewrites and 3 win-guess revisions per attempted leve
 over about 2.5 attempted levels: 1 + 8 × 2.5 = 21 calls; 21 × $0.0245 = **$0.51**.
 
 Per full cold sweep of the 15 dev games: worst 15 × $1.92 = **$28.80**; expected
-15 × $0.51 = **$7.65**. The $250 cap covers 8 worst-case sweeps (8 × $28.80 =
-$230.40), which is room for the checkpoint runs (g-376-12) plus debugging.
+15 × $0.51 = **$7.65**. The $250 cap (until 2026-11-23) covered 8 worst-case sweeps (8 × $28.80 =
+$230.40), which is room for the checkpoint runs (g-376-12) plus debugging; the
+$2,500 cap covers 86 (86 × $28.80 = $2,476.80, g-376-395).
 
 Tokens, for comparison with Twin: worst case per game 60 × (12,000 + 4,000) = 960,000
 tokens; Twin averaged 2.60B / 25 = 104M tokens per game, about 108× more.
@@ -445,7 +446,7 @@ The meter's pre-call check counts UTF-8 bytes as input tokens, so it over-reserv
 Assuming no more than 4 bytes per token (prose runs about 4, the screen about 1), a
 12,000-token prompt is at most about 48,000 bytes, and the reservation is at most
 48,000 × $1.00/1M + 4,000 × $5.00/1M = $0.068 per call. That matters only near the
-cap. The cap is $250 per UTC calendar month with no end date (owner ruling 2026-10-08,
+cap. The cap is $2,500 per UTC calendar month per ledger file (one per box by default) with no end date (owner ruling 2026-10-08, raised from $250 on 2026-11-23: g-376-395;
 g-376-124), so the exam draws on the month it runs in.
 
 ## 11. Measures

@@ -18,7 +18,7 @@ port-backed session client of g-376-30 (eval/port-client-2026-09-25.json).
 
 `--player port --theory-share S` also attaches the theory arm (g-376-24) with
 ArmConfig(win_test_share=S), built as main.py builds it for SOLVER_V2_THEORY_ARM:
-model calls go through spend_meter (the $250 cap and its ledger), and each game's
+model calls go through spend_meter (the monthly cap and its ledger), and each game's
 records go to a run directory under ARC_THEORY_RUN_DIR (default
 ~/.ayoai-arc/theory-runs). The port-only run, without --theory-share, is the
 coverage arm: a share of 0 still lets the arm follow one plan per level.
