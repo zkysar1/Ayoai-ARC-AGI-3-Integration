@@ -536,6 +536,55 @@ def test_initiate_cold_start_other_statuses_stay_terminal(status):
     assert sess.post.call_count == 1
 
 
+# ---------- g-376-382: a 409 coded env_prebake_missing starts nothing ---------- #
+
+# The body Collect answers that 409 with. The code is the literal production value, not an import: the
+# client and Collect deploy independently, so the test pins what Collect sends (guard-920). The message
+# carries an internal path, which must not reach the error the client raises.
+_PREBAKE_BODY = {
+    "status": "fail",
+    "error": "Environment is not pre-baked: /internal/path/env.json",
+    "error_code": "env_prebake_missing",
+}
+
+
+def test_initiate_cold_start_409_env_prebake_missing_raises_naming_the_environment():
+    """THE regression test for g-376-382: no server will start, so the readiness poll must not run.
+
+    Collect answers 409 for two opposite conditions. A startup already running is a duplicate (return
+    None, the poll decides). An environment with no pre-bake starts nothing and never will, so the poll
+    could only run out its budget and report a timeout in place of the cause.
+    """
+    sess = MagicMock(spec=requests.Session)
+    sess.post.return_value = _mock_response(409, _PREBAKE_BODY)
+    with pytest.raises(AyoaiApiError, match="env_prebake_missing") as exc:
+        _initiate_cold_start("card-P", "arc-agi-3", "k", sess, 10.0)
+    assert "arc-agi-3" in str(exc.value) and "card-P" in str(exc.value)
+    assert "/internal/path" not in str(exc.value)
+    assert sess.post.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"status": "fail", "error": "startup in flight", "error_code": "startup_in_flight"},
+        {"status": "fail", "error": "a code added later", "error_code": "a_code_added_later"},
+        {"status": "fail", "error": "a longer code", "error_code": "env_prebake_missing_v2"},
+        {"status": "fail", "error": "no code", "error_code": None},
+        {"status": "fail", "error": "already started"},
+        {"status": "fail", "error_code": ["env_prebake_missing"]},
+        ["env_prebake_missing"],
+    ],
+)
+def test_initiate_cold_start_409_with_any_other_body_still_defers_to_the_poll(body):
+    """Only the one code is terminal: a duplicate start, another or longer code, no code, and a body that
+    is not an object keep 409's handling (return None, the readiness poll adjudicates)."""
+    sess = MagicMock(spec=requests.Session)
+    sess.post.return_value = _mock_response(409, body)
+    assert _initiate_cold_start("card-P", "arc-agi-3", "k", sess, 10.0) is None
+    assert sess.post.call_count == 1
+
+
 def test_initiate_cold_start_attempts_env_override(monkeypatch):
     """AYOAI_COLD_START_ATTEMPTS tunes the retry budget without a code change."""
     monkeypatch.setattr("ayoai_client.COLD_START_RETRY_DELAY_S", 0)
@@ -713,6 +762,17 @@ def test_open_session_cold_start_504_proceeds_to_poll():
     assert session.post.call_count == 2
     assert info.status_log[0]["status"] == "INITIATED"
     assert info.status_log[0].get("invocation_type") is None
+
+
+def test_open_session_cold_start_409_env_prebake_missing_raises_without_polling():
+    """End-to-end shape of g-376-382: session-open stops at the cold start instead of polling its whole budget."""
+    session = _make_session_mock(
+        [_mock_response(200, _success_body("host-never-asked"))],
+        cold_start=_mock_response(409, _PREBAKE_BODY),
+    )
+    with pytest.raises(AyoaiApiError, match="env_prebake_missing"):
+        open_ayoai_session("card-N", api_key="k", session=session)
+    assert session.post.call_count == 1  # the cold start; the readiness poll never ran
 
 
 # ---------- Status log evidence ---------- #

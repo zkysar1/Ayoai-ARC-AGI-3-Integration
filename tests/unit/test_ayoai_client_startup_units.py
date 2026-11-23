@@ -176,6 +176,40 @@ def test_a_504_on_the_last_batch_leaves_the_readiness_poll_to_decide_as_before()
     assert _open(sess, startup_batches=_batches(), env_config=ENV_CONFIG).attempts == 1
 
 
+# A 409 coded env_prebake_missing starts nothing (g-376-382): the literal wire value, and a message that
+# carries an internal path the raised error must leave out.
+_PREBAKE_409 = {
+    "status": "fail",
+    "error": "Environment is not pre-baked: /internal/path/env.json",
+    "error_code": "env_prebake_missing",
+}
+
+
+def test_a_409_env_prebake_missing_on_a_batch_before_the_last_stops_the_run() -> None:
+    # No server will start, so the readiness poll would only run out its budget and report a timeout.
+    sess = _session(_response(409, _PREBAKE_409))
+    with pytest.raises(AyoaiApiError, match="env_prebake_missing") as exc:
+        _open(sess, startup_batches=_batches(), env_config=ENV_CONFIG)
+    assert "arc-agi-3" in str(exc.value) and "card-Z" in str(exc.value)
+    assert "/internal/path" not in str(exc.value)
+    assert sess.post.call_count == 1
+
+
+def test_a_409_env_prebake_missing_on_the_last_batch_stops_the_run() -> None:
+    sess = _session(_saved(1), _saved(2), _response(409, _PREBAKE_409))
+    with pytest.raises(AyoaiApiError, match="env_prebake_missing") as exc:
+        _open(sess, startup_batches=_batches(), env_config=ENV_CONFIG)
+    assert "arc-agi-3" in str(exc.value) and "/internal/path" not in str(exc.value)
+    assert sess.post.call_count == 3
+
+
+def test_a_409_startup_in_flight_on_a_batch_before_the_last_still_leaves_the_readiness_poll_to_decide() -> None:
+    sess = _session(_response(409, {"status": "fail", "error": "in flight", "error_code": "startup_in_flight"}), _ready())
+    info = _open(sess, startup_batches=_batches(), env_config=ENV_CONFIG)
+    assert [c.args[0] for c in sess.post.call_args_list] == [DEV_COLD_START_URL, DEV_RESOLUTION_URL]
+    assert info.attempts == 1
+
+
 def test_a_batch_answered_starting_before_the_last_stops_the_run() -> None:
     # An older Collect starts the server on the first POST and ignores the units: stop there, not after a
     # five-minute readiness poll of a server that lacks them.

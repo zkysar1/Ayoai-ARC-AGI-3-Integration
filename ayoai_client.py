@@ -58,6 +58,11 @@ COLD_START_URL = "https://api.ayoai.com/httpV1/CollectAyoEnvironmentInBatchesOnS
 # the Collect Lambda (env must be DDB-registered + EFS-pre-baked).
 CLIENT_TYPE_ARC = "arc"
 
+# The error_code in the body of the 409 Collect answers when an environment has no pre-bake (g-376-382).
+# No server is started and none will be, so a readiness poll can only run out its budget. Collect's other
+# 409s (startup_in_flight, a 409 with no code) are the duplicate-start answers the poll adjudicates.
+ERROR_CODE_PREBAKE_MISSING = "env_prebake_missing"
+
 # The DEV lane (g-376-10-b, grant-015). AYOAI_LANE=dev opens the session through
 # the SdlcPlane=dev launch chain: both calls go to the /dev stage, and the cold
 # start asks for the dev jar. The two go together: a dev-route launch without
@@ -306,6 +311,28 @@ def _post_cold_start(
     return r
 
 
+def _raise_if_prebake_missing(r: requests.Response, card_id: str, env_key: str) -> None:
+    """Raise AyoaiApiError when a 409 from Collect carries error_code env_prebake_missing (g-376-382).
+
+    That 409 is not the duplicate-start answer its status suggests: Collect started nothing and will not
+    until an operator registers the environment, so the readiness poll the caller would fall back to can
+    only run out its budget and report a timeout in place of the cause. A 409 with no readable body, a
+    body that is not an object, and a code that is absent or any other value return, and the caller's
+    duplicate-start handling stands. The text names the environment and leaves out the body: Collect's
+    message carries an internal path.
+    """
+    try:
+        body = r.json()
+    except ValueError:
+        return
+    if isinstance(body, dict) and body.get("error_code") == ERROR_CODE_PREBAKE_MISSING:
+        raise AyoaiApiError(
+            f"Cold-start request to Collect was refused (HTTP 409, {ERROR_CODE_PREBAKE_MISSING}): "
+            f"environment {env_key!r} is not pre-baked, so no server will start for "
+            f"ayoServerKey={card_id}; an operator has to register the environment first"
+        )
+
+
 def _send_startup_batch(
     number: int,
     total: int,
@@ -320,7 +347,8 @@ def _send_startup_batch(
     Collect answers a saved batch HTTP 200 {"status": "success", "batch_count": N} and starts nothing.
     A repeated batch is saved again and leaves the tree unchanged (g-376-197), so the transport retry of
     _post_cold_start is safe here. False on 409: a server was already started for this key, so further
-    batches would only be refused and the readiness poll adjudicates, as for the last batch.
+    batches would only be refused and the readiness poll adjudicates, as for the last batch. A 409 coded
+    env_prebake_missing is the exception: no server is started, so it raises (g-376-382).
 
     Raises AyoaiApiError on any other answer, 504 included: a save the caller gave up on may or may not
     have landed, and the server would start on a world with units missing. A 200 that is not "success"
@@ -346,6 +374,7 @@ def _send_startup_batch(
         )
         return True
     if r.status_code == 409:
+        _raise_if_prebake_missing(r, card_id, payload["ayoEnvironmentKey"])
         logger.info(
             "Cold-start already initiated for ayoServerKey=%s (HTTP 409 on batch %d of %d); "
             "proceeding to readiness poll",
@@ -378,8 +407,10 @@ def _initiate_cold_start(
     Idempotent w.r.t. server-side state: 409 (duplicate startup) is treated
     as success — the cold-start may have already been initiated by a prior
     process for the same `card_id`, and the subsequent readiness poll
-    captures the current state regardless. All other non-200 responses
-    are terminal (env not registered, auth failure, pre-bake missing).
+    captures the current state regardless. A 409 whose body error_code is
+    env_prebake_missing is the exception (g-376-382): no server starts and none will, so it is
+    terminal. All other non-200 responses are terminal (env not registered, auth failure,
+    pre-bake missing).
 
     Args:
         card_id: ARC scorecard card_id (used as ayoServerKey).
@@ -405,9 +436,9 @@ def _initiate_cold_start(
         no body parsing required).
 
     Raises:
-        AyoaiApiError: Lambda returned 4xx other than 409, or 5xx, or
-            transport failure. Terminal for the caller — the env is not
-            in a state from which polling can succeed.
+        AyoaiApiError: Lambda returned 4xx other than 409, a 409 coded
+            env_prebake_missing, or 5xx, or transport failure. Terminal for the
+            caller — the env is not in a state from which polling can succeed.
     """
     payload: dict[str, Any] = {
         "ayoServerKey": card_id,
@@ -475,6 +506,8 @@ def _initiate_cold_start(
         return body
 
     if r.status_code == 409:
+        # Collect also answers 409 for an environment with no pre-bake: that one starts nothing (g-376-382).
+        _raise_if_prebake_missing(r, card_id, env_key)
         # State conflict — server-key already has a startup sentinel. Could
         # be a prior crashed run or a concurrent client. Either way, the
         # readiness poll will reveal the actual state.
