@@ -88,11 +88,11 @@ def test_admits_calls_after_the_old_window_end(tmp_path: Path) -> None:
 
 def test_cap_counts_only_the_calls_month(tmp_path: Path) -> None:
     ledger = tmp_path / "ledger.jsonl"
-    _spent(ledger, "2026-09-25T00:00:00+00:00", 250.0)  # September is at the cap
+    _spent(ledger, "2026-09-25T00:00:00+00:00", 250.0)  # September is at the fixture cap
     inner = FakeInner()
     _call(_client(ledger, inner, now=datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)))
     assert inner.calls == 1  # a prior month's rows do not count
-    _spent(ledger, "2026-10-09T13:00:00+00:00", 250.0)  # October reaches the cap
+    _spent(ledger, "2026-10-09T13:00:00+00:00", 250.0)  # October reaches the fixture cap
     with pytest.raises(SpendRefused, match="cap .* for 2026-10"):
         _call(_client(ledger, inner, now=datetime(2026, 10, 20, tzinfo=timezone.utc)))
     assert inner.calls == 1

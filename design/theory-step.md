@@ -409,7 +409,7 @@ Three layers, all in code, all fail closed:
 
 | Layer | Enforced by | Limit | On refusal |
 |---|---|---|---|
-| Global | `spend_meter.MeteredClient` (g-376-08) | this UTC month's spend + pre-call worst case ≤ $2,500 per ledger file ($250 until 2026-11-23, g-376-395; no end date; earlier months do not count); model must have a rate row | raises `SpendRefused`; the theory step stops calling for the rest of the run |
+| Global | `spend_meter.MeteredClient` (g-376-08) | this UTC month's spend + pre-call worst case ≤ $2,500 per ledger file (one per box by default; $250 until 2026-11-23, g-376-395; no end date; earlier months do not count); model must have a rate row | raises `SpendRefused`; the theory step stops calling for the rest of the run |
 | Per game | `GameBudget` (new, g-376-09), checked before each call | 60 calls per game; 15 calls per level; game cost (summed from the ledger rows with this `run_id` and `game_id`) + the meter's pre-call estimate ≤ $2.00 | no call; the solver keeps the last admitted theory and the explorer (strict superset: never worse than the plain-code solver) |
 | Per call | request parameters | `max_tokens` 4,000; theory ≤ 12,000 characters | the call is capped; an oversized theory is refused at check 1 |
 
@@ -446,7 +446,7 @@ The meter's pre-call check counts UTF-8 bytes as input tokens, so it over-reserv
 Assuming no more than 4 bytes per token (prose runs about 4, the screen about 1), a
 12,000-token prompt is at most about 48,000 bytes, and the reservation is at most
 48,000 × $1.00/1M + 4,000 × $5.00/1M = $0.068 per call. That matters only near the
-cap. The cap is $2,500 per UTC calendar month with no end date (owner ruling 2026-10-08, raised from $250 on 2026-11-23: g-376-395;
+cap. The cap is $2,500 per UTC calendar month per ledger file (one per box by default) with no end date (owner ruling 2026-10-08, raised from $250 on 2026-11-23: g-376-395;
 g-376-124), so the exam draws on the month it runs in.
 
 ## 11. Measures
