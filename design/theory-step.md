@@ -409,7 +409,7 @@ Three layers, all in code, all fail closed:
 
 | Layer | Enforced by | Limit | On refusal |
 |---|---|---|---|
-| Global | `spend_meter.MeteredClient` (g-376-08) | this UTC month's spend + pre-call worst case ≤ $2,500 ($250 until 2026-11-23, g-376-395; no end date; earlier months do not count); model must have a rate row | raises `SpendRefused`; the theory step stops calling for the rest of the run |
+| Global | `spend_meter.MeteredClient` (g-376-08) | this UTC month's spend + pre-call worst case ≤ $2,500 per ledger file ($250 until 2026-11-23, g-376-395; no end date; earlier months do not count); model must have a rate row | raises `SpendRefused`; the theory step stops calling for the rest of the run |
 | Per game | `GameBudget` (new, g-376-09), checked before each call | 60 calls per game; 15 calls per level; game cost (summed from the ledger rows with this `run_id` and `game_id`) + the meter's pre-call estimate ≤ $2.00 | no call; the solver keeps the last admitted theory and the explorer (strict superset: never worse than the plain-code solver) |
 | Per call | request parameters | `max_tokens` 4,000; theory ≤ 12,000 characters | the call is capped; an oversized theory is refused at check 1 |
 
@@ -435,8 +435,9 @@ opening call, plus about 5 rewrites and 3 win-guess revisions per attempted leve
 over about 2.5 attempted levels: 1 + 8 × 2.5 = 21 calls; 21 × $0.0245 = **$0.51**.
 
 Per full cold sweep of the 15 dev games: worst 15 × $1.92 = **$28.80**; expected
-15 × $0.51 = **$7.65**. The $250 cap of that date covered 8 worst-case sweeps (8 × $28.80 =
-$230.40), which is room for the checkpoint runs (g-376-12) plus debugging.
+15 × $0.51 = **$7.65**. The $250 cap (until 2026-11-23) covered 8 worst-case sweeps (8 × $28.80 =
+$230.40), which is room for the checkpoint runs (g-376-12) plus debugging; the
+$2,500 cap covers 86 (86 × $28.80 = $2,476.80, g-376-395).
 
 Tokens, for comparison with Twin: worst case per game 60 × (12,000 + 4,000) = 960,000
 tokens; Twin averaged 2.60B / 25 = 104M tokens per game, about 108× more.

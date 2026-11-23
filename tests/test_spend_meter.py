@@ -29,6 +29,7 @@ class FakeInner:
         return self.response
 
 
+# The 250.0 default is a fixture cap handed in as cap_usd; the production cap is CAP_USD.
 def _client(ledger: Path, inner: FakeInner, cap: float = 250.0, now: datetime = IN_WINDOW) -> MeteredClient:
     return MeteredClient(inner, game_id="ls20", run_id="r1", ledger=ledger, cap_usd=cap, now=lambda: now)
 
@@ -166,7 +167,8 @@ def test_a_client_with_the_default_cap_admits_a_call_with_250_already_spent(tmp_
     inner = FakeInner()
     _call(MeteredClient(inner, ledger=ledger, now=lambda: IN_WINDOW))
     assert inner.calls == 1
-    _spent(ledger, "2026-09-25T00:00:01+00:00", 2250.0)  # the month now sits at the $2,500 cap
+    # the admitted call booked its own row, so the month now sits just past the $2,500 cap
+    _spent(ledger, "2026-09-25T00:00:01+00:00", 2250.0)
     with pytest.raises(SpendRefused, match=r"cap \$2500\.00 for 2026-09"):
         _call(MeteredClient(inner, ledger=ledger, now=lambda: IN_WINDOW))
     assert inner.calls == 1
