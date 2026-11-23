@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-CAP_USD = 250.0  # per UTC calendar month, per ledger file; no end date
+CAP_USD = 2500.0  # per UTC calendar month, per ledger file; no end date; was 250.0 until the owner's 2026-11-23 directive (g-376-395)
 
 # USD per million tokens (input, output), list price for Claude Haiku 4.5 from
 # https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-09-24).

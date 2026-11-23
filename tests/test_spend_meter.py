@@ -149,8 +149,27 @@ def test_summary_prints_the_months_spend_against_the_cap() -> None:
         {"ts": "2026-10-02T00:00:00+00:00", "cost_usd": 4.5, "model": HAIKU, "game_id": "b"},
     ]
     out = spend_meter.summary(rows, now=datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc))
-    assert out.splitlines()[0].startswith("spent $4.5000 of $250.00 cap in 2026-10")
+    assert out.splitlines()[0].startswith("spent $4.5000 of $2500.00 cap in 2026-10")
     assert "$14.5000 over 2 call(s) in the ledger" in out
+
+
+def test_the_default_cap_is_the_2500_monthly_cap(tmp_path: Path) -> None:
+    # The owner's 2026-11-23 directive raised the monthly cap from $250 to $2,500 (g-376-395). A client
+    # built without cap_usd enforces CAP_USD and summary() prints it, so one constant moves both.
+    assert spend_meter.CAP_USD == 2500.0
+    assert MeteredClient(FakeInner(), ledger=tmp_path / "l.jsonl").cap_usd == 2500.0
+
+
+def test_a_client_with_the_default_cap_admits_a_call_with_250_already_spent(tmp_path: Path) -> None:
+    ledger = tmp_path / "ledger.jsonl"
+    _spent(ledger, "2026-09-25T00:00:00+00:00", 250.0)  # the old cap, now a tenth of the month's room
+    inner = FakeInner()
+    _call(MeteredClient(inner, ledger=ledger, now=lambda: IN_WINDOW))
+    assert inner.calls == 1
+    _spent(ledger, "2026-09-25T00:00:01+00:00", 2250.0)  # the month now sits at the $2,500 cap
+    with pytest.raises(SpendRefused, match=r"cap \$2500\.00 for 2026-09"):
+        _call(MeteredClient(inner, ledger=ledger, now=lambda: IN_WINDOW))
+    assert inner.calls == 1
 
 
 def test_refuses_nan_ledger(tmp_path: Path) -> None:

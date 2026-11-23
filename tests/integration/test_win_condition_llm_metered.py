@@ -8,7 +8,7 @@ and the win-condition LLM tests inject their own fake client
     LLMHypothesizer.hypothesize() -> _call_llm -> MeteredClient.create -> ledger
 
 Only the provider UNDER the meter is faked. The hypothesizer, the meter, its
-default $250 cap and the JSONL ledger file are the production code.
+default monthly cap and the JSONL ledger file are the production code.
 
 Asserts:
   - One hypothesize() call writes exactly one priced ledger row carrying the

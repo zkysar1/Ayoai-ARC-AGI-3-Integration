@@ -3,7 +3,7 @@
 Plays one game with the arc-agi toolkit in OFFLINE mode (the games run from
 environment_files/; no ARC key, no network to ARC). The TheoryArm picks the moves,
 and a plain-code explorer (untried actions first on each screen) is its fallback.
-Model calls go through spend_meter (the global $250 cap and its ledger) with the
+Model calls go through spend_meter (the global monthly cap and its ledger) with the
 smallest model. The per-call, per-level and memory records plus summary.json go to
 a run directory outside the repo (design/theory-step.md §11), and the summary is
 printed as one JSON line.
