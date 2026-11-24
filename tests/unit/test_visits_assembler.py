@@ -241,6 +241,7 @@ def test_a_visit_row_from_real_shaped_inputs(tmp_path: Path, rec_dir: Path) -> N
             },
         },
         "mind_wakes": None,
+        "mind_wakes_reason": "no visit-extras file for this visit",
         "card_id": "card-a",
         "scorecard": {"status": "present", "total_levels_completed": 1, "total_actions": 8},
         "recording": "a.recording.jsonl",
@@ -406,7 +407,79 @@ def test_meter_snapshot_states_what_is_absent(tmp_path: Path, rec_dir: Path) -> 
     assert other["spend"]["meter"] == {"status": "no snapshot row for this card"}
     assert bare["spend"]["meter"] == {"status": "snapshot row carries no accrued_* field"}
     assert unset["spend"]["meter"] == {"status": "no snapshot given"}
-    assert other["mind_wakes"] is None and bare["mind_wakes"] is None and unset["mind_wakes"] is None
+    assert all(r["mind_wakes"] is None and r["mind_wakes_reason"] == va.NO_EXTRAS_REASON for r in (other, bare, unset))
+
+
+def _extras(run_dir: Path, position: int, **over: Any) -> Path:
+    """visit-extras/<NN>.json as seq_driver_tools.py extras writes it (design/long-horizon-protocol.md, Amendment 4)."""
+    row: dict[str, Any] = {"k": position, "label": f"V{position:02d}", "game": GAME, "block": "B1", "mind_wakes": {"value": 19}}
+    row.update(over)
+    path = run_dir / "visit-extras" / f"{position:02d}.json"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(row))
+    return path
+
+
+@pytest.mark.parametrize("count", [0, 19])
+def test_the_mind_wake_count_the_extras_carry_reaches_the_row_and_a_zero_stays_a_zero(
+    tmp_path: Path, rec_dir: Path, count: int
+) -> None:
+    rec = _recording(rec_dir / "a.recording.jsonl", "card-a", GAME, start=0)
+    run_dir = _run(tmp_path, [_visit("E", GAME, "B1", 1, rec)])
+    _extras(run_dir, 1, mind_wakes={"value": count})
+
+    (row,), _ = va.assemble(run_dir, rec_dir, [])
+
+    assert row["mind_wakes"] == count and row["mind_wakes"] is not None and row["mind_wakes_reason"] is None
+
+
+def test_a_null_count_keeps_its_reason_and_a_visit_with_no_extras_file_says_so(tmp_path: Path, rec_dir: Path) -> None:
+    first = _recording(rec_dir / "a.recording.jsonl", "card-a", GAME, start=0)
+    second = _recording(rec_dir / "b.recording.jsonl", "card-b", GAME, start=20)
+    run_dir = _run(tmp_path, [_visit("E", GAME, "B1", 1, first), _visit("E", GAME, "B1", 2, second)])
+    reason = f"log of {GAME} does not cover the window " + "y" * 300  # a game id, and more text than the cut allows
+    _extras(run_dir, 1, mind_wakes={"value": None, "reason": reason})
+
+    rows, _ = va.assemble(run_dir, rec_dir, [])
+
+    assert rows[0]["mind_wakes"] is None
+    assert rows[0]["mind_wakes_reason"].startswith("log of <game> does not cover the window ")
+    assert len(rows[0]["mind_wakes_reason"]) == 200
+    assert not any(part in rows[0]["mind_wakes_reason"] for part in GAME.split("-"))  # masked before the cut
+    assert rows[1]["mind_wakes"] is None and rows[1]["mind_wakes_reason"] == va.NO_EXTRAS_REASON
+
+
+@pytest.mark.parametrize("over, why", [
+    ({"game": OTHER}, "its game is not the game of plan visit 1"),
+    ({"block": "B2"}, "its block is not the block of plan visit 1"),
+    ({"k": 2}, "its k is not the k of plan visit 1"),
+    ({"mind_wakes": 5}, "mind_wakes is not an object with a value"),
+    ({"mind_wakes": {"reason": "no value key"}}, "mind_wakes is not an object with a value"),
+    ({"mind_wakes": {"value": None}}, "a null mind_wakes carries no reason"),
+    ({"mind_wakes": {"value": None, "reason": "  "}}, "a null mind_wakes carries no reason"),
+    ({"mind_wakes": {"value": -1}}, "not a non-negative integer"),
+    ({"mind_wakes": {"value": True}}, "not a non-negative integer"),
+    ({"mind_wakes": {"value": 2.5}}, "not a non-negative integer"),
+    ({"mind_wakes": {"value": "19"}}, "not a non-negative integer"),
+])
+def test_extras_that_name_another_visit_or_hold_a_bad_count_refuse_the_run(
+    tmp_path: Path, rec_dir: Path, over: dict[str, Any], why: str
+) -> None:
+    rec = _recording(rec_dir / "a.recording.jsonl", "card-a", GAME, start=0)
+    run_dir = _run(tmp_path, [_visit("E", GAME, "B1", 1, rec)])
+    _extras(run_dir, 1, **over)
+
+    with pytest.raises(va.AssemblyRefused, match=why):
+        va.assemble(run_dir, rec_dir, [])
+
+
+def test_an_extras_file_that_is_not_json_refuses_the_run(tmp_path: Path, rec_dir: Path) -> None:
+    rec = _recording(rec_dir / "a.recording.jsonl", "card-a", GAME, start=0)
+    run_dir = _run(tmp_path, [_visit("E", GAME, "B1", 1, rec)])
+    _extras(run_dir, 1).write_text("{")
+
+    with pytest.raises(va.AssemblyRefused, match="unreadable"):
+        va.assemble(run_dir, rec_dir, [])
 
 
 def test_the_plan_must_list_a_persistent_minds_visits_in_the_order_played(tmp_path: Path, rec_dir: Path) -> None:
