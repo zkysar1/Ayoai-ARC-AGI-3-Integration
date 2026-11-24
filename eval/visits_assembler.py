@@ -40,10 +40,16 @@ Inputs
 - --meter-snapshot: a JSON object keyed by card id whose values are the operator's read-only
   copy of that session's AyoAI meter row (counts and dollars only). Its ``accrued_*`` fields and
   ``last_flush_at`` are carried under their own names.
+- ``<run-dir>/visit-extras/<NN>.json`` (optional, one per visit, NN the visit's place in plan.json from 1): the
+  sequence driver's per-visit facts. Its ``mind_wakes`` is ``{"value": <int>}`` or ``{"value": null, "reason":
+  <text>}``: the perception hand-offs in the Mind's own serve.log from the visit's first to its last action
+  (design/long-horizon-protocol.md, Amendment 4).
 
-``mind_wakes`` is null in every row: no recording, log or meter row counts a Mind wake (the
-meter's ``accrued_inference_calls`` counts model calls, which is a different thing), and a
-value filled from a neighbouring field would pass for a measurement.
+``mind_wakes`` is the integer the extras carry, or null with ``mind_wakes_reason`` saying why: the reason the
+extras give, or "no visit-extras file for this visit". No recording, log or meter row counts a Mind wake (the
+meter's ``accrued_inference_calls`` counts model calls, which is a different thing), so nothing is filled from
+a neighbouring field and an unread count is never a zero. An extras file that names another visit, or whose
+count is not a non-negative integer, refuses the run.
 """
 
 from __future__ import annotations
@@ -73,6 +79,9 @@ LOG_RECORD = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} \| (?P<leve
 ABORT_MARKER = "aborting play"
 EXIT_PREFIX = "Exiting: agent reached"
 END_CAUSE_DETAIL_MAX = 200
+# The sequence driver's per-visit facts (seq_driver_tools.py extras), one file per visit under the run directory.
+EXTRAS_DIR = "visit-extras"
+NO_EXTRAS_REASON = "no visit-extras file for this visit"
 GUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
 # main.py's GAME_ID_SHAPE (a unit test pins the two equal). A log line can name a game, and a row is committed
 # and quoted, so a game id never goes into end_cause_detail.
@@ -347,6 +356,42 @@ def _scorecard_part(payload: dict[str, Any] | None) -> tuple[dict[str, Any], int
     }, levels
 
 
+def _mind_wakes_part(run_dir: Path, position: int, planned: dict[str, Any]) -> tuple[int | None, str | None]:
+    """The visit's Mind-wake count as the sequence driver wrote it, and the reason when it is null.
+
+    The driver counts the wakes in the Mind's own serve.log (design/long-horizon-protocol.md, Amendment 4) and
+    writes <run-dir>/visit-extras/<NN>.json, NN being the visit's place in plan.json from 1. Its mind_wakes is
+    {"value": <int>} or {"value": null, "reason": <text>}. No file is a null with its own reason, never a zero. A
+    file that names another visit, or a count that is not a non-negative integer, refuses the run: a miscounted
+    visit must not pass for a measured one. The reason is masked and cut like end_cause_detail, because a row is
+    committed and quoted.
+    """
+    path = run_dir / EXTRAS_DIR / f"{position:02d}.json"
+    if not path.is_file():
+        return None, NO_EXTRAS_REASON
+    try:
+        extras = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise AssemblyRefused(f"{path}: unreadable ({exc})") from exc
+    if not isinstance(extras, dict):
+        raise AssemblyRefused(f"{path}: not a JSON object")
+    for key, expected in (("k", position), ("game", planned["game"]), ("block", planned["block"])):
+        if extras.get(key) != expected:
+            raise AssemblyRefused(f"{path}: its {key} is not the {key} of plan visit {position}")
+    wakes = extras.get("mind_wakes")
+    if not isinstance(wakes, dict) or "value" not in wakes:
+        raise AssemblyRefused(f"{path}: mind_wakes is not an object with a value")
+    value = wakes["value"]
+    if value is None:
+        reason = wakes.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise AssemblyRefused(f"{path}: a null mind_wakes carries no reason")
+        return None, GAME_ID_SHAPE.sub("<game>", reason)[:END_CAUSE_DETAIL_MAX]
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise AssemblyRefused(f"{path}: mind_wakes value is not a non-negative integer")
+    return value, None
+
+
 def assemble(
     run_dir: Path,
     recordings_dir: Path,
@@ -383,8 +428,9 @@ def assemble(
             raise AssemblyRefused(f"{meter_snapshot}: not a JSON object keyed by card id")
 
     out: list[dict[str, Any]] = []
-    for v in visits:
+    for position, v in enumerate(visits, 1):
         scorecard, levels = _scorecard_part(scorecards.get(v["card_id"]))
+        wakes, wakes_reason = _mind_wakes_part(run_dir, position, plan[position - 1])
         cause, detail = _end_cause_part(v["recording"], run_logs)
         out.append({
             "run_id": run_dir.resolve().name,
@@ -407,7 +453,8 @@ def assemble(
                 "ledger": _ledger_part(rows_ledger, v, visits),
                 "meter": _meter_part(snapshot, v["card_id"]),
             },
-            "mind_wakes": None,
+            "mind_wakes": wakes,
+            "mind_wakes_reason": wakes_reason,
             "card_id": v["card_id"],
             "scorecard": scorecard,
             "recording": v["recording"],
