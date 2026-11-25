@@ -25,9 +25,8 @@ log size there must equal the call's recorded total (a refusal that counted noth
 pair (0, 0), reports no log size: it is set aside and classed "no-count", never "match").
 (3) A model-arm recording must follow the placebo trajectory up to the call. (4) Re-scoring
 with the actions shifted by one position loses the match for a theory whose explained
-count depends on the actions; a theory that explains none or every move can keep it, so the
-summary reports how many rows lose it and how many keep it, and only the first are tied to
-the re-derived actions.
+count depends on the actions and keeps it for one that does not, so the summary reports
+how many rows do each, and only the first are tied to the re-derived actions.
 
 Re-score. Each stored code string goes through the unmodified TheorySynthesizer._checks
 (sandbox child process, as in the run) over the rebuilt log as it stood at the call, and
