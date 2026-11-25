@@ -6,7 +6,9 @@ or network is touched. Pinned here: (1) the log the replay rebuilds from a recor
 equals the log a live drive of the same stack kept, move for move and decision for
 decision, through resets and level-ups; (2) the opening screen no recording holds is
 recovered from the first reset to level 0, or stands in as a copy of the first recorded
-frame and is flagged, which costs the first move's "before" screen and nothing else;
+frame and is flagged: on this toy corridor, whose scripted port keeps no state, that costs
+the first move's "before" screen and nothing else, while on the stored games it moves
+re-scored rows (g-376-363: 316 of 812 when forced on the games that have a real one);
 (3) a stored call is joined to the decision whose gap holds it, also when the next call
 starts within the same second; (4) a stored theory re-scores to a full match over the
 rebuilt log and loses it over a log whose actions are shifted by one move; (5) nothing in
@@ -17,9 +19,11 @@ files in the stored layout, reproduces the pairs it was given.
 from __future__ import annotations
 
 import json
+import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -29,6 +33,7 @@ arcengine = pytest.importorskip("arcengine")
 import port_streaming_client  # noqa: E402
 from adapters.arc_theory import THEORY_ARMS, NoCallWriter, make_theory_arm  # noqa: E402
 from analysis import theory_replay_offline as rp  # noqa: E402
+from house_rules import heldout_refusal  # noqa: E402
 from port_streaming_client import PortStreamingClient  # noqa: E402
 from primitives.theory_arm import freeze  # noqa: E402
 from primitives.theory_sandbox import SandboxError  # noqa: E402
@@ -294,6 +299,30 @@ def test_a_refusal_that_counted_nothing_is_not_held_to_the_log_size(
     assert dict(controls["delta"]) == {-1: 1}
 
 
+def test_a_timed_out_replay_that_reads_zero_on_both_sides_is_no_count_not_a_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    use_script(monkeypatch, SCRIPT_WITH_RESETS)
+    lines, _, _ = drive(40)
+    rebuilt = replayed(tmp_path, lines)
+    trail = rp.read_recording(stored(tmp_path / "trail.jsonl", lines), "toy", with_frames=False)
+    at = trail[10].at + timedelta(milliseconds=5)
+    size = rebuilt.steps[11].log_size
+    timed_out = rp.CallRow(0, at, "C2", 3, 0, 0, "4 replay: replay: timed out after 4.0s", "timed-out")
+    counted = rp.CallRow(1, at, "C2", 4, 2, size, f"4 replay: explained 2 of {size} moves", "counted")
+
+    def score(self: Any, step: int, code: str, version: int) -> Any:
+        if code == "timed-out":
+            return SimpleNamespace(explained=0, total=0, check="4 replay: replay: timed out after 4.0s")
+        return SimpleNamespace(explained=2, total=size, check=f"4 replay: explained 2 of {size} moves")
+
+    monkeypatch.setattr(rp.Rescorer, "score", score)
+    controls: dict[str, Any] = {"rows": Counter(), "delta": Counter()}
+    graded = rp.grade_rows("B", [timed_out, counted], trail, None, rebuilt, controls, True, False)
+    assert [r.klass for r in graded] == ["no-count", "match"]
+    assert dict(controls["rows"]) == {"no-count": 1, "log-size-equal": 1}
+
+
 def test_the_explain_every_move_subset_leaves_out_rows_that_counted_nothing() -> None:
     def row(recorded: list[int], shifted_match: bool) -> dict[str, Any]:
         return {"arm": "B", "label": "4", "klass": "match", "recorded": recorded, "shifted_match": shifted_match}
@@ -319,7 +348,6 @@ def lay_out_stored_files(
     for run in ("Z1", "Z2"):
         (recordings / run).mkdir(parents=True)
         stored(recordings / run / "toy.port.jsonl", lines)
-    gaps = {k: 12 * (call_lines.index(k) + 1) for k in call_lines}
     for arm in rp.MODEL_ARMS:
         shifted_lines, extra = [], 0.0
         for i, line in enumerate(lines):
@@ -346,7 +374,6 @@ def lay_out_stored_files(
                 }
             )
         stored(run_dir / "theory-calls.jsonl", rows)
-    assert gaps
     return recordings, runs
 
 
@@ -374,3 +401,69 @@ def test_a_whole_game_over_stored_files_reproduces_the_pairs_it_was_given(
     assert summary["negative_control"]["matched_rows"] == 12
     assert summary["negative_control"]["lose_the_match_when_shifted"] == 12
     assert len(live_moves) > call_lines[-1] // 2
+
+
+def test_a_state_the_game_enum_lacks_is_an_error_not_a_guess() -> None:
+    line = {"frame": [[[0]]], "state": "NOT_A_STATE", "levels_completed": 0, "win_levels": 0}
+    with pytest.raises(KeyError):
+        rp.to_frame("toy", line)
+    assert rp.to_frame("toy", {**line, "state": "WIN"}).state is GameState.WIN
+
+
+def test_a_sealed_game_is_refused_without_its_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(rp, "heldout_refusal", lambda game, exam: f"refused: {game} is sealed")
+    job = {"index": 0, "game": "x7heldx", "recordings": "none", "runs": "none", "rescore": False, "shift": False}
+    with pytest.raises(SystemExit) as stop:
+        rp.run_game(job)
+    assert "sealed" in str(stop.value)
+    assert "x7heldx" not in str(stop.value)
+
+
+class InProcessPool:
+    """Stands where the process pool would, so main() runs its games in this process and the
+    patched port script and refusal reach them."""
+
+    def __init__(self, max_workers: int) -> None:
+        self.max_workers = max_workers
+
+    def __enter__(self) -> InProcessPool:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def map(self, fn: Any, jobs: Any) -> list[Any]:
+        return [fn(job) for job in jobs]
+
+
+def test_main_leaves_out_a_sealed_and_an_incomplete_game_and_reports_the_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_script(monkeypatch, SCRIPT_WITH_RESETS)
+    lines, _moves, live_sizes = drive(90)
+    first_attempt = replayed(tmp_path, lines).first_attempt_step
+    assert first_attempt is not None
+    recordings, runs = lay_out_stored_files(tmp_path, lines, live_sizes, [first_attempt - 1, 30, 60])
+    # A sealed game with all four model arms and a game with one: main() lists their names only.
+    for game, arms in (("x7heldx", rp.MODEL_ARMS), ("y8shorty", ("B",))):
+        for arm in arms:
+            stored_dir = runs / f"theory-{game}-{arm}-1790000000-1"
+            stored_dir.mkdir()
+            (stored_dir / "theory-calls.jsonl").write_text("")
+    real = heldout_refusal
+
+    def refusal(game: str, exam: bool) -> Any:
+        return f"refused: {game}" if game == "x7heldx" else real(game, exam)
+
+    monkeypatch.setattr(rp, "heldout_refusal", refusal)
+    monkeypatch.setattr(rp, "ProcessPoolExecutor", InProcessPool)
+    out = tmp_path / "summary.json"
+    argv = ["replay", "--recordings", str(recordings), "--runs", str(runs), "--out", str(out), "--workers", "1"]
+    monkeypatch.setattr(sys, "argv", argv)
+    rp.main()
+    report = json.loads(out.read_text())
+    assert report["summary"]["coverage"] == {"discovered": 3, "sealed_skipped": 1, "incomplete_skipped": 1, "run": 1}
+    assert [g["game"] for g in report["games"]] == [0]
+    shown = out.read_text() + capsys.readouterr().out
+    assert "x7heldx" not in shown
+    assert "y8shorty" not in shown

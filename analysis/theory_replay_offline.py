@@ -22,13 +22,19 @@ Controls. (1) The placebo arm's first attempt (the opening probe is done) must s
 logged moves as the first stored call of each model arm. (2) Each stored call is joined to
 the decision it ran in by its time (the recorded gap a model call leaves) and the rebuilt
 log size there must equal the call's recorded total (a refusal that counted nothing, the
-pair (0, 0), reports no log size and is set aside). (3) A model-arm recording must follow
-the placebo trajectory up to the call. (4) Re-scoring with the actions shifted by one
-position must lose the match the unshifted log earned.
+pair (0, 0), reports no log size: it is set aside and classed "no-count", never "match").
+(3) A model-arm recording must follow the placebo trajectory up to the call. (4) Re-scoring
+with the actions shifted by one position loses the match for a theory whose explained
+count depends on the actions; a theory that explains none or every move can keep it, so the
+summary reports how many rows lose it and how many keep it, and only the first are tied to
+the re-derived actions.
 
 Re-score. Each stored code string goes through the unmodified TheorySynthesizer._checks
 (sandbox child process, as in the run) over the rebuilt log as it stood at the call, and
-its (explained, total) is compared with the stored pair.
+its (explained, total) is compared with the stored pair. The planner's time cap is 2.0 s
+here and the arm's default is 20.0 s: the planner runs at check 7, after check 4 has
+fixed the pair, so the cap can move a verdict label and never the pair (g-376-363: all 42
+stored rows that reached check 7 or were admitted re-score to the same label).
 
 Output is counts and game indices only (guard-7741); no game id, frame or theory text is
 printed. Run from the repo root, with the repo venv (guard-7381):
@@ -99,12 +105,15 @@ def line_key(data: Mapping[str, Any]) -> str:
 
 
 def to_frame(game: str, data: Mapping[str, Any]) -> FrameData:
-    """The frame AdapterDrive.choose_action hands the port client for a recorded line."""
+    """The frame AdapterDrive.choose_action hands the port client for a recorded line.
+
+    A state the enum lacks raises KeyError: a replay must not guess what the port saw.
+    """
     state = str(data["state"])
     return FrameData(
         game_id=game,
         frame=data["frame"],
-        state=GameState[state] if state in GameState.__members__ else GameState.NOT_FINISHED,
+        state=GameState[state],
         levels_completed=int(data["levels_completed"] or 0),
         win_levels=int(data["win_levels"] or 0),
         guid=data.get("guid"),
@@ -554,7 +563,8 @@ def grade_rows(
             elif not equal:
                 result.klass = "count-differs"
             elif result.rescored == result.recorded:
-                result.klass = "match"
+                # (0, 0) on both sides is a refusal that counted nothing: it says nothing about the log.
+                result.klass = "no-count" if counts_nothing else "match"
             else:
                 result.klass = classify_content(row, verdict, rebuilt)
         if scorer is not None and shift:
@@ -583,7 +593,7 @@ def run_game(job: Mapping[str, Any]) -> dict[str, Any]:
     recordings, runs = Path(job["recordings"]), Path(job["runs"])
     refusal = heldout_refusal(game, False)
     if refusal is not None:
-        raise SystemExit(refusal)
+        raise SystemExit(refusal.replace(game, "a game under --runs"))  # counts only: no id is printed
     z1 = read_recording(recording_for(recordings, "Z1", game), game, with_frames=True)
     rebuilt = replay(game, z1)
     first = None if rebuilt.first_attempt_step is None else rebuilt.steps[rebuilt.first_attempt_step].log_size
@@ -670,7 +680,8 @@ def main() -> None:
     parser.add_argument("--no-shift", action="store_true", help="skip the shifted-action negative control")
     args = parser.parse_args()
     found = discover(args.runs)
-    games = sorted(g for g, arms in found.items() if all(a in arms for a in MODEL_ARMS))
+    sealed = {g for g in found if heldout_refusal(g, False) is not None}  # only the names are listed
+    games = sorted(g for g, arms in found.items() if g not in sealed and all(a in arms for a in MODEL_ARMS))
     jobs = [
         {
             "index": i,
@@ -685,7 +696,13 @@ def main() -> None:
     ]
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
         done = sorted(pool.map(run_game, jobs), key=lambda g: g["game"])
-    report = {"summary": summarize(done), "games": done}
+    coverage = {
+        "discovered": len(found),
+        "sealed_skipped": len(sealed),
+        "incomplete_skipped": len(found) - len(sealed) - len(games),
+        "run": len(done),
+    }
+    report = {"summary": {**summarize(done), "coverage": coverage}, "games": done}
     args.out.write_text(json.dumps(report, indent=1, default=str) + "\n")
     print(json.dumps(report["summary"], indent=1))
 
