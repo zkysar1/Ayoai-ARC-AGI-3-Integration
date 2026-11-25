@@ -6,9 +6,10 @@ or network is touched. Pinned here: (1) the log the replay rebuilds from a recor
 equals the log a live drive of the same stack kept, move for move and decision for
 decision, through resets and level-ups; (2) the opening screen no recording holds is
 recovered from the first reset to level 0, or stands in as a copy of the first recorded
-frame and is flagged: on this toy corridor, whose scripted port keeps no state, that costs
-the first move's "before" screen and nothing else, while on the stored games it moves
-re-scored rows (g-376-363: 316 of 812 when forced on the games that have a real one);
+frame and is flagged: on this toy corridor, whose scripted port's only state is a move
+counter, that costs the first move's "before" screen and nothing else, while on the stored
+games it moves re-scored rows (g-376-363: 316 of 812 when forced on the games that have a
+real one);
 (3) a stored call is joined to the decision whose gap holds it, also when the next call
 starts within the same second; (4) a stored theory re-scores to a full match over the
 rebuilt log and loses it over a log whose actions are shifted by one move; (5) nothing in
