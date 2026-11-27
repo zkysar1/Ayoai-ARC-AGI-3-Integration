@@ -69,6 +69,10 @@ from adapters.arc_theory import THEORY_ARMS, make_theory_arm  # noqa: E402
 from house_rules import make_game  # noqa: E402
 from port_streaming_client import PortStreamingClient  # noqa: E402
 from primitives.theory_arm import ArmConfig, freeze  # noqa: E402
+from primitives.v4_arm import V4Arm  # noqa: E402
+from primitives.world_model_synthesizer import (  # noqa: E402
+    make_world_model_synthesizer,
+)
 from solver_v2.streaming_adapter import SolverV2StreamingAdapter  # noqa: E402
 from structs import FrameData, GameAction, GameState  # noqa: E402
 
@@ -125,6 +129,27 @@ class AdapterDrive(Agent):  # type: ignore[misc]
         return action
 
 
+# main.py's defaults for SOLVER_V2_V4_ARM: horizon, history depth and the object
+# layout it passes the synthesizer. The goal predicate stays unset, so the adapter
+# uses its own reward-state recognizer. No exploration predicate and no model call.
+V4_SETTINGS: dict[str, Any] = {
+    "horizon": 4,
+    "history_k": 3,
+    "period": 6,
+    "dynamic": (0, 1),
+    "context": (2, 3, 4, 5),
+}
+
+
+def attach_v4_arm(adapter: SolverV2StreamingAdapter, synth: str) -> None:
+    layout = {k: V4_SETTINGS[k] for k in ("period", "dynamic", "context")}
+    adapter.set_v4_arm(
+        V4Arm(make_world_model_synthesizer(synth, **layout), horizon=V4_SETTINGS["horizon"]),
+        goal_predicate=None,
+        history_k=V4_SETTINGS["history_k"],
+    )
+
+
 def theory_arm_factory(
     game: str, share: float, arm: Optional[str], root: Path
 ) -> tuple[str, Callable[..., Any]]:
@@ -170,7 +195,15 @@ def main() -> None:
     parser.add_argument(
         "--record", action="store_true", help="record each game (RECORDINGS_DIR) and name it in the row"
     )
+    parser.add_argument(
+        "--v4-synth",
+        choices=("v0", "v2"),
+        default=None,
+        help="attach the V4 arm with this synthesizer, as main.py does for SOLVER_V2_V4_ARM (--player adapter only, g-376-415)",
+    )
     args = parser.parse_args()
+    if args.v4_synth is not None and args.player != "adapter":
+        parser.error("--v4-synth needs --player adapter")
     if args.theory_share is not None:
         if args.player != "port":
             parser.error("--theory-share needs --player port")
@@ -197,6 +230,8 @@ def main() -> None:
             if args.player == "port"
             else SolverV2StreamingAdapter(ayo_server_key="offline-adapter", arc_game_id=game)
         )
+        if args.v4_synth is not None and isinstance(adapter, SolverV2StreamingAdapter):
+            attach_v4_arm(adapter, args.v4_synth)
         theory_run_id = None
         if args.theory_share is not None:
             theory_run_id, factory = theory_arm_factory(game, args.theory_share, args.theory_arm, theory_root)
@@ -230,6 +265,9 @@ def main() -> None:
         if theory_run_id is not None and isinstance(adapter, PortStreamingClient):
             row["theory_run_id"] = theory_run_id
             row["theory"] = adapter.theory_measures
+        if args.v4_synth is not None:
+            # The arm plans only toward states its recognizer saw at a level-up.
+            row["v4_reward_states"] = len(getattr(adapter, "_reward_memory", None) or ())
         if args.record:
             row["recording"] = agent.recorder.filename
         rows.append(row)
@@ -247,6 +285,8 @@ def main() -> None:
         "arc_agi": version("arc-agi"),
         "arcengine": version("arcengine"),
         "max_actions": args.max_actions,
+        "v4_synth": args.v4_synth,
+        "v4_settings": V4_SETTINGS if args.v4_synth is not None else None,
         "theory_share": args.theory_share,
         "theory_arm": args.theory_arm,
         "theory_arm_switches": THEORY_ARMS.get(args.theory_arm or ""),

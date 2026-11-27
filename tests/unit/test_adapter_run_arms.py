@@ -131,3 +131,20 @@ def test_each_arm_is_counted_apart_and_a_missing_provenance_counts_nothing() -> 
     agent = _play(mod, _Scripted(provenances), len(provenances))
     assert agent.arm_changed == Counter({"v4_arm": 1, "theory_arm": 1})
     assert agent.decided_by == Counter({"solver_v2": 3, "?": 1})
+
+
+@pytest.mark.parametrize(("name", "kind"), [("v0", "TableSynthesizer"), ("v2", "SlotwiseModalSynthesizer")])
+def test_attach_v4_arm_builds_the_named_synthesizer_with_the_adapter_recognizer(name: str, kind: str) -> None:
+    # --v4-synth composes the arm as main.py does for SOLVER_V2_V4_ARM: the named
+    # synthesizer, horizon 4, history depth 3, and no goal predicate of its own, so
+    # the adapter's reward-state recognizer supplies the goal (g-376-415).
+    from solver_v2.streaming_adapter import SolverV2StreamingAdapter
+
+    mod = _adapter_run()
+    adapter = SolverV2StreamingAdapter(ayo_server_key="test", arc_game_id="toy")
+    mod.attach_v4_arm(adapter, name)
+    arm = adapter._v4_arm
+    assert arm is not None and type(arm._synthesizer).__name__ == kind
+    assert (arm._horizon, adapter._v4_history_k) == (4, 3)
+    assert adapter._reward_memory is not None
+    assert adapter._v4_goal_predicate == adapter._reward_memory.goal_predicate
